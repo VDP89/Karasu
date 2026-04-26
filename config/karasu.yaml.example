@@ -1,0 +1,56 @@
+version: "0.1.0"
+
+watch:
+  path: "."
+  ignore:
+    - ".git"
+    - "__pycache__"
+    - "*.pyc"
+    - ".karasu/"
+
+agents:
+  claude_code:
+    type: cli
+    command: "claude"
+    trust_level: 1
+    handles:
+      - code_change
+      - bug_fix
+      - implementation
+
+  codex:
+    type: github_reviewer
+    repo: ""
+    trust_level: 0
+    handles:
+      - code_review
+      - audit
+
+classify:
+  patterns:
+    - match: "*.py"
+      type: code_change
+      priority: normal
+    - match: "*.md"
+      type: doc_change
+      priority: low
+    - match: "scars/**"
+      type: scar_change
+      priority: high
+    - match: "config/**"
+      type: config_change
+      priority: high
+
+interface:
+  telegram:
+    enabled: true
+    token: "${KARASU_TELEGRAM_TOKEN}"
+    allowed_users: []
+
+event_bus:
+  path: ".karasu/events.jsonl"
+  max_size_mb: 50
+
+scars:
+  rules_path: ".karasu/scars/"
+  auto_suggest: true

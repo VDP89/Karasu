@@ -3,12 +3,20 @@
 Turns inotify-style events into Karasu ``file_change`` events on the
 bus. Ignore patterns are matched against the path relative to the
 watch root.
+
+The pipeline callback runs on a dedicated worker thread, not on
+watchdog's observer thread. A slow adapter (CLI subprocess, HTTP
+round trip) therefore cannot stall filesystem event capture; the
+observer keeps draining inotify events into a bounded queue while
+the worker processes them in order.
 """
 
 from __future__ import annotations
 
 import fnmatch
 import logging
+import queue
+import threading
 import time
 from pathlib import Path
 from typing import Callable, Iterable
@@ -42,6 +50,8 @@ class FilesystemWatcher:
         "deleted": "deleted",
         "moved": "modified",
     }
+    DEFAULT_QUEUE_SIZE = 1024
+    _WORKER_POLL_INTERVAL = 0.1
 
     def __init__(
         self,
@@ -49,12 +59,17 @@ class FilesystemWatcher:
         bus: JsonlEventBus,
         ignore: Iterable[str] = (),
         on_event: OnEvent | None = None,
+        queue_size: int | None = None,
     ) -> None:
         self.root = Path(root).resolve()
         self.bus = bus
         self.ignore = tuple(ignore)
         self.on_event = on_event
+        self._queue_size = queue_size or self.DEFAULT_QUEUE_SIZE
         self._observer = Observer()
+        self._queue: queue.Queue[Event] | None = None
+        self._worker: threading.Thread | None = None
+        self._stopping = threading.Event()
 
     def _is_ignored(self, rel_path: str) -> bool:
         for pattern in self.ignore:
@@ -84,21 +99,79 @@ class FilesystemWatcher:
             )
         )
         if self.on_event is not None:
-            # The callback runs on the watchdog observer thread; an uncaught
-            # exception would silently kill it and stop event delivery.
-            try:
-                self.on_event(appended)
-            except Exception:
-                _log.exception("on_event callback failed for %s", rel)
+            self._enqueue(appended)
         return appended
 
+    def _enqueue(self, event: Event) -> None:
+        if self._queue is None:
+            # No worker started — synchronous fallback. Used by unit
+            # tests that exercise _dispatch directly without starting
+            # the pipeline; production goes through start_pipeline().
+            self._invoke_on_event(event)
+            return
+        try:
+            self._queue.put_nowait(event)
+        except queue.Full:
+            _log.warning(
+                "pipeline queue full (size=%d), dropping callback for %s",
+                self._queue_size,
+                event.data.get("path"),
+            )
+
+    def _invoke_on_event(self, event: Event) -> None:
+        assert self.on_event is not None
+        try:
+            self.on_event(event)
+        except Exception:
+            _log.exception(
+                "on_event callback failed for %s", event.data.get("path")
+            )
+
+    def _run_worker(self) -> None:
+        assert self._queue is not None
+        while True:
+            try:
+                event = self._queue.get(timeout=self._WORKER_POLL_INTERVAL)
+            except queue.Empty:
+                if self._stopping.is_set():
+                    return
+                continue
+            try:
+                self._invoke_on_event(event)
+            finally:
+                self._queue.task_done()
+
+    def start_pipeline(self) -> None:
+        """Spin up the worker thread that drains pipeline callbacks."""
+        if self.on_event is None or self._worker is not None:
+            return
+        self._queue = queue.Queue(maxsize=self._queue_size)
+        self._stopping.clear()
+        self._worker = threading.Thread(
+            target=self._run_worker, daemon=True, name="karasu-pipeline"
+        )
+        self._worker.start()
+
+    def stop_pipeline(self, timeout: float = 5.0) -> None:
+        """Drain pending callbacks and stop the worker thread."""
+        if self._worker is None:
+            return
+        if self._queue is not None:
+            self._queue.join()
+        self._stopping.set()
+        self._worker.join(timeout=timeout)
+        self._worker = None
+        self._queue = None
+
     def start(self) -> None:
+        self.start_pipeline()
         self._observer.schedule(_Handler(self), str(self.root), recursive=True)
         self._observer.start()
 
     def stop(self) -> None:
         self._observer.stop()
         self._observer.join()
+        self.stop_pipeline()
 
     def run_forever(self, poll_interval: float = 1.0) -> None:
         self.start()

@@ -1,6 +1,6 @@
 import pytest
 
-from karasu.__main__ import _adapters, _normalize_handles
+from karasu.__main__ import _adapters, _agent_config, _normalize_handles
 
 
 def test_normalize_handles_accepts_list() -> None:
@@ -77,3 +77,42 @@ def test_adapters_registers_claude_with_empty_config_dict() -> None:
 def test_adapters_skips_claude_when_key_absent() -> None:
     assert _adapters({"agents": {}}) == []
     assert _adapters({}) == []
+
+
+def test_agent_config_returns_dict_unchanged() -> None:
+    assert _agent_config("claude_code", {"command": "claude"}) == {"command": "claude"}
+    assert _agent_config("claude_code", {}) == {}
+
+
+def test_agent_config_treats_none_and_false_as_disabled() -> None:
+    assert _agent_config("claude_code", None) is None
+    assert _agent_config("claude_code", False) is None
+
+
+def test_agent_config_rejects_scalar_values() -> None:
+    with pytest.raises(ValueError, match="agents.claude_code must be a mapping"):
+        _agent_config("claude_code", "claude")
+    with pytest.raises(ValueError, match="agents.codex must be a mapping"):
+        _agent_config("codex", 42)
+    with pytest.raises(ValueError, match="agents.claude_code must be a mapping"):
+        _agent_config("claude_code", True)
+
+
+def test_agent_config_rejects_list() -> None:
+    with pytest.raises(ValueError, match="agents.claude_code must be a mapping"):
+        _agent_config("claude_code", ["a", "b"])
+
+
+def test_adapters_skips_claude_when_disabled_with_false() -> None:
+    # Common YAML toggle: `agents.claude_code: false` to disable the
+    # adapter without removing config keys around it. Must not crash.
+    assert _adapters({"agents": {"claude_code": False}}) == []
+
+
+def test_adapters_skips_claude_when_disabled_with_null() -> None:
+    assert _adapters({"agents": {"claude_code": None}}) == []
+
+
+def test_adapters_raises_on_scalar_agent_section() -> None:
+    with pytest.raises(ValueError, match="agents.claude_code must be a mapping"):
+        _adapters({"agents": {"claude_code": "claude"}})

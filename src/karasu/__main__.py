@@ -74,13 +74,28 @@ def _normalize_handles(name: str, handles) -> tuple[str, ...]:
     return tuple(handles)
 
 
+def _agent_config(name: str, value) -> dict | None:
+    """Coerce an ``agents.<name>`` YAML entry into a config mapping.
+
+    Conventions:
+    - key absent, ``null``, or ``false`` → adapter disabled (returns ``None``).
+    - mapping (including empty ``{}``) → adapter enabled, returned as-is.
+    - anything else (scalar, list) → ``ValueError`` with the section name.
+    """
+    if value is None or value is False:
+        return None
+    if isinstance(value, dict):
+        return value
+    raise ValueError(
+        f"agents.{name} must be a mapping, null, or false to disable; "
+        f"got {type(value).__name__}: {value!r}"
+    )
+
+
 def _adapters(config: dict) -> list[AgentAdapter]:
     agents_cfg = config.get("agents", {}) or {}
     adapters: list[AgentAdapter] = []
-    # `is not None` rather than truthiness — `agents.claude_code: {}`
-    # is a valid "use all defaults" config; treating it as falsy would
-    # silently disable the adapter.
-    claude = agents_cfg.get("claude_code")
+    claude = _agent_config("claude_code", agents_cfg.get("claude_code"))
     if claude is not None:
         kwargs: dict = {
             "command": claude.get("command", "claude"),
@@ -93,7 +108,7 @@ def _adapters(config: dict) -> list[AgentAdapter]:
         if claude.get("handles") is not None:
             kwargs["handles"] = _normalize_handles("claude_code", claude["handles"])
         adapters.append(ClaudeCodeAdapter(**kwargs))
-    codex = agents_cfg.get("codex")
+    codex = _agent_config("codex", agents_cfg.get("codex"))
     if codex is not None and codex.get("repo"):
         kwargs = {
             "repo": codex["repo"],

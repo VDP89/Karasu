@@ -69,7 +69,7 @@ class FilesystemWatcher:
         self._observer = Observer()
         self._queue: queue.Queue[Event] | None = None
         self._worker: threading.Thread | None = None
-        self._stopping = threading.Event()
+        self._stopping: threading.Event | None = None
 
     def _is_ignored(self, rel_path: str) -> bool:
         for pattern in self.ignore:
@@ -127,17 +127,18 @@ class FilesystemWatcher:
                 "on_event callback failed for %s", event.data.get("path")
             )
 
-    def _run_worker(self) -> None:
-        # Bind to a local so an abandoned worker (after stop_pipeline
-        # times out and the watcher resets self._queue to None) can
-        # still finish its current task cleanly.
-        q = self._queue
-        assert q is not None
+    def _run_worker(
+        self, q: "queue.Queue[Event]", stopping: threading.Event
+    ) -> None:
+        # Per-worker queue and stop signal are passed in so an abandoned
+        # worker (after stop_pipeline times out) keeps its own state and
+        # can never be confused by a subsequent start_pipeline that
+        # creates fresh objects on the watcher.
         while True:
             try:
                 event = q.get(timeout=self._WORKER_POLL_INTERVAL)
             except queue.Empty:
-                if self._stopping.is_set():
+                if stopping.is_set():
                     return
                 continue
             try:
@@ -147,12 +148,26 @@ class FilesystemWatcher:
 
     def start_pipeline(self) -> None:
         """Spin up the worker thread that drains pipeline callbacks."""
-        if self.on_event is None or self._worker is not None:
+        if self.on_event is None:
             return
+        if self._worker is not None:
+            if self._worker.is_alive():
+                raise RuntimeError(
+                    "pipeline worker from a previous start_pipeline is "
+                    "still alive (stop_pipeline timed out); cannot restart "
+                    "until it exits"
+                )
+            # Worker terminated since stop_pipeline returned — clear stale state.
+            self._worker = None
+            self._queue = None
+            self._stopping = None
         self._queue = queue.Queue(maxsize=self._queue_size)
-        self._stopping.clear()
+        self._stopping = threading.Event()
         self._worker = threading.Thread(
-            target=self._run_worker, daemon=True, name="karasu-pipeline"
+            target=self._run_worker,
+            args=(self._queue, self._stopping),
+            daemon=True,
+            name="karasu-pipeline",
         )
         self._worker.start()
 
@@ -164,18 +179,26 @@ class FilesystemWatcher:
         network call) is abandoned with a warning rather than holding the
         shutdown forever. The worker is a daemon thread, so an abandoned
         callback dies with the process.
+
+        If the timeout fires while the worker is still alive, watcher
+        state (``_worker``/``_queue``/``_stopping``) is left intact so a
+        future ``start_pipeline`` raises rather than silently leaking
+        a second worker against an abandoned queue.
         """
-        if self._worker is None:
+        if self._worker is None or self._stopping is None:
             return
         self._stopping.set()
         self._worker.join(timeout=timeout)
         if self._worker.is_alive():
             _log.warning(
-                "pipeline worker did not exit within %.1fs; abandoning queue",
+                "pipeline worker did not exit within %.1fs; abandoning queue. "
+                "start_pipeline will refuse a restart until it exits.",
                 timeout,
             )
+            return
         self._worker = None
         self._queue = None
+        self._stopping = None
 
     def start(self) -> None:
         self.start_pipeline()

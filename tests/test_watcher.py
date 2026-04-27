@@ -3,6 +3,8 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from karasu.eventbus import JsonlEventBus
 from karasu.watcher import FilesystemWatcher
 
@@ -167,6 +169,74 @@ def test_stop_pipeline_respects_timeout_when_callback_hangs(
     finally:
         # Release the daemon thread so it doesn't sit on `wait` for 10s.
         unblock.set()
+
+
+def test_start_pipeline_refuses_restart_while_old_worker_alive(
+    tmp_path: Path, bus: JsonlEventBus
+) -> None:
+    unblock = threading.Event()
+
+    def hang(event):
+        unblock.wait(timeout=10)
+
+    watcher = FilesystemWatcher(root=tmp_path, bus=bus, on_event=hang)
+    target = tmp_path / "a.py"
+    target.write_text("")
+
+    watcher.start_pipeline()
+    try:
+        watcher._dispatch(_fake_event(str(target)))
+        deadline = time.monotonic() + 1.0
+        while watcher._queue.unfinished_tasks < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        watcher.stop_pipeline(timeout=0.2)
+        # Old worker abandoned but still alive — restart must refuse to
+        # avoid running two workers against two queues simultaneously.
+        assert watcher._worker is not None
+        assert watcher._worker.is_alive()
+        with pytest.raises(RuntimeError, match="still alive"):
+            watcher.start_pipeline()
+    finally:
+        unblock.set()
+
+
+def test_start_pipeline_recovers_after_old_worker_exits(
+    tmp_path: Path, bus: JsonlEventBus
+) -> None:
+    unblock = threading.Event()
+
+    def hang(event):
+        unblock.wait(timeout=10)
+
+    watcher = FilesystemWatcher(root=tmp_path, bus=bus, on_event=hang)
+    target = tmp_path / "a.py"
+    target.write_text("")
+
+    watcher.start_pipeline()
+    watcher._dispatch(_fake_event(str(target)))
+    deadline = time.monotonic() + 1.0
+    while watcher._queue.unfinished_tasks < 1 and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    watcher.stop_pipeline(timeout=0.2)
+    old_worker = watcher._worker
+    assert old_worker is not None and old_worker.is_alive()
+
+    # Let the abandoned worker finish.
+    unblock.set()
+    old_worker.join(timeout=2.0)
+    assert not old_worker.is_alive()
+
+    # Now restart should succeed and produce a fresh worker.
+    watcher.on_event = lambda event: None  # cheap callback for the second run
+    watcher.start_pipeline()
+    try:
+        assert watcher._worker is not None
+        assert watcher._worker is not old_worker
+        assert watcher._worker.is_alive()
+    finally:
+        watcher.stop_pipeline()
 
 
 def test_full_queue_drops_callback_with_warning(tmp_path: Path, bus: JsonlEventBus, caplog) -> None:

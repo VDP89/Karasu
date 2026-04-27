@@ -31,3 +31,27 @@ def test_ignore_pattern_skips_event(tmp_path: Path, bus: JsonlEventBus) -> None:
     nested.write_text("")
     assert watcher._dispatch(_fake_event(str(nested))) is None
     assert list(bus.read()) == []
+
+
+def test_on_event_callback_fires_after_append(tmp_path: Path, bus: JsonlEventBus) -> None:
+    seen = []
+    watcher = FilesystemWatcher(root=tmp_path, bus=bus, on_event=seen.append)
+    target = tmp_path / "a.py"
+    target.write_text("")
+    watcher._dispatch(_fake_event(str(target)))
+    assert len(seen) == 1
+    assert seen[0].type == "file_change"
+    assert seen[0].data["path"] == "a.py"
+
+
+def test_on_event_callback_skipped_when_ignored(tmp_path: Path, bus: JsonlEventBus) -> None:
+    seen = []
+    watcher = FilesystemWatcher(
+        root=tmp_path, bus=bus, ignore=(".git",), on_event=seen.append
+    )
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    inside = git_dir / "HEAD"
+    inside.write_text("")
+    watcher._dispatch(_fake_event(str(inside)))
+    assert seen == []

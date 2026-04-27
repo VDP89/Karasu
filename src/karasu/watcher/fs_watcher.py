@@ -10,12 +10,14 @@ from __future__ import annotations
 import fnmatch
 import time
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
 from karasu.eventbus import Event, JsonlEventBus
+
+OnEvent = Callable[[Event], None]
 
 
 class _Handler(FileSystemEventHandler):
@@ -43,10 +45,12 @@ class FilesystemWatcher:
         root: str | Path,
         bus: JsonlEventBus,
         ignore: Iterable[str] = (),
+        on_event: OnEvent | None = None,
     ) -> None:
         self.root = Path(root).resolve()
         self.bus = bus
         self.ignore = tuple(ignore)
+        self.on_event = on_event
         self._observer = Observer()
 
     def _is_ignored(self, rel_path: str) -> bool:
@@ -69,13 +73,16 @@ class FilesystemWatcher:
         if self._is_ignored(rel):
             return None
         change_type = self._CHANGE_TYPES.get(event.event_type, event.event_type)
-        return self.bus.append(
+        appended = self.bus.append(
             Event(
                 type="file_change",
                 source="watcher",
                 data={"path": rel, "change_type": change_type},
             )
         )
+        if self.on_event is not None:
+            self.on_event(appended)
+        return appended
 
     def start(self) -> None:
         self._observer.schedule(_Handler(self), str(self.root), recursive=True)

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from karasu.adapters.base import AgentAdapter, AgentRequest, AgentResponse
 from karasu.classifier import ClassificationRule, RuleClassifier
 from karasu.eventbus import Event, JsonlEventBus
@@ -73,3 +75,60 @@ def test_pipeline_applies_scar_override(tmp_path: Path, bus: JsonlEventBus) -> N
 
     assert claude.calls == []
     assert len(codex.calls) == 1
+
+
+def test_pipeline_accepts_priority_and_path_in_scar_correction(
+    tmp_path: Path, bus: JsonlEventBus
+) -> None:
+    scars = ScarEngine(tmp_path / "scars")
+    scars.record(
+        Scar(
+            trigger={"classification": "code_change", "path": "*.py"},
+            correction={"priority": "high", "path": "rewritten/foo.py"},
+        )
+    )
+    claude = _StubAdapter("claude_code", handles=("code_change",))
+    pipeline, _ = _build(bus, [claude], scars=scars)
+
+    pipeline(_file_change("src/foo.py"))
+
+    assert len(claude.calls) == 1
+    assert claude.calls[0].priority == "high"
+    assert claude.calls[0].path == "rewritten/foo.py"
+
+
+def test_pipeline_rejects_unsupported_scar_correction_keys(
+    tmp_path: Path, bus: JsonlEventBus
+) -> None:
+    scars = ScarEngine(tmp_path / "scars")
+    # `agent` is documented as a Phase 2 capability; in Phase 1 the
+    # Dispatcher would silently ignore it, so the pipeline must fail
+    # fast rather than pretend the override applied.
+    scars.record(
+        Scar(
+            trigger={"classification": "code_change", "path": "*.py"},
+            correction={"agent": "codex"},
+        )
+    )
+    claude = _StubAdapter("claude_code", handles=("code_change",))
+    pipeline, _ = _build(bus, [claude], scars=scars)
+
+    with pytest.raises(ValueError, match="unsupported keys.*agent"):
+        pipeline(_file_change("src/foo.py"))
+
+
+def test_pipeline_rejects_mixed_supported_and_unsupported_keys(
+    tmp_path: Path, bus: JsonlEventBus
+) -> None:
+    scars = ScarEngine(tmp_path / "scars")
+    scars.record(
+        Scar(
+            trigger={"classification": "code_change", "path": "*.py"},
+            correction={"classification": "audit", "trust_level": 3},
+        )
+    )
+    claude = _StubAdapter("claude_code", handles=("code_change",))
+    pipeline, _ = _build(bus, [claude], scars=scars)
+
+    with pytest.raises(ValueError, match="unsupported keys.*trust_level"):
+        pipeline(_file_change("src/foo.py"))

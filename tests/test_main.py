@@ -25,6 +25,11 @@ def test_normalize_handles_rejects_int() -> None:
         _normalize_handles("agent", 1)
 
 
+def test_normalize_handles_rejects_non_string_elements() -> None:
+    with pytest.raises(ValueError, match="non-string items"):
+        _normalize_handles("agent", ["code_change", 1, None])
+
+
 def test_adapters_rejects_scalar_handles() -> None:
     config = {
         "agents": {

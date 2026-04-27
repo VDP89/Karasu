@@ -66,6 +66,11 @@ def _normalize_handles(name: str, handles) -> tuple[str, ...]:
         raise ValueError(
             f"agents.{name}.handles must be a list of strings, got {type(handles).__name__}: {handles!r}"
         )
+    bad = [item for item in handles if not isinstance(item, str)]
+    if bad:
+        raise ValueError(
+            f"agents.{name}.handles must contain only strings, got non-string items: {bad!r}"
+        )
     return tuple(handles)
 
 

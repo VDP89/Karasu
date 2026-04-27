@@ -77,8 +77,11 @@ def _normalize_handles(name: str, handles) -> tuple[str, ...]:
 def _adapters(config: dict) -> list[AgentAdapter]:
     agents_cfg = config.get("agents", {}) or {}
     adapters: list[AgentAdapter] = []
+    # `is not None` rather than truthiness — `agents.claude_code: {}`
+    # is a valid "use all defaults" config; treating it as falsy would
+    # silently disable the adapter.
     claude = agents_cfg.get("claude_code")
-    if claude:
+    if claude is not None:
         kwargs: dict = {
             "command": claude.get("command", "claude"),
             "trust_level": int(claude.get("trust_level", 1)),
@@ -91,7 +94,7 @@ def _adapters(config: dict) -> list[AgentAdapter]:
             kwargs["handles"] = _normalize_handles("claude_code", claude["handles"])
         adapters.append(ClaudeCodeAdapter(**kwargs))
     codex = agents_cfg.get("codex")
-    if codex and codex.get("repo"):
+    if codex is not None and codex.get("repo"):
         kwargs = {
             "repo": codex["repo"],
             "token": os.environ.get("KARASU_CODEX_TOKEN"),

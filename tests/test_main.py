@@ -63,3 +63,17 @@ def test_adapters_uses_explicit_handles_from_yaml() -> None:
     }
     adapters = _adapters(config)
     assert adapters[0].handles == ("code_change",)
+
+
+def test_adapters_registers_claude_with_empty_config_dict() -> None:
+    # `agents.claude_code: {}` means "use all defaults" — must still
+    # register the adapter, not silently skip it.
+    adapters = _adapters({"agents": {"claude_code": {}}})
+    assert len(adapters) == 1
+    assert adapters[0].name == "claude_code"
+    assert adapters[0].handles == ("code_change", "bug_fix", "implementation")
+
+
+def test_adapters_skips_claude_when_key_absent() -> None:
+    assert _adapters({"agents": {}}) == []
+    assert _adapters({}) == []

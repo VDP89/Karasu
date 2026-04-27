@@ -11,7 +11,8 @@ For every finding raised in a review, classify it before acting:
 |-----------------------:|--------------------------------------------------------------|
 | Correct, small (<30 lines, single module) | Fix, push, reply on the thread.       |
 | Correct, large or architectural | Stop. Escalate to the user.                          |
-| Wrong (false positive, already fixed elsewhere, irrelevant) | Reply on the thread with the reasoning. Do **not** push a fix. Do **not** request a re-review. |
+| Wrong (false positive, already fixed elsewhere, irrelevant) — P2 or lower | Reply on the thread with the reasoning. Do **not** push a fix. Do **not** request a re-review. |
+| Wrong — P0 or P1 | Reply with reasoning **and** escalate to the user. Counter-argument alone does not satisfy ship criteria for release-blocking findings. |
 | Ambiguous (depends on a design choice not yet made) | Escalate to the user.            |
 
 A finding is "wrong" when at least one of these holds:
@@ -82,6 +83,8 @@ When the user must be involved:
 2. Deadlock between reviewer and implementer.
 3. Architectural or large change needed.
 4. Ambiguous finding that depends on an unmade design decision.
+5. Disputed P0 or P1 finding — counter-argument alone cannot close
+   a release-blocking gate, so the user must waive it explicitly.
 
 Escalate by:
 
@@ -97,7 +100,11 @@ Escalate by:
 
 A PR is mergeable when all of these hold:
 
-- All P1 findings on the latest commit are resolved.
+- All P0 findings on the latest commit are resolved, or escalated
+  and explicitly waived by the user.
+- All P1 findings on the latest commit are resolved, or escalated
+  and explicitly waived by the user. Counter-argument alone is
+  insufficient for P0 / P1.
 - All P2 findings on the latest commit are either resolved or
   counter-argued with the implementer's reasoning visible on the
   thread.

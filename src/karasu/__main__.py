@@ -59,6 +59,16 @@ def _classifier(config: dict) -> RuleClassifier:
     return RuleClassifier(rules)
 
 
+def _normalize_handles(name: str, handles) -> tuple[str, ...]:
+    if handles is None:
+        return ()
+    if isinstance(handles, str) or not isinstance(handles, (list, tuple)):
+        raise ValueError(
+            f"agents.{name}.handles must be a list of strings, got {type(handles).__name__}: {handles!r}"
+        )
+    return tuple(handles)
+
+
 def _adapters(config: dict) -> list[AgentAdapter]:
     agents_cfg = config.get("agents", {}) or {}
     adapters: list[AgentAdapter] = []
@@ -67,7 +77,7 @@ def _adapters(config: dict) -> list[AgentAdapter]:
         adapters.append(
             ClaudeCodeAdapter(
                 command=claude.get("command", "claude"),
-                handles=claude.get("handles", ()),
+                handles=_normalize_handles("claude_code", claude.get("handles")),
                 trust_level=int(claude.get("trust_level", 1)),
             )
         )
@@ -77,7 +87,7 @@ def _adapters(config: dict) -> list[AgentAdapter]:
             CodexAdapter(
                 repo=codex["repo"],
                 token=os.environ.get("KARASU_CODEX_TOKEN"),
-                handles=codex.get("handles", ()),
+                handles=_normalize_handles("codex", codex.get("handles")),
                 trust_level=int(codex.get("trust_level", 0)),
             )
         )

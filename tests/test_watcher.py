@@ -55,3 +55,23 @@ def test_on_event_callback_skipped_when_ignored(tmp_path: Path, bus: JsonlEventB
     inside.write_text("")
     watcher._dispatch(_fake_event(str(inside)))
     assert seen == []
+
+
+def test_on_event_exception_is_swallowed(tmp_path: Path, bus: JsonlEventBus, caplog) -> None:
+    calls: list[int] = []
+
+    def boom(event):
+        calls.append(1)
+        raise RuntimeError("pipeline blew up")
+
+    watcher = FilesystemWatcher(root=tmp_path, bus=bus, on_event=boom)
+    target = tmp_path / "a.py"
+    target.write_text("")
+
+    with caplog.at_level("ERROR", logger="karasu.watcher.fs_watcher"):
+        first = watcher._dispatch(_fake_event(str(target)))
+        second = watcher._dispatch(_fake_event(str(target)))
+
+    assert first is not None and second is not None
+    assert calls == [1, 1]
+    assert any("on_event callback failed" in r.message for r in caplog.records)

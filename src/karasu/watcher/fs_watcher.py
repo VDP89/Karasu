@@ -8,6 +8,7 @@ watch root.
 from __future__ import annotations
 
 import fnmatch
+import logging
 import time
 from pathlib import Path
 from typing import Callable, Iterable
@@ -18,6 +19,8 @@ from watchdog.observers import Observer
 from karasu.eventbus import Event, JsonlEventBus
 
 OnEvent = Callable[[Event], None]
+
+_log = logging.getLogger(__name__)
 
 
 class _Handler(FileSystemEventHandler):
@@ -81,7 +84,12 @@ class FilesystemWatcher:
             )
         )
         if self.on_event is not None:
-            self.on_event(appended)
+            # The callback runs on the watchdog observer thread; an uncaught
+            # exception would silently kill it and stop event delivery.
+            try:
+                self.on_event(appended)
+            except Exception:
+                _log.exception("on_event callback failed for %s", rel)
         return appended
 
     def start(self) -> None:

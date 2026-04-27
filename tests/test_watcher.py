@@ -134,11 +134,48 @@ def test_worker_swallows_exceptions(tmp_path: Path, bus: JsonlEventBus, caplog) 
     assert any("on_event callback failed" in r.message for r in caplog.records)
 
 
+def test_stop_pipeline_respects_timeout_when_callback_hangs(
+    tmp_path: Path, bus: JsonlEventBus, caplog
+) -> None:
+    unblock = threading.Event()
+
+    def hang(event):
+        # Eventually returns so the daemon thread doesn't outlive the test
+        # forever, but well past the stop_pipeline timeout.
+        unblock.wait(timeout=10)
+
+    watcher = FilesystemWatcher(root=tmp_path, bus=bus, on_event=hang)
+    target = tmp_path / "a.py"
+    target.write_text("")
+
+    watcher.start_pipeline()
+    try:
+        watcher._dispatch(_fake_event(str(target)))
+        # Give the worker time to pick the event up so it's actually
+        # blocked in the callback before we ask it to stop.
+        deadline = time.monotonic() + 1.0
+        while watcher._queue.unfinished_tasks < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        start = time.monotonic()
+        with caplog.at_level("WARNING", logger="karasu.watcher.fs_watcher"):
+            watcher.stop_pipeline(timeout=0.3)
+        elapsed = time.monotonic() - start
+
+        assert elapsed < 1.5
+        assert any("did not exit" in r.message for r in caplog.records)
+    finally:
+        # Release the daemon thread so it doesn't sit on `wait` for 10s.
+        unblock.set()
+
+
 def test_full_queue_drops_callback_with_warning(tmp_path: Path, bus: JsonlEventBus, caplog) -> None:
+    started = threading.Event()
     proceed = threading.Event()
     seen: list = []
 
     def slow(event):
+        started.set()
         proceed.wait(timeout=2)
         seen.append(event)
 
@@ -149,14 +186,10 @@ def test_full_queue_drops_callback_with_warning(tmp_path: Path, bus: JsonlEventB
 
     watcher.start_pipeline()
     try:
-        # First event: worker picks it up, blocks on `proceed`.
+        # First event: worker picks it up and blocks inside the callback.
         watcher._dispatch(_fake_event(str(target)))
-        # Wait until the worker has actually pulled the first event so
-        # the queue is empty again before we fill it.
-        deadline = time.monotonic() + 1.0
-        while watcher._queue.unfinished_tasks < 1 and time.monotonic() < deadline:
-            time.sleep(0.01)
-        # Second event: lands in the (empty, size=1) queue.
+        assert started.wait(timeout=1.0), "worker never picked up the first event"
+        # Queue is now empty; second event lands in the (size=1) queue.
         watcher._dispatch(_fake_event(str(target)))
         # Third event: queue is full, must be dropped with a warning.
         with caplog.at_level("WARNING", logger="karasu.watcher.fs_watcher"):

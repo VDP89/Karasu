@@ -128,10 +128,14 @@ class FilesystemWatcher:
             )
 
     def _run_worker(self) -> None:
-        assert self._queue is not None
+        # Bind to a local so an abandoned worker (after stop_pipeline
+        # times out and the watcher resets self._queue to None) can
+        # still finish its current task cleanly.
+        q = self._queue
+        assert q is not None
         while True:
             try:
-                event = self._queue.get(timeout=self._WORKER_POLL_INTERVAL)
+                event = q.get(timeout=self._WORKER_POLL_INTERVAL)
             except queue.Empty:
                 if self._stopping.is_set():
                     return
@@ -139,7 +143,7 @@ class FilesystemWatcher:
             try:
                 self._invoke_on_event(event)
             finally:
-                self._queue.task_done()
+                q.task_done()
 
     def start_pipeline(self) -> None:
         """Spin up the worker thread that drains pipeline callbacks."""
@@ -153,13 +157,23 @@ class FilesystemWatcher:
         self._worker.start()
 
     def stop_pipeline(self, timeout: float = 5.0) -> None:
-        """Drain pending callbacks and stop the worker thread."""
+        """Signal the worker to stop and wait up to ``timeout`` seconds.
+
+        The worker continues draining the queue until ``timeout`` elapses;
+        any in-flight callback that hangs (e.g., stuck subprocess or
+        network call) is abandoned with a warning rather than holding the
+        shutdown forever. The worker is a daemon thread, so an abandoned
+        callback dies with the process.
+        """
         if self._worker is None:
             return
-        if self._queue is not None:
-            self._queue.join()
         self._stopping.set()
         self._worker.join(timeout=timeout)
+        if self._worker.is_alive():
+            _log.warning(
+                "pipeline worker did not exit within %.1fs; abandoning queue",
+                timeout,
+            )
         self._worker = None
         self._queue = None
 

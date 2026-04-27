@@ -43,3 +43,23 @@ def test_adapters_rejects_scalar_handles() -> None:
 def test_adapters_skips_codex_without_repo() -> None:
     config = {"agents": {"codex": {"repo": "", "handles": ["code_review"]}}}
     assert _adapters(config) == []
+
+
+def test_adapters_preserves_default_handles_when_yaml_omits_them() -> None:
+    config = {"agents": {"claude_code": {"command": "claude"}}}
+    adapters = _adapters(config)
+    assert len(adapters) == 1
+    # ClaudeCodeAdapter ships with these defaults; absence of `handles`
+    # in YAML must leave them intact rather than turning the adapter
+    # into a catch-all.
+    assert adapters[0].handles == ("code_change", "bug_fix", "implementation")
+
+
+def test_adapters_uses_explicit_handles_from_yaml() -> None:
+    config = {
+        "agents": {
+            "claude_code": {"command": "claude", "handles": ["code_change"]}
+        }
+    }
+    adapters = _adapters(config)
+    assert adapters[0].handles == ("code_change",)

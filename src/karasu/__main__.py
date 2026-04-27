@@ -79,23 +79,27 @@ def _adapters(config: dict) -> list[AgentAdapter]:
     adapters: list[AgentAdapter] = []
     claude = agents_cfg.get("claude_code")
     if claude:
-        adapters.append(
-            ClaudeCodeAdapter(
-                command=claude.get("command", "claude"),
-                handles=_normalize_handles("claude_code", claude.get("handles")),
-                trust_level=int(claude.get("trust_level", 1)),
-            )
-        )
+        kwargs: dict = {
+            "command": claude.get("command", "claude"),
+            "trust_level": int(claude.get("trust_level", 1)),
+        }
+        # Only override the adapter's default handle set when the YAML
+        # explicitly provides one. _normalize_handles returns () for
+        # absent/null and AgentAdapter treats empty handles as a
+        # wildcard, which would silently make the adapter catch-all.
+        if claude.get("handles") is not None:
+            kwargs["handles"] = _normalize_handles("claude_code", claude["handles"])
+        adapters.append(ClaudeCodeAdapter(**kwargs))
     codex = agents_cfg.get("codex")
     if codex and codex.get("repo"):
-        adapters.append(
-            CodexAdapter(
-                repo=codex["repo"],
-                token=os.environ.get("KARASU_CODEX_TOKEN"),
-                handles=_normalize_handles("codex", codex.get("handles")),
-                trust_level=int(codex.get("trust_level", 0)),
-            )
-        )
+        kwargs = {
+            "repo": codex["repo"],
+            "token": os.environ.get("KARASU_CODEX_TOKEN"),
+            "trust_level": int(codex.get("trust_level", 0)),
+        }
+        if codex.get("handles") is not None:
+            kwargs["handles"] = _normalize_handles("codex", codex["handles"])
+        adapters.append(CodexAdapter(**kwargs))
     return adapters
 
 

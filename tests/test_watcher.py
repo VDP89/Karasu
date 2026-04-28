@@ -28,6 +28,28 @@ def test_dispatch_writes_event(tmp_path: Path, bus: JsonlEventBus) -> None:
     assert events[0].data == {"path": "a.py", "change_type": "modified"}
 
 
+def test_dispatch_normalizes_nested_path_to_forward_slash(
+    tmp_path: Path, bus: JsonlEventBus
+) -> None:
+    """Regression for issue #14 finding F2.
+
+    On Windows, ``Path.relative_to`` returns backslash-separated paths
+    (``subdir\\nested.py``); ``_is_ignored`` then silently misses
+    forward-slash globs like ``.karasu/``. Karasu's canonical path form
+    on the bus is forward-slash, on every OS.
+    """
+    watcher = FilesystemWatcher(root=tmp_path, bus=bus)
+    nested = tmp_path / "subdir" / "nested.py"
+    nested.parent.mkdir()
+    nested.write_text("")
+    watcher._dispatch(_fake_event(str(nested), "modified"))
+    events = list(bus.read())
+    assert len(events) == 1
+    # Forward-slash regardless of host OS.
+    assert events[0].data["path"] == "subdir/nested.py"
+    assert "\\" not in events[0].data["path"]
+
+
 def test_ignore_pattern_skips_event(tmp_path: Path, bus: JsonlEventBus) -> None:
     watcher = FilesystemWatcher(root=tmp_path, bus=bus, ignore=("__pycache__",))
     nested = tmp_path / "__pycache__" / "x.pyc"

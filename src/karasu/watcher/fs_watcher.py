@@ -85,17 +85,24 @@ class FilesystemWatcher:
 
     def _dispatch(self, event: FileSystemEvent) -> Event | None:
         try:
-            rel = str(Path(event.src_path).resolve().relative_to(self.root))
+            rel = Path(event.src_path).resolve().relative_to(self.root)
         except ValueError:
             return None
-        if self._is_ignored(rel):
+        # Normalize to forward-slash so ignore patterns and downstream
+        # consumers see the same path format on every OS. Without this,
+        # ``Path.relative_to`` returns backslash-separated paths on
+        # Windows; ``_is_ignored`` then misses ``.foo/`` style globs and
+        # the ``"/" not in pattern`` segment-split branch (see issue #14
+        # finding F2). Forward-slash is the canonical Karasu path form.
+        rel_path = rel.as_posix()
+        if self._is_ignored(rel_path):
             return None
         change_type = self._CHANGE_TYPES.get(event.event_type, event.event_type)
         appended = self.bus.append(
             Event(
                 type="file_change",
                 source="watcher",
-                data={"path": rel, "change_type": change_type},
+                data={"path": rel_path, "change_type": change_type},
             )
         )
         if self.on_event is not None:

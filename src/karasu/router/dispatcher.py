@@ -36,13 +36,24 @@ class Dispatcher:
 
     def dispatch(self, event: Event) -> Event | None:
         classification = event.data.get("classification", "")
+        path = event.data.get("path", "")
         adapter = self.select(classification)
         if adapter is None:
-            event.dispatch = {"agent": None, "status": "failed", "trust_level": 0}
-            return self.bus.append(event)
+            return self.bus.append(
+                Event(
+                    type="agent_response",
+                    source="router",
+                    data={"correlates": event.id, "path": path},
+                    dispatch={"agent": None, "status": "failed", "trust_level": 0},
+                    response={
+                        "content": f"no adapter handles classification {classification!r}",
+                        "requires_human": True,
+                    },
+                )
+            )
         request = AgentRequest(
             classification=classification,
-            path=event.data.get("path", ""),
+            path=path,
             priority=event.data.get("priority", "normal"),
         )
         response = adapter.dispatch(request)

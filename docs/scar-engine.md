@@ -35,18 +35,39 @@ line, grouped by trigger family.
 ## How scars affect routing
 
 Before the router picks an agent, the classifier consults the scar
-engine. If a scar matches the incoming event, the classifier's
-output is replaced with the scar's correction. The router then
-acts on the corrected classification.
+engine. If a scar matches the incoming event, the matching keys of
+the scar's correction overwrite the corresponding fields on the
+event before dispatch. The router then acts on the corrected event.
 
 This means scars are first-class routing inputs, not post-hoc
 filters: an event that matches a scar never reaches the agent the
-human previously overrode.
+classifier originally would have selected for it.
+
+## Phase 1 correction contract
+
+The Phase 1 pipeline routes off the event's classification, priority,
+and path. A scar correction may therefore only override these keys:
+
+- `classification`
+- `priority`
+- `path`
+
+Any other key (`agent`, `trust_level`, etc.) raises `ValueError` at
+apply time. Recording an override the dispatcher cannot honour would
+silently keep the original misroute and confuse the operator who
+saved it.
+
+Direct **agent override** (a scar that says *"send this to Codex
+regardless of classification"*) is planned for Phase 2 once the
+Telegram capture flow exists and we have real correction data to
+inform the precedence rules (override vs. handles, override vs.
+trust gradient, behaviour when the named agent is missing). See
+`docs/roadmap.md`.
 
 ## Storage format
 
 ```jsonl
-{"id":"uuid","created":"ISO-8601","trigger":{"classification":"code_change","path":"docs/**"},"correction":{"agent":"codex","priority":"low"},"source_event":"uuid"}
+{"id":"uuid","created":"ISO-8601","trigger":{"classification":"code_change","path":"docs/**"},"correction":{"classification":"audit","priority":"high"},"source_event":"uuid"}
 ```
 
 ## Relationship with Lucy Syndrome

@@ -40,7 +40,17 @@ def test_dispatch_routes_to_first_capable_adapter(bus: JsonlEventBus) -> None:
 
 def test_dispatch_marks_failed_when_no_adapter_matches(bus: JsonlEventBus) -> None:
     dispatcher = Dispatcher(bus=bus, adapters=[_StubAdapter(handles=("doc_change",))])
-    dispatcher.dispatch(_classified("a.py", "code_change"))
-    event = list(bus.read())[-1]
-    assert event.dispatch["status"] == "failed"
-    assert event.dispatch["agent"] is None
+    original = _classified("a.py", "code_change")
+    bus.append(original)
+    dispatcher.dispatch(original)
+
+    events = list(bus.read())
+    assert len(events) == 2
+    failure = events[-1]
+    assert failure.id != original.id
+    assert failure.type == "agent_response"
+    assert failure.source == "router"
+    assert failure.data["correlates"] == original.id
+    assert failure.dispatch == {"agent": None, "status": "failed", "trust_level": 0}
+    assert failure.response["requires_human"] is True
+    assert "code_change" in failure.response["content"]

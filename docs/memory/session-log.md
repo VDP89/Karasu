@@ -1,29 +1,24 @@
 # Session Log
 
-## 2026-04-28 — Phase 1A closure
+## 2026-04-28 — Observability stack completed
 
-- PR #1 merged (core pipeline)
-- PR #2 merged (CI)
-- PR #3 merged (review-loop policy)
-- 46 tests validated
+What changed:
+- PR #9: JsonlTailReader (fixed atomic consumption + unicode split)
+- PR #10: `karasu tail` CLI
+- PR #11: Local dogfood runbook
+- PR #12: `karasu analyze` CLI
 
-Decision:
-- Close Phase 1A
-- Move to Phase 1B (dogfood-first)
+Decisions:
+- Observability-first approach validated
+- No UI/Telegram before data
+- Event noise must be measured before any filtering
 
-Key insight:
-- Project successfully exited infinite review loop
+Impact:
+- Karasu is now a fully observable system (input → storage → output → analysis)
+
+Next step:
+- Run Phase 1B dogfood locally
+- Collect real metrics
+- Decide on debounce/filtering based on data
 
 ---
-
-## Next entries
-
-Each significant change should log:
-
-```text
-Date
-What changed
-Decision taken
-Impact on phase
-Next step
-```

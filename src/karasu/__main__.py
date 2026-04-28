@@ -2,19 +2,22 @@
 
 Subcommands:
 
-* ``karasu watch``  — start the filesystem watcher and dispatch loop.
-* ``karasu status`` — print a short summary of the recorded events.
-* ``karasu tail``   — print JSONL events as they are observed.
-* ``karasu chat``   — start the Telegram interface.
+* ``karasu watch``   — start the filesystem watcher and dispatch loop.
+* ``karasu status``  — print a short summary of the recorded events.
+* ``karasu tail``    — print JSONL events as they are observed.
+* ``karasu analyze`` — analyze event-log noise and distribution.
+* ``karasu chat``    — start the Telegram interface.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
-from collections import Counter
+from collections import Counter, defaultdict
+from datetime import datetime
 from pathlib import Path
 from typing import Sequence
 
@@ -133,9 +136,86 @@ def _trust(config: dict) -> TrustGradient:
 
 
 def _format_tail_event(event: Event) -> str:
-    path = event.data.get("path") or event.data.get("correlates") or "-"
+    path = _event_path(event) or "-"
     agent = event.dispatch.get("agent") or event.response.get("agent") or "-"
     return f"{event.timestamp} {event.type} source={event.source} agent={agent} path={path} id={event.id}"
+
+
+def _event_path(event: Event) -> str | None:
+    raw = event.data.get("path") or event.data.get("correlates")
+    return str(raw) if raw else None
+
+
+def _event_time(event: Event) -> datetime | None:
+    try:
+        return datetime.fromisoformat(event.timestamp)
+    except ValueError:
+        return None
+
+
+def _analyze_events(events: Sequence[Event], duplicate_window_ms: int = 100) -> dict:
+    by_type: Counter[str] = Counter(event.type for event in events)
+    by_path: Counter[str] = Counter(
+        path for event in events if (path := _event_path(event)) is not None
+    )
+    by_second: Counter[str] = Counter()
+    duplicate_count = 0
+    previous_by_key: dict[tuple[str, str], datetime] = {}
+
+    for event in events:
+        ts = _event_time(event)
+        if ts is None:
+            continue
+        by_second[ts.isoformat(timespec="seconds")] += 1
+        path = _event_path(event)
+        if path is None:
+            continue
+        key = (event.type, path)
+        previous = previous_by_key.get(key)
+        if previous is not None:
+            delta_ms = (ts - previous).total_seconds() * 1000
+            if 0 <= delta_ms <= duplicate_window_ms:
+                duplicate_count += 1
+        previous_by_key[key] = ts
+
+    total = len(events)
+    unique_paths = len(by_path)
+    file_changes = by_type.get("file_change", 0)
+    duplication_factor = (file_changes / unique_paths) if unique_paths else 0.0
+
+    return {
+        "total_events": total,
+        "by_type": dict(by_type),
+        "top_paths": dict(by_path.most_common(10)),
+        "max_events_per_second": max(by_second.values(), default=0),
+        "duplicate_window_ms": duplicate_window_ms,
+        "duplicates_same_type_path_window": duplicate_count,
+        "unique_paths": unique_paths,
+        "duplication_factor_file_changes_per_path": round(duplication_factor, 2),
+    }
+
+
+def _print_analysis(analysis: dict) -> None:
+    print(f"Events analyzed: {analysis['total_events']}")
+    print("\nBy type:")
+    for event_type, count in sorted(analysis["by_type"].items()):
+        print(f"  {event_type}: {count}")
+    print("\nDuplicates:")
+    print(
+        f"  same type+path within {analysis['duplicate_window_ms']}ms: "
+        f"{analysis['duplicates_same_type_path_window']}"
+    )
+    print("\nBurst detection:")
+    print(f"  max events per second: {analysis['max_events_per_second']}")
+    print("\nTop paths:")
+    for path, count in analysis["top_paths"].items():
+        print(f"  {path}: {count}")
+    print("\nSignal/noise proxy:")
+    print(f"  unique paths: {analysis['unique_paths']}")
+    print(
+        "  file_change events per unique path: "
+        f"{analysis['duplication_factor_file_changes_per_path']}x"
+    )
 
 
 def cmd_watch(args: argparse.Namespace) -> int:
@@ -203,6 +283,18 @@ def cmd_tail(args: argparse.Namespace) -> int:
         time.sleep(args.interval)
 
 
+def cmd_analyze(args: argparse.Namespace) -> int:
+    config = _load_config(args.config)
+    bus = JsonlEventBus(_bus_path(config))
+    events = list(bus.read())
+    analysis = _analyze_events(events, duplicate_window_ms=args.duplicate_window_ms)
+    if args.json:
+        print(json.dumps(analysis, indent=2, sort_keys=True))
+    else:
+        _print_analysis(analysis)
+    return 0
+
+
 def cmd_chat(args: argparse.Namespace) -> int:
     config = _load_config(args.config)
     bus = JsonlEventBus(_bus_path(config))
@@ -242,6 +334,11 @@ def build_parser() -> argparse.ArgumentParser:
     tail.add_argument("--limit", type=int, default=None, help="stop after N events")
     tail.add_argument("--json", action="store_true", help="print raw event JSON")
     tail.set_defaults(func=cmd_tail)
+
+    analyze = sub.add_parser("analyze", help="analyze event-log noise and distribution")
+    analyze.add_argument("--duplicate-window-ms", type=int, default=100, help="window for duplicate detection")
+    analyze.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    analyze.set_defaults(func=cmd_analyze)
 
     sub.add_parser("chat", help="start the Telegram interface").set_defaults(func=cmd_chat)
     return parser

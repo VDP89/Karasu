@@ -173,6 +173,27 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _telegram_chat_id(telegram_cfg: dict) -> int | None:
+    """Resolve the outbound chat target.
+
+    Priority: ``interface.telegram.chat_id`` from YAML, then
+    ``KARASU_TELEGRAM_CHAT_ID`` from the environment. Returns ``None``
+    if neither is set — the bot still runs but the outbound tail loop
+    is disabled.
+    """
+    raw = telegram_cfg.get("chat_id")
+    if raw is None:
+        raw = os.environ.get("KARASU_TELEGRAM_CHAT_ID")
+    if raw is None or raw == "":
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"interface.telegram.chat_id must be an integer, got {raw!r}"
+        ) from exc
+
+
 def cmd_chat(args: argparse.Namespace) -> int:
     config = _load_config(args.config)
     bus = JsonlEventBus(_bus_path(config))
@@ -187,6 +208,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
         token=token,
         bus=bus,
         allowed_users=telegram_cfg.get("allowed_users", []),
+        chat_id=_telegram_chat_id(telegram_cfg),
     )
     interface.run()
     return 0

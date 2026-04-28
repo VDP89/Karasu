@@ -66,3 +66,50 @@ class JsonlEventBus:
                 line = line.strip()
                 if line:
                     yield Event.from_json(line)
+
+
+class JsonlTailReader:
+    """Stateful reader that yields events appended after construction.
+
+    Each call to :meth:`read_new` returns the events appended since the
+    previous call. Partial trailing lines (writer mid-flush) are left
+    unconsumed and picked up on the next call.
+
+    Defaults to starting at EOF — historical events are not replayed.
+    Pass ``start_at_end=False`` to replay from the start of the file.
+    """
+
+    def __init__(self, path: str | Path, start_at_end: bool = True) -> None:
+        self.path = Path(path)
+        if start_at_end and self.path.exists():
+            self._offset = self.path.stat().st_size
+        else:
+            self._offset = 0
+
+    @property
+    def offset(self) -> int:
+        return self._offset
+
+    def read_new(self) -> Iterator[Event]:
+        if not self.path.exists():
+            return
+        with self.path.open("rb") as fh:
+            fh.seek(self._offset)
+            chunk = fh.read()
+        if not chunk:
+            return
+        last_nl = chunk.rfind(b"\n")
+        if last_nl < 0:
+            # No complete line yet; leave offset where it is.
+            return
+        complete = chunk[: last_nl + 1]
+        self._offset += len(complete)
+        for raw in complete.decode("utf-8", errors="replace").splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                yield Event.from_json(line)
+            except (json.JSONDecodeError, TypeError):
+                # Malformed line — skip silently, don't break the tail loop.
+                continue

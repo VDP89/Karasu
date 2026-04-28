@@ -39,18 +39,13 @@ class Dispatcher:
         path = event.data.get("path", "")
         adapter = self.select(classification)
         if adapter is None:
-            return self.bus.append(
-                Event(
-                    type="agent_response",
-                    source="router",
-                    data={"correlates": event.id, "path": path},
-                    dispatch={"agent": None, "status": "failed", "trust_level": 0},
-                    response={
-                        "content": f"no adapter handles classification {classification!r}",
-                        "requires_human": True,
-                    },
-                )
-            )
+            # Per F3 decision (issue #17): suppress agent_response when no
+            # adapter handles the event. The bus represents real agent work,
+            # not pipeline mechanics. The originating file_change is still
+            # on the bus; an operator reconstructs "seen but unhandled" from
+            # the file_change presence + the absence of a correlated
+            # agent_response.
+            return None
         request = AgentRequest(
             classification=classification,
             path=path,

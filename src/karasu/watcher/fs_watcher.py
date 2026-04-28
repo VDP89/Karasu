@@ -60,16 +60,23 @@ class FilesystemWatcher:
         ignore: Iterable[str] = (),
         on_event: OnEvent | None = None,
         queue_size: int | None = None,
+        debounce_ms: int = 0,
     ) -> None:
         self.root = Path(root).resolve()
         self.bus = bus
         self.ignore = tuple(ignore)
         self.on_event = on_event
         self._queue_size = queue_size or self.DEFAULT_QUEUE_SIZE
+        self.debounce_ms = max(0, int(debounce_ms))
         self._observer = Observer()
         self._queue: queue.Queue[Event] | None = None
         self._worker: threading.Thread | None = None
         self._stopping: threading.Event | None = None
+        # Per-(path, change_type) timestamp of the last dispatched event,
+        # in monotonic seconds. Grows unbounded over a long-lived watcher;
+        # acceptable for Phase 1 single-repo use, revisit if memory matters.
+        self._last_dispatched: dict[tuple[str, str], float] = {}
+        self._debounce_lock = threading.Lock()
 
     def _is_ignored(self, rel_path: str) -> bool:
         for pattern in self.ignore:
@@ -82,6 +89,27 @@ class FilesystemWatcher:
             ):
                 return True
         return False
+
+    def _is_debounced(self, rel_path: str, change_type: str) -> bool:
+        """Return True if the (path, change_type) just fired inside the window.
+
+        The first event for a (path, change_type) pair always passes; only
+        subsequent events landing within ``debounce_ms`` are dropped. This
+        suppresses the burst of duplicate events that editors emit on save
+        without losing distinct change kinds (a delete after a modify, or
+        a create after a delete, are not collapsed).
+        """
+        if self.debounce_ms <= 0:
+            return False
+        key = (rel_path, change_type)
+        now = time.monotonic()
+        window_seconds = self.debounce_ms / 1000.0
+        with self._debounce_lock:
+            last = self._last_dispatched.get(key)
+            if last is not None and (now - last) < window_seconds:
+                return True
+            self._last_dispatched[key] = now
+            return False
 
     def _dispatch(self, event: FileSystemEvent) -> Event | None:
         try:
@@ -98,6 +126,8 @@ class FilesystemWatcher:
         if self._is_ignored(rel_path):
             return None
         change_type = self._CHANGE_TYPES.get(event.event_type, event.event_type)
+        if self._is_debounced(rel_path, change_type):
+            return None
         appended = self.bus.append(
             Event(
                 type="file_change",

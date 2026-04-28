@@ -50,6 +50,78 @@ def test_dispatch_normalizes_nested_path_to_forward_slash(
     assert "\\" not in events[0].data["path"]
 
 
+# ----------------------------------------------------------------------
+# Debounce — issue #14 finding F4.
+# ----------------------------------------------------------------------
+
+
+def test_debounce_default_off_passes_every_event(tmp_path: Path, bus: JsonlEventBus) -> None:
+    """Default constructor leaves debounce off — preserves direct-test contract."""
+    watcher = FilesystemWatcher(root=tmp_path, bus=bus)
+    target = tmp_path / "a.py"
+    target.write_text("")
+    for _ in range(3):
+        watcher._dispatch(_fake_event(str(target), "modified"))
+    assert len(list(bus.read())) == 3
+
+
+def test_debounce_drops_repeat_within_window(tmp_path: Path, bus: JsonlEventBus) -> None:
+    watcher = FilesystemWatcher(root=tmp_path, bus=bus, debounce_ms=200)
+    target = tmp_path / "a.py"
+    target.write_text("")
+    for _ in range(3):
+        watcher._dispatch(_fake_event(str(target), "modified"))
+    events = list(bus.read())
+    assert len(events) == 1
+    assert events[0].data == {"path": "a.py", "change_type": "modified"}
+
+
+def test_debounce_does_not_collapse_distinct_change_types(
+    tmp_path: Path, bus: JsonlEventBus
+) -> None:
+    """A created followed by a modified inside the window must both pass.
+
+    The burst from a single editor save is many ``modified`` events;
+    losing a ``created`` because a ``modified`` followed it within 200 ms
+    would silently swallow the existence of the file.
+    """
+    watcher = FilesystemWatcher(root=tmp_path, bus=bus, debounce_ms=200)
+    target = tmp_path / "a.py"
+    target.write_text("")
+    watcher._dispatch(_fake_event(str(target), "created"))
+    watcher._dispatch(_fake_event(str(target), "modified"))
+    events = list(bus.read())
+    assert [e.data["change_type"] for e in events] == ["created", "modified"]
+
+
+def test_debounce_does_not_collapse_distinct_paths(
+    tmp_path: Path, bus: JsonlEventBus
+) -> None:
+    watcher = FilesystemWatcher(root=tmp_path, bus=bus, debounce_ms=200)
+    a = tmp_path / "a.py"
+    b = tmp_path / "b.py"
+    a.write_text("")
+    b.write_text("")
+    watcher._dispatch(_fake_event(str(a), "modified"))
+    watcher._dispatch(_fake_event(str(b), "modified"))
+    events = list(bus.read())
+    assert sorted(e.data["path"] for e in events) == ["a.py", "b.py"]
+
+
+def test_debounce_releases_after_window_elapses(
+    tmp_path: Path, bus: JsonlEventBus
+) -> None:
+    """A repeat past the window passes. Uses a tiny window for speed."""
+    watcher = FilesystemWatcher(root=tmp_path, bus=bus, debounce_ms=20)
+    target = tmp_path / "a.py"
+    target.write_text("")
+    watcher._dispatch(_fake_event(str(target), "modified"))
+    time.sleep(0.05)  # 50 ms — well past the 20 ms window
+    watcher._dispatch(_fake_event(str(target), "modified"))
+    events = list(bus.read())
+    assert len(events) == 2
+
+
 def test_ignore_pattern_skips_event(tmp_path: Path, bus: JsonlEventBus) -> None:
     watcher = FilesystemWatcher(root=tmp_path, bus=bus, ignore=("__pycache__",))
     nested = tmp_path / "__pycache__" / "x.pyc"

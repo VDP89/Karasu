@@ -2,28 +2,28 @@
 
 ## Goal
 
-Continue Phase 1B: real Claude dogfood
+Execute Phase 1B dogfood with full observability.
 
 ## Checklist
 
 ```text
-1. Pull latest main
-2. Run karasu watch
-3. Use real Claude CLI
-4. Modify files intentionally
-5. Observe behavior
-6. Record anomalies
+1. Pull latest branches
+2. Setup local env
+3. Run karasu watch
+4. Run karasu tail --follow
+5. Modify files
+6. Run karasu analyze
+7. Record findings
 ```
 
 ## What to observe
 
 ```text
-- number of events per save
-- Claude latency
-- stdout structure
-- errors / failures
-- cost implications
-- repeated triggers
+- events per file save
+- duplicate rate
+- burst rate (events/sec)
+- Claude latency (if active)
+- failures or crashes
 ```
 
 ## Output
@@ -31,18 +31,16 @@ Continue Phase 1B: real Claude dogfood
 Create issue:
 
 ```text
-phase:1B real Claude observations
+phase:1B dogfood results
 ```
 
-## Do not
-
-```text
-Do not implement new features during observation
-Do not optimize prematurely
-```
+Include metrics from analyze + subjective observations.
 
 ## Exit condition
 
 ```text
-Enough real data to justify next PR (JSONL or fixes)
+Enough data to decide:
+- debounce needed or not
+- filtering needed or not
+- pipeline adjustments
 ```

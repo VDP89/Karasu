@@ -8,40 +8,36 @@
 
 ## Phase decisions
 
-### Phase 1A
+### Observability-first (NEW)
 
 Decision:
-- Close PR early once loop works
+- Build tail + analyze before any UI or automation
 
 Reason:
-- Avoid infinite review loops
+- Prevent blind system design
+- Quantify event noise before filtering
 
 ---
 
-### Phase 1B
+### Event integrity
 
 Decision:
-- Dogfood first, PR after
+- Atomic consumption in tail reader
+- Byte-based splitting (no splitlines)
 
 Reason:
-- Real behavior > assumptions
+- Prevent silent data loss
+- Ensure JSON correctness
 
 ---
 
-### JSONL logging
+### Analysis before control
 
 Decision:
-- Keep implementation minimal (append-only)
+- Introduce `karasu analyze` before debounce/controller
 
 Reason:
-- Observability first, architecture later
+- Avoid premature optimization
+- Base decisions on measured data
 
 ---
-
-### Telegram
-
-Decision:
-- Not core product, only temporary interface
-
-Reason:
-- Final direction is Karasu native console

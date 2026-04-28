@@ -105,9 +105,23 @@ def test_tail_reader_no_event_loss_on_partial_consumption(tmp_path: Path) -> Non
     reader = JsonlTailReader(p, start_at_end=False)
     events = reader.read_new()
 
-    # Simulate partial consumption
     first = events[0]
     remaining = events[1:]
 
     assert first.type == "A"
     assert [e.type for e in remaining] == ["B"]
+
+
+def test_tail_reader_handles_unicode_separator_in_payload(tmp_path: Path) -> None:
+    p = tmp_path / "events.jsonl"
+    bus = JsonlEventBus(p)
+
+    # U+2028 line separator inside JSON string
+    payload = "hello\u2028world"
+    bus.append(Event(type="A", source="s", data={"text": payload}))
+
+    reader = JsonlTailReader(p, start_at_end=False)
+    events = reader.read_new()
+
+    assert len(events) == 1
+    assert events[0].data["text"] == payload

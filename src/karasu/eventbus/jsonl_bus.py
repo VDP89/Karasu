@@ -69,7 +69,7 @@ class JsonlEventBus:
 
 
 class JsonlTailReader:
-    """Stateful reader that yields events appended after construction.
+    """Stateful reader that returns events appended after construction.
 
     Each call to :meth:`read_new` returns the events appended since the
     previous call. Partial trailing lines (writer mid-flush) are left
@@ -90,26 +90,33 @@ class JsonlTailReader:
     def offset(self) -> int:
         return self._offset
 
-    def read_new(self) -> Iterator[Event]:
+    def read_new(self) -> list[Event]:
         if not self.path.exists():
-            return
+            return []
         with self.path.open("rb") as fh:
             fh.seek(self._offset)
             chunk = fh.read()
         if not chunk:
-            return
+            return []
         last_nl = chunk.rfind(b"\n")
         if last_nl < 0:
             # No complete line yet; leave offset where it is.
-            return
+            return []
+
         complete = chunk[: last_nl + 1]
-        self._offset += len(complete)
+        events: list[Event] = []
         for raw in complete.decode("utf-8", errors="replace").splitlines():
             line = raw.strip()
             if not line:
                 continue
             try:
-                yield Event.from_json(line)
+                events.append(Event.from_json(line))
             except (json.JSONDecodeError, TypeError):
                 # Malformed line — skip silently, don't break the tail loop.
                 continue
+
+        # Advance only after the whole complete chunk has been parsed.
+        # Returning a list keeps consumption atomic: a caller cannot
+        # partially consume the result and lose already-advanced events.
+        self._offset += len(complete)
+        return events

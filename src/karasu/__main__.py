@@ -4,6 +4,7 @@ Subcommands:
 
 * ``karasu watch``  — start the filesystem watcher and dispatch loop.
 * ``karasu status`` — print a short summary of the recorded events.
+* ``karasu tail``   — print JSONL events as they are observed.
 * ``karasu chat``   — start the Telegram interface.
 """
 
@@ -12,6 +13,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Sequence
@@ -21,7 +23,7 @@ import yaml
 from karasu import __version__
 from karasu.adapters import AgentAdapter, ClaudeCodeAdapter, CodexAdapter
 from karasu.classifier import ClassificationRule, RuleClassifier
-from karasu.eventbus import JsonlEventBus
+from karasu.eventbus import Event, JsonlEventBus, JsonlTailReader
 from karasu.interface import TelegramInterface
 from karasu.pipeline import Pipeline
 from karasu.reporter import HumanReporter
@@ -130,6 +132,12 @@ def _trust(config: dict) -> TrustGradient:
     return TrustGradient(levels)
 
 
+def _format_tail_event(event: Event) -> str:
+    path = event.data.get("path") or event.data.get("correlates") or "-"
+    agent = event.dispatch.get("agent") or event.response.get("agent") or "-"
+    return f"{event.timestamp} {event.type} source={event.source} agent={agent} path={path} id={event.id}"
+
+
 def cmd_watch(args: argparse.Namespace) -> int:
     config = _load_config(args.config)
     bus = JsonlEventBus(_bus_path(config))
@@ -173,6 +181,27 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_tail(args: argparse.Namespace) -> int:
+    config = _load_config(args.config)
+    bus = JsonlEventBus(_bus_path(config))
+    reader = JsonlTailReader(bus.path, start_at_end=not args.from_start)
+    seen = 0
+
+    while True:
+        for event in reader.read_new():
+            if args.json:
+                print(event.to_json(), flush=True)
+            else:
+                print(_format_tail_event(event), flush=True)
+            seen += 1
+            if args.limit is not None and seen >= args.limit:
+                return 0
+
+        if not args.follow:
+            return 0
+        time.sleep(args.interval)
+
+
 def cmd_chat(args: argparse.Namespace) -> int:
     config = _load_config(args.config)
     bus = JsonlEventBus(_bus_path(config))
@@ -204,6 +233,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("watch", help="start the filesystem watcher").set_defaults(func=cmd_watch)
     sub.add_parser("status", help="print a summary of the event log").set_defaults(func=cmd_status)
+
+    tail = sub.add_parser("tail", help="print events from the JSONL event log")
+    tail.add_argument("--from-start", action="store_true", help="read existing events from the beginning")
+    tail.add_argument("--follow", action="store_true", help="keep polling for new events")
+    tail.add_argument("--interval", type=float, default=0.5, help="poll interval when --follow is set")
+    tail.add_argument("--limit", type=int, default=None, help="stop after N events")
+    tail.add_argument("--json", action="store_true", help="print raw event JSON")
+    tail.set_defaults(func=cmd_tail)
+
     sub.add_parser("chat", help="start the Telegram interface").set_defaults(func=cmd_chat)
     return parser
 

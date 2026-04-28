@@ -3,45 +3,49 @@
 ## Phase
 
 Phase 1A: COMPLETED
-Phase 1B: IN PROGRESS (real Claude dogfood)
+Phase 1B: IN PROGRESS (local dogfood with observability)
 
 ## System status
 
-- Local pipeline implemented: watcher → classifier → dispatcher → reporter
-- CI enabled and passing (Python 3.10 / 3.12)
-- JSONL logging: planned (next PR)
-- Telegram: planned (after observability)
+- Core pipeline: watcher → classifier → dispatcher → reporter ✔
+- JSONL bus + TailReader ✔
+- CLI consumer: `karasu tail` ✔
+- CLI analyzer: `karasu analyze` ✔
+- Telegram/UI: DEFERRED
 
-## Verified behavior
+## Verified behavior (so far)
 
-- 46 tests passing
-- Stub adapter smoke test successful
-- No silent data loss observed
-- No silent misrouting observed
+- Reader is atomic (no loss on partial consumption)
+- Unicode-safe line splitting
+- Tail CLI provides real-time visibility
+- Analyzer provides metrics for noise/duplicates
 
-## Current risk
+## Current risks
 
-- Real Claude CLI behavior unknown
-- Event noise not yet measured
-- Output format not validated for downstream routing
+- Real agent (Claude) loop not validated yet
+- Event noise unknown until dogfood run
+- Cost/latency characteristics unknown
 
 ## Active work
 
-- Phase 1B dogfood with real Claude CLI
+- Phase 1B: run local dogfood following docs/local-dogfood.md
+- Collect metrics using `karasu analyze`
 
 ## Next step (entry point)
 
 ```text
-Run karasu watch with real Claude CLI
-Observe behavior (no architecture changes yet)
-Record findings
+1. Run karasu watch
+2. Run karasu tail --follow
+3. Trigger file changes
+4. Run karasu analyze
+5. Record findings in session-log
 ```
 
 ## Do NOT do yet
 
 ```text
-Do not implement Telegram before logs are validated
-Do not add LoopController
-Do not add GitHub webhooks
-Do not add scars mutation pipeline
+- Do not add Telegram
+- Do not add controller/loop
+- Do not mutate scars from chat
+- Do not optimize without data
 ```

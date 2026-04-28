@@ -149,6 +149,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
         bus=bus,
         ignore=watch_cfg.get("ignore", DEFAULT_IGNORE),
         on_event=pipeline,
+        debounce_ms=int(watch_cfg.get("debounce_ms", 250)),
     )
     print(f"karasu watch: writing events to {bus.path}", file=sys.stderr)
     watcher.run_forever()

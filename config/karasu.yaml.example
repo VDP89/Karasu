@@ -2,6 +2,11 @@ version: "0.1.0"
 
 watch:
   path: "."
+  # Coalesce duplicate events within this window per (path, change_type).
+  # Editors typically fire 2–4 filesystem events per save (write + rename
+  # + metadata flush + atime touch); 250 ms collapses those to one. Set
+  # to 0 to disable.
+  debounce_ms: 250
   ignore:
     - ".git"
     - "__pycache__"

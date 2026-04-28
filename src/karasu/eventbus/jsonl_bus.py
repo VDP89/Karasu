@@ -105,11 +105,12 @@ class JsonlTailReader:
 
         complete = chunk[: last_nl + 1]
         events: list[Event] = []
-        for raw in complete.decode("utf-8", errors="replace").splitlines():
-            line = raw.strip()
-            if not line:
+        for raw in complete.split(b"\n"):
+            raw = raw.strip()
+            if not raw:
                 continue
             try:
+                line = raw.decode("utf-8", errors="replace")
                 events.append(Event.from_json(line))
             except (json.JSONDecodeError, TypeError):
                 # Malformed line — skip silently, don't break the tail loop.

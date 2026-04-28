@@ -38,19 +38,32 @@ def test_dispatch_routes_to_first_capable_adapter(bus: JsonlEventBus) -> None:
     }
 
 
-def test_dispatch_marks_failed_when_no_adapter_matches(bus: JsonlEventBus) -> None:
+def test_dispatch_emits_nothing_when_no_adapter_matches(bus: JsonlEventBus) -> None:
+    """Per F3 decision (issue #17): the dispatcher suppresses ``agent_response``
+    when no adapter handles the event. The bus is a record of real agent
+    work, not pipeline mechanics. The originating file_change is still on
+    the bus; absence of a correlated agent_response means "seen but
+    unhandled".
+    """
     dispatcher = Dispatcher(bus=bus, adapters=[_StubAdapter(handles=("doc_change",))])
     original = _classified("a.py", "code_change")
     bus.append(original)
-    dispatcher.dispatch(original)
 
+    result = dispatcher.dispatch(original)
+
+    assert result is None
     events = list(bus.read())
-    assert len(events) == 2
-    failure = events[-1]
-    assert failure.id != original.id
-    assert failure.type == "agent_response"
-    assert failure.source == "router"
-    assert failure.data["correlates"] == original.id
-    assert failure.dispatch == {"agent": None, "status": "failed", "trust_level": 0}
-    assert failure.response["requires_human"] is True
-    assert "code_change" in failure.response["content"]
+    assert len(events) == 1  # only the file_change appended manually above
+    assert events[0].id == original.id
+    assert events[0].type == "file_change"
+
+
+def test_dispatch_returns_none_does_not_corrupt_bus_when_no_adapter(
+    bus: JsonlEventBus,
+) -> None:
+    """Repeated no-adapter dispatches must not accumulate noise on the bus."""
+    dispatcher = Dispatcher(bus=bus, adapters=[_StubAdapter(handles=("doc_change",))])
+    for _ in range(5):
+        dispatcher.dispatch(_classified("a.py", "code_change"))
+
+    assert list(bus.read()) == []

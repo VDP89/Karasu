@@ -93,3 +93,73 @@ def test_dispatch_invokes_claude_with_print_flag(monkeypatch: pytest.MonkeyPatch
     assert response.success is True
     assert response.content == "ok"
     assert "-p" in captured["argv"]
+
+
+def test_build_argv_empty_command_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An empty ``command`` would otherwise produce ``["-p", prompt]``
+    # and subprocess.run would try to execute ``-p`` as a binary.
+    # Fail loud at config time with a useful message instead.
+    monkeypatch.setattr(claude_code_module.shutil, "which", lambda _name: None)
+    adapter = ClaudeCodeAdapter(command="")
+
+    with pytest.raises(ValueError, match="cannot be empty"):
+        adapter._build_argv(_request())
+
+
+def test_dispatch_returns_config_error_on_empty_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The ValueError from _build_argv must be converted into a
+    # structured AgentResponse so the dispatcher can write it onto
+    # the bus like any other failure.
+    monkeypatch.setattr(claude_code_module.shutil, "which", lambda _name: None)
+
+    def boom(*_args, **_kwargs):  # pragma: no cover - guards against subprocess running
+        raise AssertionError("subprocess.run should not be called for empty command")
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    adapter = ClaudeCodeAdapter(command="")
+
+    response = adapter.dispatch(_request())
+
+    assert response.success is False
+    assert response.requires_human is True
+    assert "cannot be empty" in response.content
+    assert response.metadata.get("error") == "config"
+
+
+def test_build_argv_does_not_duplicate_print_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # If the user already set --print or -p in command, do not append
+    # another. Double flags are tolerated by the CLI but make the
+    # adapter contract noisy.
+    monkeypatch.setattr(claude_code_module.shutil, "which", lambda _name: None)
+
+    short = ClaudeCodeAdapter(command="claude -p")
+    argv_short = short._build_argv(_request())
+    assert argv_short.count("-p") == 1
+    assert "--print" not in argv_short
+
+    long = ClaudeCodeAdapter(command="claude --print")
+    argv_long = long._build_argv(_request())
+    assert argv_long.count("--print") == 1
+    assert "-p" not in argv_long
+
+
+def test_build_argv_preserves_windows_cmd_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # POSIX-mode shlex.split treats backslashes as escapes, which
+    # corrupts unquoted Windows paths. The adapter switches to
+    # non-POSIX parsing on Windows so the path survives. Patching
+    # os.name lets the test exercise the Windows branch on any host.
+    monkeypatch.setattr(claude_code_module.os, "name", "nt")
+    monkeypatch.setattr(claude_code_module.shutil, "which", lambda _name: None)
+
+    cmd = r"C:\Users\Victor\AppData\Roaming\npm\claude.CMD"
+    adapter = ClaudeCodeAdapter(command=cmd)
+    argv = adapter._build_argv(_request())
+
+    assert argv[0] == cmd
+    assert "-p" in argv

@@ -38,7 +38,21 @@ from karasu.watcher import FilesystemWatcher
 DEFAULT_CONFIG = Path("karasu.yaml")
 DEFAULT_BUS = Path(".karasu/events.jsonl")
 DEFAULT_SCARS = Path(".karasu/scars/")
-DEFAULT_IGNORE = (".git", "__pycache__", "*.pyc", ".karasu/")
+# F6 — anything Karasu writes inside the watched root, plus the two
+# transient file types editors leave behind, must stay off the bus by
+# default. Without this the JSONL bus and operator-side ``tee``
+# captures (e.g. ``karasu watch | tee watch.log``) feed back into the
+# watcher and inflate event volume — observed live during the
+# Phase 1C dogfood (issue #25).
+DEFAULT_IGNORE = (
+    ".git",
+    "__pycache__",
+    "*.pyc",
+    ".karasu/",
+    "events.jsonl",
+    "*.log",
+    "*.tmp",
+)
 
 
 def _load_config(path: Path) -> dict:

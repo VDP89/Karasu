@@ -1,6 +1,12 @@
 import pytest
 
-from karasu.__main__ import DEFAULT_IGNORE, _adapters, _agent_config, _normalize_handles
+from karasu.__main__ import (
+    DEFAULT_IGNORE,
+    _adapter_timeout,
+    _adapters,
+    _agent_config,
+    _normalize_handles,
+)
 
 
 def test_default_ignore_covers_self_generated_paths() -> None:
@@ -125,3 +131,55 @@ def test_adapters_skips_claude_when_disabled_with_null() -> None:
 def test_adapters_raises_on_scalar_agent_section() -> None:
     with pytest.raises(ValueError, match="agents.claude_code must be a mapping"):
         _adapters({"agents": {"claude_code": "claude"}})
+
+
+# ---------------------------------------------------------------------------
+# F8 — adapter timeout_s configurable from YAML
+# ---------------------------------------------------------------------------
+
+
+def test_adapter_timeout_returns_none_when_absent() -> None:
+    assert _adapter_timeout("claude_code", {"command": "claude"}) is None
+
+
+def test_adapter_timeout_parses_int() -> None:
+    assert _adapter_timeout("claude_code", {"timeout_s": 180}) == 180.0
+
+
+def test_adapter_timeout_parses_float() -> None:
+    assert _adapter_timeout("claude_code", {"timeout_s": 12.5}) == 12.5
+
+
+def test_adapter_timeout_parses_string_number() -> None:
+    # YAML can occasionally hand back strings if quoted; coerce.
+    assert _adapter_timeout("claude_code", {"timeout_s": "60"}) == 60.0
+
+
+def test_adapter_timeout_rejects_non_numeric() -> None:
+    with pytest.raises(ValueError, match="claude_code.timeout_s"):
+        _adapter_timeout("claude_code", {"timeout_s": "soon"})
+
+
+def test_adapter_timeout_rejects_zero() -> None:
+    with pytest.raises(ValueError, match="must be > 0"):
+        _adapter_timeout("claude_code", {"timeout_s": 0})
+
+
+def test_adapter_timeout_rejects_negative() -> None:
+    with pytest.raises(ValueError, match="must be > 0"):
+        _adapter_timeout("claude_code", {"timeout_s": -10})
+
+
+def test_adapters_applies_timeout_from_yaml() -> None:
+    config = {"agents": {"claude_code": {"command": "claude", "timeout_s": 200}}}
+    adapters = _adapters(config)
+    assert len(adapters) == 1
+    assert adapters[0].timeout == 200.0
+
+
+def test_adapters_keeps_default_timeout_when_yaml_omits_it() -> None:
+    # Adapter ships with a 120 s default; absence of timeout_s in YAML
+    # must not silently override it with anything else.
+    config = {"agents": {"claude_code": {"command": "claude"}}}
+    adapters = _adapters(config)
+    assert adapters[0].timeout == 120.0

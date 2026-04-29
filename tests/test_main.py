@@ -1,6 +1,15 @@
 import pytest
 
-from karasu.__main__ import _adapters, _agent_config, _normalize_handles
+from karasu.__main__ import DEFAULT_IGNORE, _adapters, _agent_config, _normalize_handles
+
+
+def test_default_ignore_covers_self_generated_paths() -> None:
+    # F6 — the bus, log captures, and editor tmp files must be on the
+    # default ignore list so a fresh ``karasu.yaml`` without an explicit
+    # ``watch.ignore`` does not amplify its own output.
+    expected = {"events.jsonl", "*.log", "*.tmp", ".karasu/"}
+    missing = expected - set(DEFAULT_IGNORE)
+    assert not missing, f"DEFAULT_IGNORE missing: {sorted(missing)}"
 
 
 def test_normalize_handles_accepts_list() -> None:

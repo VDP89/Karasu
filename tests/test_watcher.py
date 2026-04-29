@@ -131,6 +131,28 @@ def test_ignore_pattern_skips_event(tmp_path: Path, bus: JsonlEventBus) -> None:
     assert list(bus.read()) == []
 
 
+@pytest.mark.parametrize(
+    "ignore_pattern,filename",
+    [
+        # F6 — the bus itself, operator-side log captures, and editor
+        # tmp files must stay off the bus by default. Without this the
+        # JSONL bus and ``karasu watch | tee watch.log`` patterns feed
+        # back into the watcher (issue #25 dogfood).
+        ("events.jsonl", "events.jsonl"),
+        ("*.log", "watch.log"),
+        ("*.tmp", "draft.tmp"),
+    ],
+)
+def test_default_ignore_skips_self_generated_paths(
+    tmp_path: Path, bus: JsonlEventBus, ignore_pattern: str, filename: str
+) -> None:
+    watcher = FilesystemWatcher(root=tmp_path, bus=bus, ignore=(ignore_pattern,))
+    target = tmp_path / filename
+    target.write_text("")
+    assert watcher._dispatch(_fake_event(str(target), "modified")) is None
+    assert list(bus.read()) == []
+
+
 def test_on_event_callback_fires_after_append(tmp_path: Path, bus: JsonlEventBus) -> None:
     seen = []
     watcher = FilesystemWatcher(root=tmp_path, bus=bus, on_event=seen.append)

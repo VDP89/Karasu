@@ -60,3 +60,39 @@ Discarded:
 - Option B' with periodic summary: defer until trust gradient actually needs unhandled-event accounting.
 
 ---
+
+### F7 — dispatch_on semantics (issue #25, PR #26)
+
+Decision:
+- `code_change` excludes `deleted` from dispatch by default.
+- Per-rule `dispatch_on` overrides the default.
+- Other classifications are NOT filtered at the pipeline; the dispatcher remains the single source of "no adapter handles this".
+
+Reason:
+- Atomic-write editors (VS Code, Claude Code Write tool, most "atomic save" implementations) emit a `deleted` event on the original path before the new content lands. Dispatching the adapter on that transient state sends it at a path that does not exist yet.
+- Hardcoding "no dispatch on delete" globally would break legitimate workflows (security audit, scar/index cleanup, build-config deletion). Per-rule override preserves those.
+- Other classifications without a documented default are NOT filtered — keeping the F3 contract that the dispatcher is the only place that decides "no adapter handles this".
+
+Discarded:
+- Global ban on dispatch-on-delete: would block valid security/cleanup flows.
+- Hardcoding per classification: not extensible.
+- Move the filter into the dispatcher: would conflate "no adapter for this classification" (F3) with "this change_type doesn't apply" (F7) — two distinct reasons that operators read differently.
+
+---
+
+### F8 — adapter timeout configurable per-agent (issue #25, PR #28)
+
+Decision:
+- `agents.<name>.timeout_s` reads from YAML and overrides the adapter's constructor default.
+- Absent → keep the constructor default (120 s).
+- `0`, negatives, and non-numeric values raise `ValueError` at startup with the YAML section name.
+
+Reason:
+- Phase 1C dogfood saw ~38 s for an auto-discovery dispatch. Real refactors will exceed 120 s.
+- Operators must raise (or lower) the timeout without editing source.
+- A silent "timeout = 0 means no timeout" coercion would let a bad config hang the watcher indefinitely. Explicit fail-fast is safer in Phase 1.
+
+Discarded:
+- Global `defaults.adapter_timeout_s`: not needed yet; per-agent unblocks Phase 2 work and the operator can copy the same number into multiple agents until a default is required.
+- Coerce `0` to "no timeout": opaque footgun.
+

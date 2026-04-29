@@ -30,7 +30,12 @@ class ClaudeCodeAdapter(AgentAdapter):
             f"Karasu dispatch: {request.classification} on {request.path} "
             f"(priority={request.priority})"
         )
-        return [*shlex.split(self.command), prompt]
+        # -p / --print runs the CLI non-interactively. Without it the
+        # subprocess opens an interactive session and blocks until the
+        # adapter timeout. The flag is appended (not prepended) so a
+        # user-supplied ``command`` can still override the executable
+        # path without having to re-specify the print flag.
+        return [*shlex.split(self.command), "-p", prompt]
 
     def dispatch(self, request: AgentRequest) -> AgentResponse:
         try:

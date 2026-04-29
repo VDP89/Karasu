@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shlex
+import shutil
 import subprocess
 from typing import Iterable
 
@@ -30,12 +31,23 @@ class ClaudeCodeAdapter(AgentAdapter):
             f"Karasu dispatch: {request.classification} on {request.path} "
             f"(priority={request.priority})"
         )
+        parts = shlex.split(self.command)
+        # subprocess.run with shell=False does not search PATH for
+        # ``.cmd``/``.bat`` shims — npm installs ``claude`` as a CMD
+        # shim on Windows, so the bare token ``claude`` raises
+        # FileNotFoundError there. shutil.which performs the lookup
+        # cross-platform: it returns the absolute path of the resolved
+        # executable (or None if the command is not on PATH). We swap
+        # only the first token; if which() returns None the original
+        # token is kept so the FileNotFoundError branch in dispatch()
+        # still produces a clean failure response.
+        resolved = shutil.which(parts[0]) if parts else None
+        if resolved is not None:
+            parts[0] = resolved
         # -p / --print runs the CLI non-interactively. Without it the
         # subprocess opens an interactive session and blocks until the
-        # adapter timeout. The flag is appended (not prepended) so a
-        # user-supplied ``command`` can still override the executable
-        # path without having to re-specify the print flag.
-        return [*shlex.split(self.command), "-p", prompt]
+        # adapter timeout.
+        return [*parts, "-p", prompt]
 
     def dispatch(self, request: AgentRequest) -> AgentResponse:
         try:

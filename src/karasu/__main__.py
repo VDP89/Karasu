@@ -111,6 +111,30 @@ def _agent_config(name: str, value) -> dict | None:
     )
 
 
+def _adapter_timeout(name: str, cfg: dict) -> float | None:
+    """Read ``timeout_s`` from an agent config, or ``None`` if absent.
+
+    Validation: must be a positive number. ``None``/missing means
+    fall back to the adapter's own default. Negative or zero is
+    nonsensical and silently coerces a "no timeout" semantic that
+    Phase 1 does not want.
+    """
+    raw = cfg.get("timeout_s")
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"agents.{name}.timeout_s must be a positive number, got {raw!r}"
+        ) from exc
+    if value <= 0:
+        raise ValueError(
+            f"agents.{name}.timeout_s must be > 0, got {value}"
+        )
+    return value
+
+
 def _adapters(config: dict) -> list[AgentAdapter]:
     agents_cfg = config.get("agents", {}) or {}
     adapters: list[AgentAdapter] = []
@@ -126,6 +150,9 @@ def _adapters(config: dict) -> list[AgentAdapter]:
         # wildcard, which would silently make the adapter catch-all.
         if claude.get("handles") is not None:
             kwargs["handles"] = _normalize_handles("claude_code", claude["handles"])
+        timeout = _adapter_timeout("claude_code", claude)
+        if timeout is not None:
+            kwargs["timeout"] = timeout
         adapters.append(ClaudeCodeAdapter(**kwargs))
     codex = _agent_config("codex", agents_cfg.get("codex"))
     if codex is not None and codex.get("repo"):

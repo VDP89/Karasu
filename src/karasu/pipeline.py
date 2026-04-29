@@ -29,6 +29,18 @@ class Pipeline:
     # change agent selection. See docs/scar-engine.md.
     SUPPORTED_SCAR_KEYS = frozenset({"classification", "priority", "path"})
 
+    # F7 — atomic-write semantics. Editors that save through a
+    # write-then-rename sequence (VS Code, the Claude Code Write tool,
+    # most "atomic save" implementations) emit a ``deleted`` on the
+    # original path before the new content is in place. Dispatching a
+    # code-review adapter against that transient delete sends the
+    # adapter at a path that may not exist yet. ``code_change`` is
+    # therefore restricted to file states where reviewable content
+    # exists. Per-rule ``dispatch_on`` overrides this default.
+    _DEFAULT_DISPATCH_ON: dict[str, tuple[str, ...]] = {
+        "code_change": ("created", "modified"),
+    }
+
     def __init__(
         self,
         classifier: RuleClassifier,
@@ -54,12 +66,38 @@ class Pipeline:
             )
             if override:
                 self._apply_scar_override(classified, override)
+        if not self._should_dispatch(classified):
+            return
         response_event = self.dispatcher.dispatch(classified)
         if response_event is None:
             return
         report = self.reporter.report(response_event)
         if report is not None:
             self.sink(report)
+
+    def _should_dispatch(self, event: Event) -> bool:
+        """Apply the per-rule or classification-default dispatch_on filter.
+
+        - When the rule supplied an explicit ``dispatch_on`` list (carried
+          on ``event.data``), only those change types pass through.
+        - When the rule was silent, look up the classification-level
+          default in ``_DEFAULT_DISPATCH_ON`` (e.g. ``code_change``
+          excludes ``deleted``).
+        - Classifications without an explicit rule and without a
+          documented default are not filtered — the dispatcher remains
+          the single source of "no adapter handles this".
+        """
+        change_type = event.data.get("change_type")
+        if change_type is None:
+            return True
+        rule_dispatch_on = event.data.get("dispatch_on")
+        if rule_dispatch_on is not None:
+            return change_type in rule_dispatch_on
+        classification = event.data.get("classification", "")
+        default_dispatch_on = self._DEFAULT_DISPATCH_ON.get(classification)
+        if default_dispatch_on is None:
+            return True
+        return change_type in default_dispatch_on
 
     def _apply_scar_override(self, event: Event, override: dict) -> None:
         unknown = set(override) - self.SUPPORTED_SCAR_KEYS

@@ -132,3 +132,113 @@ def test_pipeline_rejects_mixed_supported_and_unsupported_keys(
 
     with pytest.raises(ValueError, match="unsupported keys.*trust_level"):
         pipeline(_file_change("src/foo.py"))
+
+
+# ---------------------------------------------------------------------------
+# F7 — dispatch_on filter (atomic-write / per-rule override)
+# ---------------------------------------------------------------------------
+
+
+def _file_change_with(path: str, change_type: str) -> Event:
+    return Event(
+        type="file_change",
+        source="watcher",
+        data={"path": path, "change_type": change_type},
+    )
+
+
+def test_code_change_default_excludes_deleted(bus: JsonlEventBus) -> None:
+    # The Write/atomic-rename pattern emits ``deleted`` on the original
+    # path before the new content lands. Dispatching on that transient
+    # state would send the adapter at a file that does not exist yet.
+    adapter = _StubAdapter("claude_code")
+    pipeline, reports = _build(bus, [adapter])
+
+    pipeline(_file_change_with("src/foo.py", "deleted"))
+
+    assert adapter.calls == []
+    assert reports == []
+
+
+def test_code_change_default_dispatches_on_modified(bus: JsonlEventBus) -> None:
+    adapter = _StubAdapter("claude_code")
+    pipeline, reports = _build(bus, [adapter])
+
+    pipeline(_file_change_with("src/foo.py", "modified"))
+
+    assert len(adapter.calls) == 1
+    assert reports
+
+
+def test_code_change_default_dispatches_on_created(bus: JsonlEventBus) -> None:
+    adapter = _StubAdapter("claude_code")
+    pipeline, reports = _build(bus, [adapter])
+
+    pipeline(_file_change_with("src/foo.py", "created"))
+
+    assert len(adapter.calls) == 1
+    assert reports
+
+
+def _build_with_dispatch_on(
+    bus: JsonlEventBus, dispatch_on: tuple[str, ...]
+) -> tuple[Pipeline, list[Report], _StubAdapter]:
+    adapter = _StubAdapter("claude_code")
+    classifier = RuleClassifier(
+        [
+            ClassificationRule(
+                match="*.py",
+                type="code_change",
+                priority="normal",
+                dispatch_on=dispatch_on,
+            )
+        ]
+    )
+    dispatcher = Dispatcher(bus=bus, adapters=[adapter])
+    reporter = HumanReporter(TrustGradient({"claude_code": 2}))
+    sink: list[Report] = []
+    pipeline = Pipeline(classifier, dispatcher, reporter, sink.append)
+    return pipeline, sink, adapter
+
+
+def test_rule_dispatch_on_overrides_default_to_allow_deleted(bus: JsonlEventBus) -> None:
+    # An operator who genuinely wants to react to deletions (security
+    # audit, scar/index cleanup) opts in via per-rule ``dispatch_on``.
+    pipeline, reports, adapter = _build_with_dispatch_on(
+        bus, ("created", "modified", "deleted")
+    )
+
+    pipeline(_file_change_with("src/foo.py", "deleted"))
+
+    assert len(adapter.calls) == 1
+    assert reports
+
+
+def test_rule_dispatch_on_overrides_default_to_restrict(bus: JsonlEventBus) -> None:
+    pipeline, _, adapter = _build_with_dispatch_on(bus, ("created",))
+
+    pipeline(_file_change_with("src/foo.py", "modified"))
+    pipeline(_file_change_with("src/foo.py", "created"))
+
+    assert len(adapter.calls) == 1
+    assert adapter.calls[0].path == "src/foo.py"
+
+
+def test_unknown_classification_is_not_filtered(bus: JsonlEventBus) -> None:
+    # ``unknown`` (no rule matched) has no documented default and no
+    # rule-level override. The pipeline should not silently swallow
+    # those events; the dispatcher remains the single point that
+    # decides "no adapter handles this".
+    adapter = _StubAdapter("claude_code", handles=("code_change",))
+    classifier = RuleClassifier()  # no rules → everything is unknown
+    dispatcher = Dispatcher(bus=bus, adapters=[adapter])
+    reporter = HumanReporter(TrustGradient({"claude_code": 2}))
+    sink: list[Report] = []
+    pipeline = Pipeline(classifier, dispatcher, reporter, sink.append)
+
+    pipeline(_file_change_with("README.md", "deleted"))
+
+    # Adapter does not handle ``unknown`` → no dispatch, but we passed
+    # the change_type filter (no default to apply) and the dispatcher
+    # is the one rejecting via Router F3.
+    assert adapter.calls == []

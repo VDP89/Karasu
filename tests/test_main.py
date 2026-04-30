@@ -6,6 +6,7 @@ from karasu.__main__ import (
     _adapters,
     _agent_config,
     _normalize_handles,
+    _telegram_chat_id,
 )
 
 
@@ -183,3 +184,34 @@ def test_adapters_keeps_default_timeout_when_yaml_omits_it() -> None:
     config = {"agents": {"claude_code": {"command": "claude"}}}
     adapters = _adapters(config)
     assert adapters[0].timeout == 120.0
+
+
+def test_telegram_chat_id_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KARASU_TELEGRAM_CHAT_ID", "12345")
+    assert _telegram_chat_id({}) == 12345
+
+
+def test_telegram_chat_id_falls_back_to_yaml(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("KARASU_TELEGRAM_CHAT_ID", raising=False)
+    assert _telegram_chat_id({"chat_id": 999}) == 999
+
+
+def test_telegram_chat_id_env_takes_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KARASU_TELEGRAM_CHAT_ID", "1")
+    assert _telegram_chat_id({"chat_id": 2}) == 1
+
+
+def test_telegram_chat_id_returns_none_when_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("KARASU_TELEGRAM_CHAT_ID", raising=False)
+    assert _telegram_chat_id({}) is None
+
+
+def test_telegram_chat_id_rejects_non_integer(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KARASU_TELEGRAM_CHAT_ID", "not-a-number")
+    with pytest.raises(ValueError, match="must be an integer"):
+        _telegram_chat_id({})
+
+
+def test_telegram_chat_id_strips_whitespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KARASU_TELEGRAM_CHAT_ID", "  77  ")
+    assert _telegram_chat_id({}) == 77

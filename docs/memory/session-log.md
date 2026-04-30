@@ -65,3 +65,32 @@ Impact:
 
 Next step:
 - Phase 2 — design the human surface (UI / Telegram / controller). The exit condition of Phase 1C confirmed no contract redesign is needed.
+
+---
+
+## 2026-04-29 (later) — Phase 2 chunk 1: Telegram outbound sink
+
+What changed:
+- `docs/phase-2-surface.md` — surface picked (Telegram outbound, read-only), reporter↔surface contract on paper, first PR sized.
+- `TelegramInterface.drain(reader, reporter)` — pulls events from `JsonlTailReader`, runs `HumanReporter`, returns `Report`s.
+- `TelegramInterface.send(report)` — lazy-imports `python-telegram-bot`, posts one chat message via `Bot.send_message`.
+- `TelegramInterface(chat_id=...)` — explicit destination for outbound.
+- `karasu chat` rewritten: fail-fast on missing token or chat id, drain loop forwarding agent_response → Telegram, polling interval configurable via `interface.telegram.poll_interval`.
+- `_telegram_chat_id` — env (`KARASU_TELEGRAM_CHAT_ID`) over YAML (`interface.telegram.chat_id`); raises on non-integer.
+- `tests/test_telegram_bot.py` (12 tests) and `tests/test_main.py` (+6 tests). 106/106 pass locally.
+- `docs/local-dogfood.md` — Phase 2 Telegram section appended.
+
+Decisions:
+- Surface = sink. No orchestration. Subscribes via existing primitives, no new ones invented.
+- `Report(text, needs_decision)` is enough; do not pre-extend.
+- Inbound stays read-only on the bus (`human_decision`) — pipeline does NOT react in Phase 2.
+- Whitelist (`allowed_users`) preserved for the future inbound chunk; default (empty) allows anyone, since no inbound handler ships in chunk 1.
+- `chat_id` is mandatory at startup. Refuse to start if absent — single-operator default.
+
+Impact:
+- Operator can leave the laptop and still receive `agent_response` events on Telegram.
+- The bus stays the canonical record; Telegram is one of multiple potential surfaces (terminal `karasu tail` is the other already).
+- No change to `AgentResponse`, F3, F7, or F8 contracts.
+
+Next step:
+- Phase 2 chunk 2 — decide between read-only slash commands (`/status`, `/agents`, `/scars`) or inbound scar-capture (`/correct`, `/scar`). Both are documented as deferred in `docs/phase-2-surface.md`.

@@ -336,23 +336,72 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     return 0
 
 
+def _telegram_chat_id(telegram_cfg: dict) -> int | None:
+    """Resolve the Telegram destination chat id.
+
+    Order: ``KARASU_TELEGRAM_CHAT_ID`` env var, then
+    ``interface.telegram.chat_id`` in YAML. Returns ``None`` when
+    absent so the caller can fail-fast with a clean message instead
+    of pushing the failure to the first ``send`` call.
+
+    Raises ``ValueError`` for non-integer values so the operator
+    learns at startup.
+    """
+    raw = os.environ.get("KARASU_TELEGRAM_CHAT_ID", "").strip()
+    if not raw:
+        raw = str(telegram_cfg.get("chat_id", "")).strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"telegram chat id must be an integer, got {raw!r}"
+        ) from exc
+
+
 def cmd_chat(args: argparse.Namespace) -> int:
     config = _load_config(args.config)
     bus = JsonlEventBus(_bus_path(config))
-    telegram_cfg = config.get("interface", {}).get("telegram", {})
+    telegram_cfg = config.get("interface", {}).get("telegram", {}) or {}
+
     token = telegram_cfg.get("token") or os.environ.get("KARASU_TELEGRAM_TOKEN", "")
-    if token.startswith("${") and token.endswith("}"):
+    if isinstance(token, str) and token.startswith("${") and token.endswith("}"):
         token = os.environ.get(token[2:-1], "")
     if not token:
         print("error: no telegram token (set KARASU_TELEGRAM_TOKEN)", file=sys.stderr)
         return 2
+
+    try:
+        chat_id = _telegram_chat_id(telegram_cfg)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if chat_id is None:
+        print(
+            "error: no telegram chat id (set KARASU_TELEGRAM_CHAT_ID)",
+            file=sys.stderr,
+        )
+        return 2
+
     interface = TelegramInterface(
         token=token,
         bus=bus,
-        allowed_users=telegram_cfg.get("allowed_users", []),
+        chat_id=chat_id,
+        allowed_users=telegram_cfg.get("allowed_users", []) or [],
     )
-    interface.run()
-    return 0
+    reporter = HumanReporter(_trust(config))
+    reader = JsonlTailReader(bus.path, start_at_end=True)
+
+    print(
+        f"karasu chat: forwarding agent_response events to chat_id={chat_id}",
+        file=sys.stderr,
+    )
+    interval = float(telegram_cfg.get("poll_interval", 0.5))
+    while True:
+        for report in interface.drain(reader, reporter):
+            interface.send(report)
+        time.sleep(interval)
 
 
 def build_parser() -> argparse.ArgumentParser:

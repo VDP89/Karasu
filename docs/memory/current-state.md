@@ -5,7 +5,7 @@
 Phase 1A: COMPLETED
 Phase 1B: COMPLETED (no-adapter pass validated, F1–F5 closed)
 Phase 1C: COMPLETED (real Claude adapter loop validated, F6–F8 closed)
-Phase 2: NOT STARTED (UI / Telegram / controller — design open)
+Phase 2: IN PROGRESS — chunk 1 (Telegram outbound sink) shipped; surface contract frozen in `docs/phase-2-surface.md`
 
 ## System status
 
@@ -21,7 +21,9 @@ Phase 2: NOT STARTED (UI / Telegram / controller — design open)
 - `dispatch_on` per classifier rule + `code_change` excludes `deleted` by default ✔
 - `DEFAULT_IGNORE` covers bus, logs and tmp files ✔
 - Per-adapter `timeout_s` configurable from YAML ✔
-- Telegram / UI / controller: DEFERRED
+- Telegram outbound sink (`karasu chat`) ✔
+- Telegram inbound override loop / slash commands: DEFERRED
+- LoopController / scar capture from chat: DEFERRED
 
 ## Verified behavior (Phase 1C closed)
 
@@ -64,7 +66,8 @@ Phase 2: NOT STARTED (UI / Telegram / controller — design open)
 ## Next step (entry point)
 
 ```text
-Phase 2 — design the human surface (UI / Telegram / controller).
+Phase 2 — chunk 2: decide between slash commands (read-only `/status`,
+`/agents`, `/scars`) or scar-capture inbound (`/correct`, `/scar`).
 See docs/memory/next-session.md.
 ```
 

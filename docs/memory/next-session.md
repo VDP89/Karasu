@@ -2,65 +2,94 @@
 
 ## Goal
 
-**Phase 2 — design the human surface (UI / Telegram / controller).**
+**Phase 2 — chunk 2: pick between read-only slash commands and inbound scar-capture.**
 
-Phase 1C closed the validation loop: file change → classify → dispatch → real Claude CLI → `agent_response` on the bus. The findings F1–F8 are all resolved (see `current-state.md`). The adapter contract (`AgentResponse(content, success, requires_human, metadata)`) does not need redesign.
+Phase 2 chunk 1 (Telegram outbound sink) shipped: `karasu chat`
+forwards every `agent_response` to a configured Telegram chat via
+`TelegramInterface.drain(reader, reporter)` + `send(report)`. The
+surface contract (sink, not orchestrator) is frozen in
+`docs/phase-2-surface.md`.
 
-The next layer is how a human reads the bus and acts on it. Phase 2 is design-first: write down the surface contract before building the Telegram bot, web UI, or LoopController.
+The next chunk has to choose one direction — both are valid, but
+shipping them together would push the PR over 400 LOC and over the
+review-loop's "small chunks" rule.
+
+## The two options
+
+### Option A — read-only slash commands
+
+```text
+Scope: /status, /agents, /scars
+Where: TelegramInterface gets a python-telegram-bot Application
+       with three command handlers, each a pure function over current
+       Karasu state.
+Effect on bus: none — these are read-only.
+PR size estimate: ~250 LOC including mocked tests.
+Risk: low. No new contracts. No pipeline coupling.
+Value: operator can poll system state without leaving Telegram.
+```
+
+### Option B — inbound scar-capture
+
+```text
+Scope: /correct <event_id> <field>=<value> and /scar <field>=<value>
+Where: TelegramInterface routes the message text to ScarEngine via
+       a new `record_scar_correction(event_id, ...)` method on top of
+       the existing `record_decision(user_id, text)`.
+Effect on bus: writes scar_consultation events; pipeline still does
+       NOT consume them in Phase 2 (per surface contract).
+PR size estimate: ~400 LOC including ScarEngine glue and tests.
+Risk: medium. Couples surface to ScarEngine. Crosses Phase 1D
+      (scar-capture) territory.
+Value: closes the Lucy-Syndrome correction loop one step earlier.
+```
+
+## Recommendation
+
+**Option A first.** Lower risk, ships under 250 LOC, validates the
+inbound polling path with mocked tests before adding the
+ScarEngine coupling. Option B follows in chunk 3 once the inbound
+plumbing has dogfood evidence.
 
 ## Pre-reads
 
 ```text
-1. docs/memory/current-state.md         — phase + capabilities snapshot
-2. docs/memory/session-log.md           — what changed last session
-3. docs/memory/decision-log.md          — durable decisions (esp. F3 / F7 / F8)
-4. docs/architecture.md                 — module map
-5. docs/scar-engine.md, docs/review-loop.md — Phase 1 contracts the next surface must respect
-6. issue #25 (closed)                   — Phase 1C dogfood + Codex review summary
-```
-
-## Open questions to answer in Phase 2 design
-
-```text
-1. What does the human *do* when an agent_response lands?
-   - Read it inline?
-   - Approve/reject it (trust-level driven)?
-   - Ask a follow-up?
-2. Where does the human read it?
-   - Telegram (already scaffolded in src/karasu/interface/, deferred since Phase 1A)
-   - Web UI
-   - Terminal-only via `karasu tail --follow`
-3. How does the human override?
-   - Inline command in chat?
-   - Slash commands?
-   - Web form?
-4. What is the contract between reporter and surface?
-   - Is the Report dataclass enough, or does the surface need richer payload?
-5. Loop control:
-   - Does Phase 2 add a LoopController or does it stay synchronous?
-   - If LoopController, how does it interact with debounce + adapter timeout?
+1. docs/phase-2-surface.md            — surface contract (do not violate)
+2. docs/memory/current-state.md       — phase + capabilities
+3. docs/memory/session-log.md         — chunk 1 summary
+4. src/karasu/interface/telegram_bot.py — extension target
+5. src/karasu/scars/engine.py         — only if Option B
 ```
 
 ## Do NOT do yet
 
 ```text
-- Do not start coding Telegram before the surface contract is on paper.
-- Do not parallelize or batch adapter calls (Phase 1 stays synchronous).
+- Do not parallelize or batch adapter calls.
 - Do not abstract the adapter behind a plugin layer.
-- Do not mutate scars from chat / Telegram.
+- Do not mutate scars from chat (Option B may approach this; respect
+  the F3 / F7 contracts and keep the pipeline single-event).
+- Do not touch AgentResponse, F3 dispatcher semantics, F7 dispatch_on,
+  F8 timeout_s. All four are frozen.
+- Do not introduce a LoopController.
 ```
 
 ## Exit condition
 
 ```text
-A short docs/phase-2-surface.md (or equivalent) with:
-- The human's primary surface picked (Telegram / Web / both).
-- The reporter ↔ surface contract.
-- A first PR plan (one chunk, ~400 lines max).
+A new feat/* branch, ≤400 LOC, with:
+- The chosen option implemented and tested with mocked python-telegram-bot.
+- docs/local-dogfood.md updated with the new commands.
+- Memory files synced (current-state, session-log, decision-log,
+  this file pointed at chunk 3).
 ```
 
 ## Anchor for the previous session
 
-Phase 1C closed 2026-04-29. PRs #24 (adapter), #26 (F7 dispatch_on), #27 (F6 default ignores), #28 (F8 timeout) all merged. Issue #25 documents the dogfood and the Codex review. Bus volume during a single live edit: 3 events (1 file_change + 1 watch.log noise + 1 agent_response). End-to-end latency ~38.5 s (Claude `-p` with auto-discovery).
+Phase 2 chunk 1 closed 2026-04-29.
 
-A non-blocking follow-up was filed by Codex on PR #24: support **list-form `command` in YAML** to avoid shell-like string parsing entirely. Filed for whenever string parsing actually bites; not blocking Phase 2.
+- `docs/phase-2-surface.md` (PR #30) — design only.
+- `feat/telegram-outbound-sink` (this session) — `TelegramInterface.drain` + `send`, `karasu chat` rewritten, 106/106 tests green locally.
+
+Codex review pending; ChatGPT acts as reviewer for this repo per
+`CLAUDE.md` and `docs/review-loop.md`. The maintainer passes the PR
+to the reviewer manually when an audit is needed.

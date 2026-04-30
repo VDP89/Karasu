@@ -175,3 +175,24 @@ B. If event noise is high -> open feat/watch-debounce.
 C. If Claude CLI output is unusable -> open feat/claude-adapter-output-contract.
 D. If failures are clear but recoverable -> document and add focused adapter handling.
 ```
+
+## Phase 2 — Telegram outbound sink (optional)
+
+Once the JSONL pipeline is stable, the outbound Telegram sink can
+forward each ``agent_response`` to a chat:
+
+```bash
+export KARASU_TELEGRAM_TOKEN="<bot-token-from-BotFather>"
+export KARASU_TELEGRAM_CHAT_ID="<numeric-chat-id>"
+karasu chat
+```
+
+Both env vars are mandatory — ``karasu chat`` exits with code 2 if
+either is missing. With them set, the process polls the bus and
+sends one Telegram message per ``agent_response``. ``file_change``
+and other event types are not forwarded; the surface is a sink, not
+an event mirror (see ``docs/phase-2-surface.md``).
+
+Inbound replies in the chat write ``human_decision`` events on the
+bus but the pipeline does NOT react to them in Phase 2. Override /
+scar capture is deferred.

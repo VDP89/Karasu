@@ -116,6 +116,36 @@ Discarded:
 
 ---
 
+### Phase 2 — redact args in human_decision for unauthorized writes (PR #33, audit fix)
+
+Decision:
+- Authorized write commands record the full `/<name> <args>` in the
+  `human_decision` event.
+- Unauthorized write commands and unknown commands record only the
+  command name + outcome label: `"/<name> (unauthorized)"` or
+  `"/<name> (unknown command)"`. The raw args are dropped.
+
+Reason:
+- The audit (ChatGPT, 2026-04-29) flagged that storing the full
+  message text on every attempt is a privacy hazard: a leaked bot
+  token lets attackers spam arbitrary content through `/correct`
+  / `/scar`, all of which would be persisted verbatim to the bus.
+- Operationally only the metadata (command name + outcome) is
+  useful in the unauthorized case. The args content is worse than
+  useless — it bloats the bus and may contain sensitive strings.
+- Authorized callers still get full text so they can debug their
+  own input.
+
+Discarded:
+- Skip the audit record entirely on unauthorized: loses the
+  attempt count needed for any future rate limit / monitoring.
+- Hash the args: adds complexity for no operational gain (we don't
+  match on the hash).
+- Redact for ALL writes including authorized: hurts the operator's
+  ability to reconstruct what they typed.
+
+---
+
 ### Phase 2 — trigger derivation re-classifies on capture (PR #33)
 
 Decision:

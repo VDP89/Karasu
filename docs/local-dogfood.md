@@ -243,4 +243,11 @@ unaffected.
 
 Every attempt — accepted, rejected, or unauthorized — also writes a
 ``human_decision`` event on the bus so the audit trail is preserved.
-The pipeline does NOT consume those events in Phase 2.
+For unauthorized callers and unknown commands the recorded text is
+**redacted**: the bus stores ``"/<name> (unauthorized)"`` or
+``"/<name> (unknown command)"`` instead of the raw message body
+(message text could contain arbitrary input from a leaked chat;
+only the metadata is operationally useful in those cases).
+Authorized calls record the full ``/<name> <args>`` so the operator
+can reconstruct what they sent. The pipeline does NOT consume
+``human_decision`` events in Phase 2.

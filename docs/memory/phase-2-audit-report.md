@@ -217,3 +217,52 @@ D. ESCALATE.
 Generated 2026-04-29, end of Phase 2 implementation session.
 Phase 2 chunks 1+2+3 pushed and waiting on this audit. No new
 chunk or phase starts until the reviewer returns.
+
+## Audit verdict — 2026-04-29 (relayed from ChatGPT)
+
+```text
+APPROVE  #30  as-is.
+APPROVE  #31  as-is.
+APPROVE  #32  as-is.
+REQUEST  #33  contract drift fix + two secondary findings.
+
+Required minimum change:
+- Sync docs/phase-2-surface.md with the shipped behaviour. Phase 2
+  formally includes scar capture; pipeline still does NOT consume
+  human_decision.
+
+Secondary findings (recommendations, not blockers):
+- For unauthorized callers, do not store full command text in
+  human_decision. Store minimal metadata only.
+- Document that trigger derivation uses the current classifier
+  config, not necessarily the historical one.
+
+Frozen contracts confirmed untouched: AgentResponse, F3, F7, F8.
+```
+
+## Audit fix — 2026-04-29 (applied on the #33 branch)
+
+```text
+- docs/phase-2-surface.md cherry-picked onto feat/telegram-scar-capture
+  and updated: "Surface choice" lists chunks 1+2+3; "Reporter ↔
+  surface contract" acknowledges scar mutation while restating the
+  no-pipeline-reaction rule; pipeline-boundary diagram shows
+  chat → ScarEngine; new "Trigger derivation note" documents the
+  classifier-currency caveat; "Out of scope" / "Do NOT do" lists
+  updated; new "## Revisions" section logs the alignment.
+- TelegramInterface.handle_write_command reordered: authorization
+  check before recording text. Unauthorized callers and unknown
+  commands now record minimal metadata only ("/<name>
+  (unauthorized)" or "/<name> (unknown command)"). Authorized
+  calls still record full args so the operator can debug.
+- tests/test_telegram_bot.py replaces the prior audit-trail
+  assertion with two redaction tests (151/151 pass locally).
+- docs/local-dogfood.md inbound section explains the
+  redaction policy.
+- docs/memory/decision-log.md adds the "redact args" decision
+  alongside the existing D1/D2/D3 entries.
+- docs/memory/session-log.md appends a post-audit entry.
+
+Maintainer hands PR #33 back to ChatGPT for re-audit. If accepted,
+merge order #30 → #31 → #32 → #33 stands.
+```

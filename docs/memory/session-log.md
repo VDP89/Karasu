@@ -146,3 +146,29 @@ Impact:
 
 Next step:
 - Audit gate. Maintainer hands PRs #31 + #32 + #33 to ChatGPT for review. No new chunk or phase starts until the audit returns.
+
+---
+
+## 2026-04-29 (post-audit) — chunk 3 audit fix
+
+Audit verdict (ChatGPT, returned 2026-04-29):
+- APPROVE PRs #30, #31, #32 as-is.
+- REQUEST CHANGES on PR #33: contract drift. The original `docs/phase-2-surface.md` declared Phase 2 as "outbound + read-only, scar capture deferred", but chunks 2 + 3 shipped slash commands and scar capture. Pick option 1: align the design doc with the shipped behaviour. Two secondary findings: redact unauthorized args in `human_decision`; document classifier-currency in trigger derivation.
+
+What changed:
+- `docs/phase-2-surface.md` — cherry-picked onto the chunk 3 branch (originally landed in PR #30) so the contract update lives in PR #33's diff. Surface choice now lists the three chunks; reporter↔surface contract acknowledges scar mutation; pipeline boundary diagram shows chat → ScarEngine; "Out of scope" updated; "Do NOT do" replaces "mutate scars from chat" with "pipeline reaction to human_decision". New `## Revisions` section logs the audit alignment. New "Trigger derivation note" documents that re-classification uses the **currently configured** rules at capture time, not the historical classification.
+- `TelegramInterface.handle_write_command` — reordered: authorization checked BEFORE recording the text. Unauthorized callers and unknown commands record minimal metadata only (`"/{name} (unauthorized)"` / `"/{name} (unknown command)"`) instead of the raw args. Authorized calls still record the full `"/{name} {args}"` so the operator can reconstruct what they typed.
+- `tests/test_telegram_bot.py` — replaced the audit-trail-on-unauthorized assertion with two redaction tests (one for unauthorized, one for unknown command). 151/151 pass.
+- `docs/local-dogfood.md` — clarified the audit-trail / redaction behaviour for the inbound capture section.
+
+Decisions:
+- Redaction is asymmetric to keep diagnostics useful: authorized full text (operator can debug their own input), unauthorized minimal metadata (can't be used to exfiltrate via leaked tokens).
+- The contract update lives in PR #33, not in #30 or a follow-up. Reasoning: the audit explicitly requested changes on #33; #30 stays as the snapshot the reviewer approved; #33 carries both the new behaviour AND the contract acknowledgment.
+
+Impact:
+- PR #33 now self-contained: code + tests + design-doc alignment + memory sync.
+- Phase 2 contract is honest: scar capture IS part of Phase 2; the pipeline still does NOT consume `human_decision`.
+- No change to AgentResponse, F3, F7, F8.
+
+Next step:
+- Maintainer hands PR #33 back to ChatGPT for re-audit. If accepted, merge order #30 → #31 → #32 → #33 stands.

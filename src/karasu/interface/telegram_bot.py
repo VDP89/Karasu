@@ -138,18 +138,26 @@ class TelegramInterface:
         Writes mutate ScarEngine state — the surface refuses to do
         that without an explicit operator-set allowlist.
 
-        Always also records the raw text on the bus as a
-        ``human_decision`` event so the audit trail survives even if
-        the write handler rejects the input.
+        Audit trail is always written, but the recorded text is
+        redacted for unauthorized callers and unknown commands —
+        the message body could contain arbitrary user input from a
+        leaked chat, and only the metadata (command name + outcome)
+        is operationally useful in those cases. Authorized calls
+        record the full ``/{name} {args}`` so the operator can
+        reconstruct what they typed.
         """
-        self.record_decision(user_id, f"/{name} {args}".rstrip())
         if name not in self.WRITE_COMMANDS:
+            self.record_decision(user_id, f"/{name} (unknown command)")
             return f"unknown command: /{name}"
         if not self.allowed_users or user_id not in self.allowed_users:
+            self.record_decision(user_id, f"/{name} (unauthorized)")
             return (
                 "unauthorized: write commands require an explicit "
                 "allowed_users entry containing your user id"
             )
+        # Authorized — record full text so the operator can see exactly
+        # what they sent.
+        self.record_decision(user_id, f"/{name} {args}".rstrip())
         handler = self._write_handlers.get(name)
         if handler is None:
             return f"/{name} is not configured"

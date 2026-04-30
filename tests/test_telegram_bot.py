@@ -331,14 +331,35 @@ def test_handle_write_command_when_handler_missing(bus: JsonlEventBus) -> None:
     assert reply == "/correct is not configured"
 
 
-def test_handle_write_command_records_decision_even_on_unauthorized(
+def test_handle_write_command_redacts_args_on_unauthorized(
     bus: JsonlEventBus,
 ) -> None:
-    # Audit trail must capture the attempt regardless of outcome.
+    # Audit trail captures the attempt regardless of outcome, but
+    # the recorded text is redacted for unauthorized callers — the
+    # args could contain arbitrary user input from a leaked chat
+    # and only the metadata (command name + outcome) is useful in
+    # that case.
     interface = _interface(bus, allowed_users=(7,))
 
-    interface.handle_write_command("correct", user_id=99, args="abcd p=h")
+    interface.handle_write_command("correct", user_id=99, args="abcd secret-token=xyz")
 
     decisions = [e for e in bus.read() if e.type == "human_decision"]
     assert len(decisions) == 1
     assert decisions[0].data["user"] == 99
+    assert decisions[0].data["text"] == "/correct (unauthorized)"
+    # The args content must NOT survive in the recorded text.
+    assert "abcd" not in decisions[0].data["text"]
+    assert "secret-token" not in decisions[0].data["text"]
+
+
+def test_handle_write_command_redacts_args_on_unknown_command(
+    bus: JsonlEventBus,
+) -> None:
+    interface = _interface(bus, allowed_users=(7,))
+
+    interface.handle_write_command("teleport", user_id=7, args="abcd p=h")
+
+    decisions = [e for e in bus.read() if e.type == "human_decision"]
+    assert len(decisions) == 1
+    assert decisions[0].data["text"] == "/teleport (unknown command)"
+    assert "abcd" not in decisions[0].data["text"]

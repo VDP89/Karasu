@@ -5,7 +5,8 @@
 Phase 1A: COMPLETED
 Phase 1B: COMPLETED (no-adapter pass validated, F1–F5 closed)
 Phase 1C: COMPLETED (real Claude adapter loop validated, F6–F8 closed)
-Phase 2: IN PROGRESS — chunks 1 (outbound sink) + 2 (read-only slash commands) + 3 (inbound scar capture) shipped; surface contract frozen in `docs/phase-2-surface.md`. Audit pending.
+Phase 2: COMPLETED — chunks 1+2+3 merged (#30 #31 #32 #33). Audit accepted with one round of changes (PR #33 contract alignment + redaction).
+Phase 3: IN PROGRESS — design doc merged (#34); chunk 3a (LoopController wrapper) shipped. Behaviour-preserving refactor: watcher now delegates queue + worker to `LoopController`. Chunks 3b (react to `human_decision`) and 3c (multi-source plug-in) pending.
 
 ## System status
 
@@ -24,7 +25,10 @@ Phase 2: IN PROGRESS — chunks 1 (outbound sink) + 2 (read-only slash commands)
 - Telegram outbound sink (`karasu chat`) ✔
 - Telegram read-only slash commands (`/status`, `/agents`, `/scars`) ✔
 - Telegram inbound scar capture (`/correct`, `/scar`) ✔ — strict whitelist; pipeline does NOT consume in Phase 2
-- LoopController: DEFERRED
+- `LoopController` (single-worker dispatch coordinator) ✔ — behaviour-preserving wrapper around the existing pipeline
+- Reaction loop on `human_decision` events: DEFERRED to chunk 3b
+- Multi-source trigger plug-in (git hooks / webhook / A2A): DEFERRED to chunk 3c
+- Pipeline reaction to `human_decision`: DEFERRED — chat-recorded scars still fire only on next `file_change`
 
 ## Verified behavior (Phase 1C closed)
 
@@ -67,18 +71,24 @@ Phase 2: IN PROGRESS — chunks 1 (outbound sink) + 2 (read-only slash commands)
 ## Next step (entry point)
 
 ```text
-Audit gate — Phase 2 chunks 1+2+3 are pushed (PRs #31, #32, #33).
-Maintainer hands the stack to ChatGPT for review before any new
-chunk or phase starts. See docs/memory/next-session.md.
+Phase 3 chunk 3b — react to `human_decision` events on the bus.
+The LoopController subscribes via JsonlTailReader, parses
+/correct + /scar texts, and re-submits the originating
+file_change. The existing Pipeline._apply_scar_override picks up
+the chat-recorded scar on the resubmit. See docs/memory/next-session.md.
 ```
 
 ## Do NOT do yet
 
 ```text
-- Do not add a LoopController or scheduler.
-- Do not let the pipeline react to `human_decision` events. Chat-
-  originated scars (chunk 3) fire only via the existing
-  `Pipeline._apply_scar_override` on the next file_change.
-- Do not parallelize or batch adapter calls.
+- Do not parallelize or batch adapter calls. Single-worker
+  invariant is preserved; reaction in chunk 3b is also
+  serialized through the same controller.
 - Do not abstract the adapter behind a plugin layer.
+- Do not let the pipeline consume `human_decision` events
+  directly. The controller observes the bus and re-submits
+  file_change events; `human_decision` itself is never the
+  pipeline input.
+- Do not touch AgentResponse, F3 dispatcher semantics, F7
+  dispatch_on, F8 timeout_s — all four remain frozen.
 ```

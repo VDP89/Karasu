@@ -172,3 +172,32 @@ Impact:
 
 Next step:
 - Maintainer hands PR #33 back to ChatGPT for re-audit. If accepted, merge order #30 → #31 → #32 → #33 stands.
+
+---
+
+## 2026-04-30 — Phase 2 merged + Phase 3 chunk 3a shipped
+
+What changed:
+- Audit returned approve for #30/#31/#32 and a final "merge condition" on #33: scrub residual "scar capture deferred" claims before merge. Done in commit f827234 (`docs/memory/current-state.md`, `docs/local-dogfood.md` annotated with LIFTED markers).
+- All four PRs squash-merged in order #30 → #31 → #32 → #33. Stack rebases needed on #32 and #33 to retarget base from previous chunk's branch to `main` after each merge. Conflicts resolved automatically by rebase (the duplicate commits skipped as `previously applied`).
+- Phase 3 design PR (#34) opened with `docs/phase-3-loop-controller.md` (297 lines). Three chunks defined: 3a wrapper, 3b reaction, 3c multi-source plug-in. Approved and merged.
+- Phase 3 chunk 3a implemented on `feat/loop-controller-wrapper`:
+  - `src/karasu/controller/loop.py` — new `LoopController` class. Single bounded queue + single daemon worker. `submit`, `start`, `stop`. Synchronous fallback when not started.
+  - `src/karasu/watcher/fs_watcher.py` — refactored. Worker thread + queue logic moved out; watcher now constructs (or accepts) a `LoopController` and delegates via `controller.submit`. Backward-compat properties (`_queue`, `_worker`, `_stopping`, `on_event`) preserved so existing tests pass unchanged.
+  - `src/karasu/__main__.py` — `cmd_watch` builds the controller explicitly and passes it to the watcher.
+  - `tests/test_controller.py` — 11 new tests covering synchronous fallback, lifecycle, in-order processing, bounded-queue overflow, crash containment, restart-while-alive refusal, restart-after-exit, stop-timeout abandonment, and parity (watcher-through-controller produces identical bus output to direct sync calls).
+  - `tests/test_watcher.py` — log-message and logger-name assertions updated to point at `karasu.controller.loop`.
+  - `docs/architecture.md` — module map updated; new `controller/` entry.
+- 162/162 pass locally (151 prior + 11 new).
+
+Decisions:
+- Watcher exposes `_queue` / `_worker` / `_stopping` as read-only properties forwarding to the controller. Pure refactor courtesy: existing watcher tests touch these; rather than rewrite all of them, the seam is made transparent. `tests/test_controller.py` drives the controller directly for the new behaviour.
+- `cmd_watch` builds the controller explicitly (production path); the watcher's legacy `on_event=...` constructor still works for tests and external callers.
+- No new logging convention. The controller logs at `karasu.controller.loop`; the message text changed from `pipeline queue full` to `controller queue full` and from `on_event callback failed` to `controller callback failed`. Tests updated.
+
+Impact:
+- Phase 2 fully on main; the Telegram surface is the operational human-facing layer.
+- Phase 3 architectural seam in place. Behaviour is identical pre-/post-3a (parity test enforces). Chunks 3b and 3c can extend the controller without touching the watcher.
+
+Next step:
+- Audit gate per Phase 2 cadence. After 3a + 3b + 3c are pushed, maintainer hands the stack to ChatGPT for review before any new phase opens.

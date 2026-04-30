@@ -188,13 +188,13 @@ def test_on_event_exception_is_swallowed(tmp_path: Path, bus: JsonlEventBus, cap
     target = tmp_path / "a.py"
     target.write_text("")
 
-    with caplog.at_level("ERROR", logger="karasu.watcher.fs_watcher"):
+    with caplog.at_level("ERROR", logger="karasu.controller.loop"):
         first = watcher._dispatch(_fake_event(str(target)))
         second = watcher._dispatch(_fake_event(str(target)))
 
     assert first is not None and second is not None
     assert calls == [1, 1]
-    assert any("on_event callback failed" in r.message for r in caplog.records)
+    assert any("controller callback failed" in r.message for r in caplog.records)
 
 
 def test_slow_pipeline_does_not_block_dispatch(tmp_path: Path, bus: JsonlEventBus) -> None:
@@ -241,7 +241,7 @@ def test_worker_swallows_exceptions(tmp_path: Path, bus: JsonlEventBus, caplog) 
 
     watcher.start_pipeline()
     try:
-        with caplog.at_level("ERROR", logger="karasu.watcher.fs_watcher"):
+        with caplog.at_level("ERROR", logger="karasu.controller.loop"):
             watcher._dispatch(_fake_event(str(target)))
             watcher._dispatch(_fake_event(str(target)))
             watcher._queue.join()
@@ -249,7 +249,7 @@ def test_worker_swallows_exceptions(tmp_path: Path, bus: JsonlEventBus, caplog) 
         watcher.stop_pipeline()
 
     assert calls == [1, 1]
-    assert any("on_event callback failed" in r.message for r in caplog.records)
+    assert any("controller callback failed" in r.message for r in caplog.records)
 
 
 def test_stop_pipeline_respects_timeout_when_callback_hangs(
@@ -276,7 +276,7 @@ def test_stop_pipeline_respects_timeout_when_callback_hangs(
             time.sleep(0.01)
 
         start = time.monotonic()
-        with caplog.at_level("WARNING", logger="karasu.watcher.fs_watcher"):
+        with caplog.at_level("WARNING", logger="karasu.controller.loop"):
             watcher.stop_pipeline(timeout=0.3)
         elapsed = time.monotonic() - start
 
@@ -378,7 +378,7 @@ def test_full_queue_drops_callback_with_warning(tmp_path: Path, bus: JsonlEventB
         # Queue is now empty; second event lands in the (size=1) queue.
         watcher._dispatch(_fake_event(str(target)))
         # Third event: queue is full, must be dropped with a warning.
-        with caplog.at_level("WARNING", logger="karasu.watcher.fs_watcher"):
+        with caplog.at_level("WARNING", logger="karasu.controller.loop"):
             watcher._dispatch(_fake_event(str(target)))
 
         assert any("queue full" in r.message for r in caplog.records)

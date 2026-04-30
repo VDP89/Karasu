@@ -235,3 +235,110 @@ def test_handle_command_does_not_consult_providers_for_outsider(
 
     assert interface.handle_command("status", user_id=999) == "unauthorized"
     assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 chunk 3 — write command dispatch (/correct, /scar)
+# ---------------------------------------------------------------------------
+
+
+def test_handle_write_command_routes_to_correct_handler(bus: JsonlEventBus) -> None:
+    seen: dict[str, str] = {}
+
+    def correct(args: str) -> str:
+        seen["args"] = args
+        return "OK"
+
+    interface = _interface(bus, allowed_users=(7,), correct_handler=correct)
+
+    reply = interface.handle_write_command("correct", user_id=7, args="abcd priority=high")
+
+    assert reply == "OK"
+    assert seen == {"args": "abcd priority=high"}
+
+
+def test_handle_write_command_routes_to_scar_handler(bus: JsonlEventBus) -> None:
+    interface = _interface(
+        bus,
+        allowed_users=(7,),
+        scar_handler=lambda args: f"scar:{args}",
+    )
+
+    reply = interface.handle_write_command("scar", user_id=7, args="priority=high")
+
+    assert reply == "scar:priority=high"
+
+
+def test_handle_write_command_records_human_decision(bus: JsonlEventBus) -> None:
+    interface = _interface(
+        bus,
+        allowed_users=(7,),
+        correct_handler=lambda args: "OK",
+    )
+
+    interface.handle_write_command("correct", user_id=7, args="abcd priority=high")
+
+    decisions = [e for e in bus.read() if e.type == "human_decision"]
+    assert len(decisions) == 1
+    assert decisions[0].data == {"user": 7, "text": "/correct abcd priority=high"}
+
+
+def test_handle_write_command_refuses_when_whitelist_empty(bus: JsonlEventBus) -> None:
+    # Stricter than reads: empty whitelist (which reads treat as
+    # "allow anyone") rejects every write.
+    calls: list[str] = []
+    interface = _interface(
+        bus,
+        allowed_users=(),
+        correct_handler=lambda args: calls.append("called") or "OK",
+    )
+
+    reply = interface.handle_write_command("correct", user_id=42, args="abcd p=h")
+
+    assert "unauthorized" in reply
+    assert "explicit" in reply
+    assert calls == []
+
+
+def test_handle_write_command_refuses_outsider(bus: JsonlEventBus) -> None:
+    calls: list[str] = []
+    interface = _interface(
+        bus,
+        allowed_users=(7,),
+        correct_handler=lambda args: calls.append("called") or "OK",
+    )
+
+    reply = interface.handle_write_command("correct", user_id=99, args="abcd p=h")
+
+    assert "unauthorized" in reply
+    assert calls == []
+
+
+def test_handle_write_command_rejects_unknown_command(bus: JsonlEventBus) -> None:
+    interface = _interface(bus, allowed_users=(7,))
+
+    assert (
+        interface.handle_write_command("teleport", user_id=7, args="x=y")
+        == "unknown command: /teleport"
+    )
+
+
+def test_handle_write_command_when_handler_missing(bus: JsonlEventBus) -> None:
+    interface = _interface(bus, allowed_users=(7,))
+
+    reply = interface.handle_write_command("correct", user_id=7, args="abcd p=h")
+
+    assert reply == "/correct is not configured"
+
+
+def test_handle_write_command_records_decision_even_on_unauthorized(
+    bus: JsonlEventBus,
+) -> None:
+    # Audit trail must capture the attempt regardless of outcome.
+    interface = _interface(bus, allowed_users=(7,))
+
+    interface.handle_write_command("correct", user_id=99, args="abcd p=h")
+
+    decisions = [e for e in bus.read() if e.type == "human_decision"]
+    assert len(decisions) == 1
+    assert decisions[0].data["user"] == 99

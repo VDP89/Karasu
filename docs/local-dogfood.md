@@ -213,3 +213,34 @@ The ``allowed_users`` whitelist (``interface.telegram.allowed_users``
 in ``karasu.yaml``) gates these commands. Empty whitelist allows
 anyone, mirroring the chunk-1 default; set it to your Telegram user
 id for single-operator setups.
+
+### Inbound scar capture
+
+Two commands write a ``Scar`` to the configured ``ScarEngine`` so a
+correction becomes a durable rule:
+
+```text
+/correct <event_id-prefix> <field>=<value> [<field>=<value> ...]
+/scar <field>=<value> [<field>=<value> ...]
+```
+
+``/correct`` resolves the ``agent_response`` whose id starts with the
+given prefix (git-style; longer prefix needed if the bot replies
+"ambiguous"). ``/scar`` skips the lookup and uses the most recent
+``agent_response`` on the bus — convenience for "fix the thing I
+just saw".
+
+Allowed correction fields are ``classification``, ``priority``,
+``path`` (the same allowlist the dispatcher honours per
+``Pipeline.SUPPORTED_SCAR_KEYS``). Anything else is rejected with a
+clear reply and the bus stays untouched.
+
+Whitelist policy for write commands is **strict**: an empty
+``allowed_users`` rejects every ``/correct`` and ``/scar``. The
+operator must add their Telegram user id to the YAML before scar
+capture will fire. Reads (``/status``, ``/agents``, ``/scars``) are
+unaffected.
+
+Every attempt — accepted, rejected, or unauthorized — also writes a
+``human_decision`` event on the bus so the audit trail is preserved.
+The pipeline does NOT consume those events in Phase 2.

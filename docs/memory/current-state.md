@@ -5,7 +5,7 @@
 Phase 1A: COMPLETED
 Phase 1B: COMPLETED (no-adapter pass validated, F1–F5 closed)
 Phase 1C: COMPLETED (real Claude adapter loop validated, F6–F8 closed)
-Phase 2: IN PROGRESS — chunks 1 (outbound sink) + 2 (read-only slash commands) shipped; surface contract frozen in `docs/phase-2-surface.md`
+Phase 2: IN PROGRESS — chunks 1 (outbound sink) + 2 (read-only slash commands) + 3 (inbound scar capture) shipped; surface contract frozen in `docs/phase-2-surface.md`. Audit pending.
 
 ## System status
 
@@ -23,7 +23,7 @@ Phase 2: IN PROGRESS — chunks 1 (outbound sink) + 2 (read-only slash commands)
 - Per-adapter `timeout_s` configurable from YAML ✔
 - Telegram outbound sink (`karasu chat`) ✔
 - Telegram read-only slash commands (`/status`, `/agents`, `/scars`) ✔
-- Telegram inbound scar capture (`/correct`, `/scar`): DEFERRED
+- Telegram inbound scar capture (`/correct`, `/scar`) ✔ — strict whitelist; pipeline does NOT consume in Phase 2
 - LoopController: DEFERRED
 
 ## Verified behavior (Phase 1C closed)
@@ -67,9 +67,9 @@ Phase 2: IN PROGRESS — chunks 1 (outbound sink) + 2 (read-only slash commands)
 ## Next step (entry point)
 
 ```text
-Phase 2 — chunk 3: inbound scar capture (`/correct <event_id> field=value`,
-`/scar field=value`) writing to ScarEngine via the bus.
-See docs/memory/next-session.md.
+Audit gate — Phase 2 chunks 1+2+3 are pushed (PRs #31, #32, #33).
+Maintainer hands the stack to ChatGPT for review before any new
+chunk or phase starts. See docs/memory/next-session.md.
 ```
 
 ## Do NOT do yet

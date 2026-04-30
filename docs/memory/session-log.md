@@ -119,3 +119,30 @@ Impact:
 
 Next step:
 - Phase 2 chunk 3 — inbound scar capture. `/correct <event_id> field=value` and `/scar field=value` parse the message, derive the trigger from the latest `agent_response`, record a Scar via ScarEngine. Pipeline still does NOT react in Phase 2.
+
+---
+
+## 2026-04-29 (final) — Phase 2 chunk 3: inbound scar capture
+
+What changed:
+- `src/karasu/interface/commands.py` — pure write handlers: `parse_correction`, `validate_correction`, `find_agent_response` (prefix-match, ambiguity-aware), `latest_agent_response`, `derive_trigger`, `capture_correct`, `capture_scar`. All errors are returned as user-facing reply strings; nothing raises out of a chat handler.
+- `TelegramInterface.handle_write_command(name, user_id, args)` — strict whitelist: empty `allowed_users` rejects every write. Always records `human_decision` first so the audit trail survives even on rejection.
+- `run_application` registers two more `CommandHandler`s for `/correct` and `/scar`; their python-telegram-bot glue strips the leading "/<name>" and hands the rest to `handle_write_command`.
+- `karasu chat` builds `correct_handler` / `scar_handler` lambdas closing over `bus`, `scars`, and the configured `RuleClassifier`. Adds `_classifier(config)` reuse.
+- `tests/test_interface_commands.py` (+24 tests) and `tests/test_telegram_bot.py` (+8 tests). 150/150 pass locally.
+- `docs/local-dogfood.md` — inbound capture section appended.
+
+Decisions:
+- Trigger derivation re-classifies the path with the configured `RuleClassifier` instead of trying to recover classification from the on-disk `file_change` (the watcher writes file_change BEFORE the classifier runs; classification is in-memory only). Same `RuleClassifier` instance produced the original dispatch, so the trigger matches.
+- Scar correction allowlist (`classification`, `priority`, `path`) is enforced surface-side at capture time, mirroring `Pipeline.SUPPORTED_SCAR_KEYS`. Operators learn at the moment of capture, not at the next dispatch.
+- Write commands have stricter whitelist than reads: empty `allowed_users` rejects every write. Reads keep their chunk-1 / 2 default (empty == allow anyone) for low-risk visibility.
+- Every write attempt records a `human_decision` event regardless of outcome — accepted, rejected, unauthorized. Audit trail survives surface bugs.
+- `find_agent_response` raises on ambiguous prefix (git-style); operator must use a longer prefix. Prevents silent picking of the wrong target.
+
+Impact:
+- Phase 2 surface complete. Operator can read state and turn corrections into durable scars from Telegram.
+- ScarEngine is the only state mutated by chunk 3. Pipeline still does NOT consume `human_decision` events in Phase 2 — the override loop is an explicit next-phase responsibility.
+- No change to `AgentResponse`, F3, F7, F8 contracts. Phase 1 work intact.
+
+Next step:
+- Audit gate. Maintainer hands PRs #31 + #32 + #33 to ChatGPT for review. No new chunk or phase starts until the audit returns.

@@ -28,7 +28,13 @@ from karasu.adapters import AgentAdapter, ClaudeCodeAdapter, CodexAdapter
 from karasu.classifier import ClassificationRule, RuleClassifier
 from karasu.eventbus import Event, JsonlEventBus, JsonlTailReader
 from karasu.interface import TelegramInterface
-from karasu.interface.commands import format_agents, format_scars, format_status
+from karasu.interface.commands import (
+    capture_correct,
+    capture_scar,
+    format_agents,
+    format_scars,
+    format_status,
+)
 from karasu.pipeline import Pipeline
 from karasu.reporter import HumanReporter
 from karasu.router import Dispatcher
@@ -387,6 +393,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
 
     adapters = _adapters(config)
     scars = ScarEngine(_scars_path(config))
+    classifier = _classifier(config)
     interface = TelegramInterface(
         token=token,
         bus=bus,
@@ -395,6 +402,8 @@ def cmd_chat(args: argparse.Namespace) -> int:
         status_provider=lambda: format_status(bus),
         agents_provider=lambda: format_agents(adapters),
         scars_provider=lambda: format_scars(scars),
+        correct_handler=lambda args: capture_correct(bus, scars, classifier, args),
+        scar_handler=lambda args: capture_scar(bus, scars, classifier, args),
     )
     reporter = HumanReporter(_trust(config))
     reader = JsonlTailReader(bus.path, start_at_end=True)

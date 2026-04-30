@@ -169,3 +169,69 @@ def test_is_allowed_with_whitelist_rejects_outsider(bus: JsonlEventBus) -> None:
 
     assert interface.is_allowed(42) is True
     assert interface.is_allowed(99) is False
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 chunk 2 — slash command dispatch
+# ---------------------------------------------------------------------------
+
+
+def test_handle_command_calls_provider(bus: JsonlEventBus) -> None:
+    interface = _interface(
+        bus,
+        status_provider=lambda: "STATUS-OK",
+        agents_provider=lambda: "AGENTS-OK",
+        scars_provider=lambda: "SCARS-OK",
+    )
+
+    assert interface.handle_command("status", user_id=1) == "STATUS-OK"
+    assert interface.handle_command("agents", user_id=1) == "AGENTS-OK"
+    assert interface.handle_command("scars", user_id=1) == "SCARS-OK"
+
+
+def test_handle_command_returns_unauthorized_for_outsider(bus: JsonlEventBus) -> None:
+    interface = _interface(
+        bus,
+        allowed_users=(42,),
+        status_provider=lambda: "STATUS-OK",
+    )
+
+    assert interface.handle_command("status", user_id=42) == "STATUS-OK"
+    assert interface.handle_command("status", user_id=99) == "unauthorized"
+
+
+def test_handle_command_rejects_unknown_command(bus: JsonlEventBus) -> None:
+    interface = _interface(bus)
+
+    assert interface.handle_command("teleport", user_id=1) == "unknown command: /teleport"
+
+
+def test_handle_command_when_provider_missing(bus: JsonlEventBus) -> None:
+    # A known command with no provider configured returns a clear
+    # not-configured message rather than crashing on None().
+    interface = _interface(bus)
+
+    assert interface.handle_command("status", user_id=1) == "/status is not configured"
+    assert interface.handle_command("agents", user_id=1) == "/agents is not configured"
+    assert interface.handle_command("scars", user_id=1) == "/scars is not configured"
+
+
+def test_handle_command_does_not_consult_providers_for_outsider(
+    bus: JsonlEventBus,
+) -> None:
+    # Whitelist must short-circuit BEFORE the provider runs, otherwise
+    # private state leaks via timing or side effects.
+    calls: list[str] = []
+
+    def status_provider() -> str:
+        calls.append("status")
+        return "STATUS"
+
+    interface = _interface(
+        bus,
+        allowed_users=(1,),
+        status_provider=status_provider,
+    )
+
+    assert interface.handle_command("status", user_id=999) == "unauthorized"
+    assert calls == []

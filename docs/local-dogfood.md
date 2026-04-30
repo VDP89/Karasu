@@ -196,3 +196,20 @@ an event mirror (see ``docs/phase-2-surface.md``).
 Inbound replies in the chat write ``human_decision`` events on the
 bus but the pipeline does NOT react to them in Phase 2. Override /
 scar capture is deferred.
+
+### Read-only slash commands
+
+With ``karasu chat`` running, the bot accepts three commands. Each
+returns a snapshot of state — no writes, no side effects:
+
+```text
+/status   — karasu version, event log path, total events,
+            counts by type, last event timestamp.
+/agents   — registered adapters with their `handles` lists.
+/scars    — active scar rules (trigger -> correction).
+```
+
+The ``allowed_users`` whitelist (``interface.telegram.allowed_users``
+in ``karasu.yaml``) gates these commands. Empty whitelist allows
+anyone, mirroring the chunk-1 default; set it to your Telegram user
+id for single-operator setups.

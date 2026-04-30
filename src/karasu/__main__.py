@@ -28,6 +28,7 @@ from karasu.adapters import AgentAdapter, ClaudeCodeAdapter, CodexAdapter
 from karasu.classifier import ClassificationRule, RuleClassifier
 from karasu.eventbus import Event, JsonlEventBus, JsonlTailReader
 from karasu.interface import TelegramInterface
+from karasu.interface.commands import format_agents, format_scars, format_status
 from karasu.pipeline import Pipeline
 from karasu.reporter import HumanReporter
 from karasu.router import Dispatcher
@@ -384,11 +385,16 @@ def cmd_chat(args: argparse.Namespace) -> int:
         )
         return 2
 
+    adapters = _adapters(config)
+    scars = ScarEngine(_scars_path(config))
     interface = TelegramInterface(
         token=token,
         bus=bus,
         chat_id=chat_id,
         allowed_users=telegram_cfg.get("allowed_users", []) or [],
+        status_provider=lambda: format_status(bus),
+        agents_provider=lambda: format_agents(adapters),
+        scars_provider=lambda: format_scars(scars),
     )
     reporter = HumanReporter(_trust(config))
     reader = JsonlTailReader(bus.path, start_at_end=True)
@@ -398,10 +404,8 @@ def cmd_chat(args: argparse.Namespace) -> int:
         file=sys.stderr,
     )
     interval = float(telegram_cfg.get("poll_interval", 0.5))
-    while True:
-        for report in interface.drain(reader, reporter):
-            interface.send(report)
-        time.sleep(interval)
+    interface.run_application(reader, reporter, poll_interval=interval)
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:

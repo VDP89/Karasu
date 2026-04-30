@@ -157,12 +157,16 @@ Otherwise document the behavior and continue.
 
 ## What not to do during dogfood
 
+These constraints applied during the Phase 1B dogfood window. They
+are kept as a historical record; the items lifted by later phases
+are flagged inline.
+
 ```text
-- do not add Telegram
-- do not add LoopController
-- do not add webhooks
-- do not add /correct
-- do not mutate scars from Telegram/chat
+- do not add Telegram                       (LIFTED in Phase 2 chunk 1, PR #31)
+- do not add LoopController                 (still in force)
+- do not add webhooks                        (still in force; see issue #5)
+- do not add /correct                       (LIFTED in Phase 2 chunk 3, PR #33)
+- do not mutate scars from Telegram/chat    (LIFTED in Phase 2 chunk 3, PR #33)
 ```
 
 ## Next decision after dogfood
@@ -194,8 +198,9 @@ and other event types are not forwarded; the surface is a sink, not
 an event mirror (see ``docs/phase-2-surface.md``).
 
 Inbound replies in the chat write ``human_decision`` events on the
-bus but the pipeline does NOT react to them in Phase 2. Override /
-scar capture is deferred.
+bus but the pipeline does NOT react to them in Phase 2. The override
+LOOP (a controller that consumes ``human_decision``) stays deferred;
+scar capture itself ships as the read-only and write commands below.
 
 ### Read-only slash commands
 
@@ -213,3 +218,41 @@ The ``allowed_users`` whitelist (``interface.telegram.allowed_users``
 in ``karasu.yaml``) gates these commands. Empty whitelist allows
 anyone, mirroring the chunk-1 default; set it to your Telegram user
 id for single-operator setups.
+
+### Inbound scar capture
+
+Two commands write a ``Scar`` to the configured ``ScarEngine`` so a
+correction becomes a durable rule:
+
+```text
+/correct <event_id-prefix> <field>=<value> [<field>=<value> ...]
+/scar <field>=<value> [<field>=<value> ...]
+```
+
+``/correct`` resolves the ``agent_response`` whose id starts with the
+given prefix (git-style; longer prefix needed if the bot replies
+"ambiguous"). ``/scar`` skips the lookup and uses the most recent
+``agent_response`` on the bus — convenience for "fix the thing I
+just saw".
+
+Allowed correction fields are ``classification``, ``priority``,
+``path`` (the same allowlist the dispatcher honours per
+``Pipeline.SUPPORTED_SCAR_KEYS``). Anything else is rejected with a
+clear reply and the bus stays untouched.
+
+Whitelist policy for write commands is **strict**: an empty
+``allowed_users`` rejects every ``/correct`` and ``/scar``. The
+operator must add their Telegram user id to the YAML before scar
+capture will fire. Reads (``/status``, ``/agents``, ``/scars``) are
+unaffected.
+
+Every attempt — accepted, rejected, or unauthorized — also writes a
+``human_decision`` event on the bus so the audit trail is preserved.
+For unauthorized callers and unknown commands the recorded text is
+**redacted**: the bus stores ``"/<name> (unauthorized)"`` or
+``"/<name> (unknown command)"`` instead of the raw message body
+(message text could contain arbitrary input from a leaked chat;
+only the metadata is operationally useful in those cases).
+Authorized calls record the full ``/<name> <args>`` so the operator
+can reconstruct what they sent. The pipeline does NOT consume
+``human_decision`` events in Phase 2.

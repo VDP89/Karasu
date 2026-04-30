@@ -80,6 +80,90 @@ Discarded:
 
 ---
 
+### Phase 2 — surface = sink, not orchestrator (PR #30, #31)
+
+Decision:
+- Telegram is the Phase 2 primary surface. Outbound (drain → send) and inbound (slash commands, scar capture) both flow through `TelegramInterface`, which subscribes to the JSONL bus via `JsonlTailReader` and never calls into the dispatcher.
+- The surface only WRITES `human_decision` events to the bus. It does NOT emit `file_change` or `agent_response`, and the pipeline does NOT consume `human_decision` in Phase 2.
+
+Reason:
+- Reuses the existing primitives (`JsonlTailReader`, `HumanReporter`, `Report`, `ScarEngine`) without inventing new ones.
+- Keeps F3 / F7 contracts intact: dispatcher remains the only place that decides "no adapter handles this", and `dispatch_on` filtering remains in the pipeline.
+- Inbound commands either render state (`/status`, `/agents`, `/scars`) or write a Scar via `ScarEngine.record` (`/correct`, `/scar`). Neither path feeds events back into the watcher loop in Phase 2.
+
+Discarded:
+- Web UI / PWA first: zero scaffolding, multi-week build, no incremental validation path.
+- Both surfaces in parallel (Telegram + Web): doubles the contract burden in the first PR with no operator demand for the web side.
+- Surface-as-orchestrator (LoopController in Phase 2): premature; the synchronous pipeline still works fine for single-edit workloads, and the controller can be designed once we have evidence that scars-from-chat is needed in the loop.
+
+---
+
+### Phase 2 — strict whitelist for write commands (PR #33)
+
+Decision:
+- `/correct` and `/scar` reject every call when `allowed_users` is empty, regardless of `user_id`.
+- Reads (`/status`, `/agents`, `/scars`) keep their chunk-1 / 2 default (empty whitelist == allow anyone).
+
+Reason:
+- Writes mutate `ScarEngine` state. Without an explicit operator whitelist, a leaked bot token would let anyone install scars that change the dispatcher's behaviour.
+- Reads are low-risk; refusing them by default would break the chunk-1 happy path of "set token + chat id, see Karasu state from your phone".
+- Asymmetric defaults are honest: visibility cheap, mutation explicit.
+
+Discarded:
+- Single uniform default: too coarse — either reads break or writes leak.
+- Separate YAML key (`require_whitelist_for_writes: true`): adds a knob with one sane setting; better to bake the decision in.
+- Trust gradient extension: scope creep; the gradient is per-agent, not per-user.
+
+---
+
+### Phase 2 — redact args in human_decision for unauthorized writes (PR #33, audit fix)
+
+Decision:
+- Authorized write commands record the full `/<name> <args>` in the
+  `human_decision` event.
+- Unauthorized write commands and unknown commands record only the
+  command name + outcome label: `"/<name> (unauthorized)"` or
+  `"/<name> (unknown command)"`. The raw args are dropped.
+
+Reason:
+- The audit (ChatGPT, 2026-04-29) flagged that storing the full
+  message text on every attempt is a privacy hazard: a leaked bot
+  token lets attackers spam arbitrary content through `/correct`
+  / `/scar`, all of which would be persisted verbatim to the bus.
+- Operationally only the metadata (command name + outcome) is
+  useful in the unauthorized case. The args content is worse than
+  useless — it bloats the bus and may contain sensitive strings.
+- Authorized callers still get full text so they can debug their
+  own input.
+
+Discarded:
+- Skip the audit record entirely on unauthorized: loses the
+  attempt count needed for any future rate limit / monitoring.
+- Hash the args: adds complexity for no operational gain (we don't
+  match on the hash).
+- Redact for ALL writes including authorized: hurts the operator's
+  ability to reconstruct what they typed.
+
+---
+
+### Phase 2 — trigger derivation re-classifies on capture (PR #33)
+
+Decision:
+- `/correct` and `/scar` re-derive the Scar trigger by running the configured `RuleClassifier` against the agent_response's path.
+- Classification is NOT persisted on the on-disk `file_change`; the watcher writes file_change before the classifier runs, and the classifier only mutates the in-memory copy.
+
+Reason:
+- The same `RuleClassifier` instance produces both the original dispatch and the trigger derivation, so the result is identical to what the dispatcher saw.
+- Avoids a schema change to `file_change` (would require migration of existing JSONL logs).
+- Avoids storing classification on `agent_response` either, which would couple the dispatcher to the surface.
+
+Discarded:
+- Persist classification on `file_change` at watch time: the classifier runs after the watcher, so this means re-ordering the pipeline write — outside the Phase 2 contract.
+- Persist classification on `agent_response`: easier than the watcher change but still a contract mutation; not justified for one feature.
+- Let operators specify `classification` in the correction map: error-prone (operator types it wrong, the trigger never fires).
+
+---
+
 ### F8 — adapter timeout configurable per-agent (issue #25, PR #28)
 
 Decision:

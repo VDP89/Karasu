@@ -25,6 +25,7 @@ from karasu.eventbus import Event, JsonlEventBus, JsonlTailReader
 from karasu.reporter import HumanReporter, Report
 
 CommandProvider = Callable[[], str]
+WriteHandler = Callable[[str], str]
 
 
 class TelegramInterface:
@@ -37,6 +38,8 @@ class TelegramInterface:
     ``karasu status``.
     """
 
+    WRITE_COMMANDS = frozenset({"correct", "scar"})
+
     def __init__(
         self,
         token: str,
@@ -46,6 +49,8 @@ class TelegramInterface:
         status_provider: CommandProvider | None = None,
         agents_provider: CommandProvider | None = None,
         scars_provider: CommandProvider | None = None,
+        correct_handler: WriteHandler | None = None,
+        scar_handler: WriteHandler | None = None,
     ) -> None:
         self.token = token
         self.bus = bus
@@ -55,6 +60,10 @@ class TelegramInterface:
             "status": status_provider,
             "agents": agents_provider,
             "scars": scars_provider,
+        }
+        self._write_handlers: dict[str, WriteHandler | None] = {
+            "correct": correct_handler,
+            "scar": scar_handler,
         }
 
     def is_allowed(self, user_id: int) -> bool:
@@ -120,6 +129,40 @@ class TelegramInterface:
             return f"/{name} is not configured"
         return provider()
 
+    def handle_write_command(self, name: str, user_id: int, args: str) -> str:
+        """Dispatch a write command (``/correct``, ``/scar``).
+
+        Stricter than :meth:`handle_command`: the whitelist must be
+        non-empty AND contain ``user_id``. An empty whitelist (which
+        chunk 1 / 2 treat as "allow anyone") rejects every write.
+        Writes mutate ScarEngine state — the surface refuses to do
+        that without an explicit operator-set allowlist.
+
+        Audit trail is always written, but the recorded text is
+        redacted for unauthorized callers and unknown commands —
+        the message body could contain arbitrary user input from a
+        leaked chat, and only the metadata (command name + outcome)
+        is operationally useful in those cases. Authorized calls
+        record the full ``/{name} {args}`` so the operator can
+        reconstruct what they typed.
+        """
+        if name not in self.WRITE_COMMANDS:
+            self.record_decision(user_id, f"/{name} (unknown command)")
+            return f"unknown command: /{name}"
+        if not self.allowed_users or user_id not in self.allowed_users:
+            self.record_decision(user_id, f"/{name} (unauthorized)")
+            return (
+                "unauthorized: write commands require an explicit "
+                "allowed_users entry containing your user id"
+            )
+        # Authorized — record full text so the operator can see exactly
+        # what they sent.
+        self.record_decision(user_id, f"/{name} {args}".rstrip())
+        handler = self._write_handlers.get(name)
+        if handler is None:
+            return f"/{name} is not configured"
+        return handler(args)
+
     def record_decision(self, user_id: int, text: str) -> Event:
         return self.bus.append(
             Event(
@@ -170,6 +213,30 @@ class TelegramInterface:
 
         for command in ("status", "agents", "scars"):
             application.add_handler(CommandHandler(command, make_handler(command)))
+
+        def make_write_handler(name: str):
+            async def _handler(
+                update: Update, context: ContextTypes.DEFAULT_TYPE
+            ) -> None:
+                if update.effective_user is None or update.message is None:
+                    return
+                # Strip the "/<name>" prefix from message.text so the
+                # write handler sees only the args. Empty args is a
+                # valid input — capture_correct / capture_scar render
+                # their own usage messages.
+                raw = update.message.text or ""
+                args = raw.partition(" ")[2]
+                reply = self.handle_write_command(
+                    name, update.effective_user.id, args
+                )
+                await update.message.reply_text(reply)
+
+            return _handler
+
+        for command in ("correct", "scar"):
+            application.add_handler(
+                CommandHandler(command, make_write_handler(command))
+            )
 
         async def _drain_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             for report in self.drain(reader, reporter):

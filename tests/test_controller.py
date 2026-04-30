@@ -334,3 +334,331 @@ def test_watcher_through_controller_matches_direct_pipeline_calls(
         for e in controller_bus.read()
     ]
     assert direct_events == controller_events
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 chunk 3b — bus subscription + reaction
+# ---------------------------------------------------------------------------
+
+
+def _seed_chain(
+    bus: JsonlEventBus, path: str = "sample.py"
+) -> tuple[Event, Event]:
+    """Append a file_change → agent_response chain. Returns (file_change, agent_response)."""
+    file_change = bus.append(
+        Event(
+            type="file_change",
+            source="watcher",
+            data={"path": path, "change_type": "modified"},
+        )
+    )
+    agent_response = bus.append(
+        Event(
+            type="agent_response",
+            source="adapter",
+            data={"correlates": file_change.id, "path": path},
+            dispatch={"agent": "claude_code", "status": "completed"},
+            response={"content": "ok", "requires_human": False},
+        )
+    )
+    return file_change, agent_response
+
+
+def test_on_bus_event_ignores_non_human_decision(bus: JsonlEventBus) -> None:
+    seen: list[Event] = []
+    controller = LoopController(seen.append, bus=bus)
+
+    # No reaction expected for these — the controller's submit
+    # callback should not fire.
+    controller.on_bus_event(
+        Event(type="file_change", source="watcher", data={"path": "x.py"}),
+        bus,
+    )
+    controller.on_bus_event(
+        Event(type="agent_response", source="adapter", data={"path": "x.py"}),
+        bus,
+    )
+    assert seen == []
+
+
+def test_on_bus_event_skips_redacted_human_decision(bus: JsonlEventBus) -> None:
+    seen: list[Event] = []
+    controller = LoopController(seen.append, bus=bus)
+
+    for redacted_text in (
+        "/correct (unauthorized)",
+        "/scar (unauthorized)",
+        "/correct (unknown command)",
+    ):
+        controller.on_bus_event(
+            Event(
+                type="human_decision",
+                source="interface",
+                data={"user": 1, "text": redacted_text},
+            ),
+            bus,
+        )
+
+    # Surface already rejected the write; controller does not react.
+    assert seen == []
+
+
+def test_on_bus_event_skips_unknown_command(bus: JsonlEventBus) -> None:
+    seen: list[Event] = []
+    controller = LoopController(seen.append, bus=bus)
+
+    controller.on_bus_event(
+        Event(
+            type="human_decision",
+            source="interface",
+            data={"user": 1, "text": "/teleport now"},
+        ),
+        bus,
+    )
+    assert seen == []
+
+
+def test_react_correct_resubmits_file_change(bus: JsonlEventBus) -> None:
+    file_change, agent_response = _seed_chain(bus)
+    seen: list[Event] = []
+    controller = LoopController(seen.append, bus=bus)
+
+    controller.on_bus_event(
+        Event(
+            type="human_decision",
+            source="interface",
+            data={
+                "user": 1,
+                "text": f"/correct {agent_response.id[:8]} priority=high",
+            },
+        ),
+        bus,
+    )
+
+    assert len(seen) == 1
+    resubmitted = seen[0]
+    assert resubmitted.type == "file_change"
+    assert resubmitted.source == "controller"
+    assert resubmitted.data["path"] == file_change.data["path"]
+    assert resubmitted.data["controller_resubmit"] is True
+    assert resubmitted.data["resubmit_origin"] == file_change.id
+    # The resubmit was also written to the bus.
+    bus_events = [e for e in bus.read() if e.id == resubmitted.id]
+    assert len(bus_events) == 1
+
+
+def test_react_correct_with_unknown_prefix_does_not_resubmit(
+    bus: JsonlEventBus,
+) -> None:
+    _seed_chain(bus)
+    seen: list[Event] = []
+    controller = LoopController(seen.append, bus=bus)
+
+    controller.on_bus_event(
+        Event(
+            type="human_decision",
+            source="interface",
+            data={"user": 1, "text": "/correct ffffffff priority=high"},
+        ),
+        bus,
+    )
+    assert seen == []
+
+
+def test_react_correct_with_empty_args_does_not_resubmit(
+    bus: JsonlEventBus,
+) -> None:
+    _seed_chain(bus)
+    seen: list[Event] = []
+    controller = LoopController(seen.append, bus=bus)
+
+    controller.on_bus_event(
+        Event(
+            type="human_decision",
+            source="interface",
+            data={"user": 1, "text": "/correct"},
+        ),
+        bus,
+    )
+    assert seen == []
+
+
+def test_react_scar_resubmits_latest_file_change(bus: JsonlEventBus) -> None:
+    _seed_chain(bus, path="old.py")
+    new_file_change, _ = _seed_chain(bus, path="new.py")
+    seen: list[Event] = []
+    controller = LoopController(seen.append, bus=bus)
+
+    controller.on_bus_event(
+        Event(
+            type="human_decision",
+            source="interface",
+            data={"user": 1, "text": "/scar priority=high"},
+        ),
+        bus,
+    )
+
+    assert len(seen) == 1
+    assert seen[0].data["path"] == "new.py"
+    assert seen[0].data["resubmit_origin"] == new_file_change.id
+
+
+def test_react_scar_with_no_agent_response_does_not_resubmit(
+    bus: JsonlEventBus,
+) -> None:
+    bus.append(
+        Event(type="file_change", source="watcher", data={"path": "x.py"})
+    )
+    seen: list[Event] = []
+    controller = LoopController(seen.append, bus=bus)
+
+    controller.on_bus_event(
+        Event(
+            type="human_decision",
+            source="interface",
+            data={"user": 1, "text": "/scar priority=high"},
+        ),
+        bus,
+    )
+    assert seen == []
+
+
+def test_resubmit_cap_enforced(bus: JsonlEventBus) -> None:
+    file_change, agent_response = _seed_chain(bus)
+    seen: list[Event] = []
+    controller = LoopController(seen.append, bus=bus)
+
+    decision = Event(
+        type="human_decision",
+        source="interface",
+        data={"user": 1, "text": f"/correct {agent_response.id[:8]} p=h"},
+    )
+    # Fire the same /correct RESUBMIT_CAP + 2 times. Only the first
+    # RESUBMIT_CAP should produce a resubmit; the rest are bounded.
+    for _ in range(LoopController.RESUBMIT_CAP + 2):
+        controller.on_bus_event(decision, bus)
+
+    assert len(seen) == LoopController.RESUBMIT_CAP
+    for resubmit in seen:
+        assert resubmit.data["resubmit_origin"] == file_change.id
+
+
+def test_resubmit_skipped_when_correlates_missing(bus: JsonlEventBus) -> None:
+    # agent_response written without ``correlates`` — no way to find
+    # the originating file_change, controller logs and skips.
+    bus.append(
+        Event(
+            type="agent_response",
+            source="adapter",
+            data={"path": "orphan.py"},
+        )
+    )
+    seen: list[Event] = []
+    controller = LoopController(seen.append, bus=bus)
+    controller.on_bus_event(
+        Event(
+            type="human_decision",
+            source="interface",
+            data={"user": 1, "text": "/scar priority=high"},
+        ),
+        bus,
+    )
+    assert seen == []
+
+
+def test_resubmit_skipped_when_file_change_purged(bus: JsonlEventBus) -> None:
+    # agent_response references a file_change id that no longer
+    # exists on the bus (e.g. log rotation deleted it). Skip cleanly.
+    bus.append(
+        Event(
+            type="agent_response",
+            source="adapter",
+            data={"correlates": "missing-id", "path": "x.py"},
+        )
+    )
+    seen: list[Event] = []
+    controller = LoopController(seen.append, bus=bus)
+    controller.on_bus_event(
+        Event(
+            type="human_decision",
+            source="interface",
+            data={"user": 1, "text": "/scar priority=high"},
+        ),
+        bus,
+    )
+    assert seen == []
+
+
+def test_start_with_bus_spawns_subscription_thread(
+    bus: JsonlEventBus,
+) -> None:
+    controller = LoopController(lambda e: None, bus=bus)
+    controller.start()
+    try:
+        assert controller._worker is not None
+        assert controller._worker.is_alive()
+        assert controller._bus_thread is not None
+        assert controller._bus_thread.is_alive()
+        assert controller._bus_thread.daemon is True
+    finally:
+        controller.stop()
+
+
+def test_start_without_bus_does_not_spawn_subscription_thread() -> None:
+    controller = LoopController(lambda e: None)
+    controller.start()
+    try:
+        assert controller._bus_thread is None
+    finally:
+        controller.stop()
+
+
+def test_stop_joins_bus_subscription_cleanly(bus: JsonlEventBus) -> None:
+    controller = LoopController(lambda e: None, bus=bus)
+    controller.start()
+    bus_thread = controller._bus_thread
+    assert bus_thread is not None
+    controller.stop(timeout=2.0)
+    assert not bus_thread.is_alive()
+    assert controller._bus_thread is None
+    assert controller._bus_reader is None
+
+
+def test_end_to_end_bus_reaction(bus: JsonlEventBus) -> None:
+    """Full chunk-3b path through the running subscription thread.
+
+    Seed a chain, start the controller (spawns worker + bus thread),
+    append a /correct human_decision to the bus, wait for the bus
+    thread to pick it up and submit the resubmit to the worker, then
+    confirm the worker callback ran.
+    """
+    file_change, agent_response = _seed_chain(bus)
+    seen: list[Event] = []
+
+    controller = LoopController(seen.append, bus=bus)
+    # Speed up the test — default poll interval is 0.5s, override.
+    controller._BUS_POLL_INTERVAL = 0.05  # type: ignore[misc]
+    controller.start()
+    try:
+        bus.append(
+            Event(
+                type="human_decision",
+                source="interface",
+                data={
+                    "user": 1,
+                    "text": f"/correct {agent_response.id[:8]} priority=high",
+                },
+            )
+        )
+        # Wait for the bus thread to react and the worker to drain.
+        deadline = time.monotonic() + 3.0
+        while not seen and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert controller._queue is not None
+        controller._queue.join()
+    finally:
+        controller.stop(timeout=2.0)
+
+    assert len(seen) == 1
+    assert seen[0].data["resubmit_origin"] == file_change.id
+    assert seen[0].data["controller_resubmit"] is True

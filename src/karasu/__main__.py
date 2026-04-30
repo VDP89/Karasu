@@ -280,10 +280,14 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
     pipeline = Pipeline(classifier, dispatcher, reporter, sink, scars=scars)
 
-    # Phase 3 chunk 3a: pipeline runs through LoopController. Behaviour
-    # is identical to the pre-chunk path (single bounded queue + single
-    # worker thread); the seam is in place for chunks 3b and 3c.
-    controller = LoopController(pipeline)
+    # Phase 3 chunks 3a + 3b: pipeline runs through LoopController.
+    # Passing ``bus`` here also enables the chunk-3b bus subscription:
+    # /correct and /scar messages recorded on the bus by the Telegram
+    # surface trigger a resubmit of the originating file_change so the
+    # newly-recorded scar fires through the existing
+    # Pipeline._apply_scar_override path. Resubmits are capped to
+    # LoopController.RESUBMIT_CAP per originating file_change.
+    controller = LoopController(pipeline, bus=bus)
 
     watch_cfg = config.get("watch", {})
     watcher = FilesystemWatcher(

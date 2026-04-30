@@ -116,6 +116,28 @@ Discarded:
 
 ---
 
+### Phase 3 — controller reacts to human_decision via resubmit (chunk 3b)
+
+Decision:
+- The controller, not the pipeline, consumes `human_decision` events. It runs a daemon thread that polls the bus via `JsonlTailReader` and routes `/correct` / `/scar` texts to a resubmit handler.
+- Reactions are CAPPED: at most `RESUBMIT_CAP = 3` resubmits per originating `file_change.id`. Past the cap, log a warning and skip — the surface already wrote the `human_decision` audit record on the bus, so the operator's correction is preserved even when the controller refuses to fire it again.
+- Resubmits emit a fresh `file_change` with `source="controller"`, `data.controller_resubmit=True`, `data.resubmit_origin=<id>`. The pipeline treats it like any other `file_change` and re-runs classification + scar consultation; `_apply_scar_override` picks up the chat-recorded scar.
+- The cap key is the originating `file_change.id` only, not `(id, scar_id)`. Simpler and bounds the worst case identically. Phase 3+ may extend the key shape once escalation events are introduced.
+
+Reason:
+- Closes the Lucy-Syndrome correction loop without coupling the pipeline to the surface. The pipeline still consumes only `file_change` events; the controller is the new layer that observes the bus for human signal and translates it to a fresh dispatch.
+- Re-emitting a fresh `file_change` (rather than mutating the in-flight pipeline state, or re-running the original event by id) keeps the reaction path testable in isolation and visible on the bus for `analyze`.
+- The cap is the stop rule the design doc required. Phase 1 had no retry; introducing one needs a bound, and a bound that is also auditable through the bus.
+- Bus subscription skips redacted human_decision texts (containing `(unauthorized)` or `(unknown command)`). The surface already rejected those writes; reacting on them would let an attacker spam the controller via redacted markers.
+
+Discarded:
+- Make the pipeline consume `human_decision` directly: would entangle the dispatcher with surface input and force every classifier / dispatch_on filter to learn a new event type.
+- Mutate the original `file_change` in place / submit by id without re-emitting: invisible on the bus; `analyze` cannot see how many resubmits actually fired.
+- Cap by `(originating_id, scar_id)`: requires looking up the scar in `ScarEngine` from the controller; doubles the controller's read surface for no clear win at this stage.
+- No cap (rely on operator hygiene): a misbehaving surface or a script-driven `/scar` could drive the dispatcher in an unbounded loop.
+
+---
+
 ### Phase 3 — controller as wrapper, watcher delegates (chunk 3a)
 
 Decision:

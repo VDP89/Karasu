@@ -201,3 +201,34 @@ Impact:
 
 Next step:
 - Audit gate per Phase 2 cadence. After 3a + 3b + 3c are pushed, maintainer hands the stack to ChatGPT for review before any new phase opens.
+
+---
+
+## 2026-04-30 (later) — Phase 3 chunk 3b: controller reacts to human_decision
+
+What changed:
+- `src/karasu/controller/loop.py` — extended:
+  - Constructor accepts an optional `bus: JsonlEventBus`. When provided, `start()` also spawns a daemon `karasu-controller-bus` thread that polls the bus via `JsonlTailReader` (start_at_end=True) at 0.5 s intervals.
+  - `on_bus_event(event, bus)` — pure dispatch. Filters to `human_decision`, skips redacted texts (containing `(unauthorized)` or `(unknown command)`), and routes `/correct` / `/scar` to the reaction handlers.
+  - `_react_correct(args, bus)` reuses `interface.commands.find_agent_response` for prefix lookup.
+  - `_react_scar(bus)` reuses `interface.commands.latest_agent_response`.
+  - `_resubmit_for(agent_response, bus)` — looks up the correlated `file_change` from the bus, enforces `RESUBMIT_CAP=3` per originating id (in-memory, lock-protected), appends a new `file_change` event with `data.controller_resubmit=True` + `data.resubmit_origin=<id>`, and `submit`s it to the worker.
+  - `stop()` joins the bus thread first (one last reaction window), then the worker. Either hang past the timeout leaves state intact and refuses future `start()`.
+- `src/karasu/__main__.py` — `cmd_watch` constructs the controller with `bus=bus`. Bus subscription fires alongside the worker.
+- `tests/test_controller.py` — 15 new tests: filtering (non-`human_decision`, redacted, unknown command, empty args), `/correct` happy path + unknown prefix, `/scar` happy path + empty bus, resubmit cap enforcement, missing `correlates`, missing originating file_change, lifecycle (bus thread spawned with bus / not without bus / joined cleanly), and an end-to-end test that runs the full bus poll → react → submit chain through the live thread.
+- 177/177 pass locally (162 prior + 15 new).
+
+Decisions:
+- Resubmit cap key = `originating_file_change.id` only (not `(id, scar_id)`). Simpler; bounds the worst case identically. Phase 3+ may extend the key shape once we have escalation events.
+- Resubmits re-emit a fresh `file_change` with `source="controller"` + `data.controller_resubmit=True` + `data.resubmit_origin=<id>`. `analyze` can tell them apart from watcher-originated changes; the pipeline treats them like any other file_change (re-classification + scar consultation rerun).
+- Bus subscription uses `start_at_end=True` so the controller does not replay the bus on startup. Reactions only fire for events written after `start()`.
+- Redaction filter: bus subscription skips texts matching `(unauthorized)` / `(unknown command)`. The surface already rejected those writes; reacting on them would let an attacker spam the controller via redacted markers.
+- Bus thread shutdown order: bus first (so a final reaction can submit), worker second. Mirror the lifecycle the watcher already uses for observer + worker.
+
+Impact:
+- The Lucy-Syndrome correction loop closes for the first time. Operator types `/correct <prefix> priority=high` in Telegram → surface records `human_decision` + Scar (Phase 2 chunk 3) → controller picks up the bus event → resubmits the originating `file_change` → pipeline applies the new scar via `_apply_scar_override` → adapter dispatches with the corrected priority.
+- Single-worker invariant preserved. Resubmits go through the same bounded queue.
+- No change to `AgentResponse`, F3, F7, F8, surface contract.
+
+Next step:
+- Phase 3 chunk 3c — generalise trigger sources. Currently the watcher is the only `submit` caller. Chunk 3c introduces a plug-in interface so git hooks (issue #5) can fan into the same controller. GitHub webhook and A2A wait until 3c lands.

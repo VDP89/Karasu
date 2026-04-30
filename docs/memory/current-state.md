@@ -26,9 +26,9 @@ Phase 3: IN PROGRESS — design doc merged (#34); chunk 3a (LoopController wrapp
 - Telegram read-only slash commands (`/status`, `/agents`, `/scars`) ✔
 - Telegram inbound scar capture (`/correct`, `/scar`) ✔ — strict whitelist; pipeline does NOT consume in Phase 2
 - `LoopController` (single-worker dispatch coordinator) ✔ — behaviour-preserving wrapper around the existing pipeline
-- Reaction loop on `human_decision` events: DEFERRED to chunk 3b
+- Controller bus subscription + reaction (`/correct`, `/scar` resubmit) ✔ — chunk 3b. Cap: 3 resubmits per originating `file_change`. Resubmits emit a fresh `file_change` with `controller_resubmit=True`.
 - Multi-source trigger plug-in (git hooks / webhook / A2A): DEFERRED to chunk 3c
-- Pipeline reaction to `human_decision`: DEFERRED — chat-recorded scars still fire only on next `file_change`
+- Pipeline still does NOT consume `human_decision` directly — only the controller reads them and resubmits a `file_change` so `Pipeline._apply_scar_override` picks up the chat-recorded scar on the next dispatch
 
 ## Verified behavior (Phase 1C closed)
 
@@ -71,11 +71,10 @@ Phase 3: IN PROGRESS — design doc merged (#34); chunk 3a (LoopController wrapp
 ## Next step (entry point)
 
 ```text
-Phase 3 chunk 3b — react to `human_decision` events on the bus.
-The LoopController subscribes via JsonlTailReader, parses
-/correct + /scar texts, and re-submits the originating
-file_change. The existing Pipeline._apply_scar_override picks up
-the chat-recorded scar on the resubmit. See docs/memory/next-session.md.
+Phase 3 chunk 3c — multi-source trigger plug-in. Generalise
+"watcher → controller" so git hooks (issue #5) become the second
+trigger source. GitHub webhook + A2A wait until 3c is in.
+See docs/memory/next-session.md.
 ```
 
 ## Do NOT do yet

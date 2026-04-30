@@ -2,117 +2,125 @@
 
 ## Goal
 
-**Phase 3 chunk 3b — react to `human_decision` events on the bus.**
+**Phase 3 chunk 3c — multi-source trigger plug-in.**
 
-Chunk 3a (LoopController wrapper) is shipped and merged on `main`.
-The architectural seam exists; behaviour is identical to pre-3a.
-Chunk 3b makes the controller actually *react*: when a Telegram
-`/correct` or `/scar` lands a `human_decision` event on the bus,
-the controller resolves the originating `file_change` and
-re-submits it. The existing `Pipeline._apply_scar_override` picks
-up the chat-recorded scar on the resubmit.
+Chunks 3a (LoopController wrapper) and 3b (react to `human_decision`)
+are pushed and stacked. The controller now (a) coordinates dispatch
+through one bounded queue + worker, and (b) reacts to chat-recorded
+scars by resubmitting the originating `file_change`. Chunk 3c
+generalises the trigger surface: the watcher is currently the only
+caller of `controller.submit`; chunk 3c introduces a plug-in
+interface so additional sources can fan in.
 
 ## Scope
 
 ```text
-What ships in 3b:
-- LoopController gains a JsonlTailReader subscription to the bus.
-- A new method on_bus_event(event) inspects each event:
-    * agent_response → no-op (already dispatched)
-    * file_change    → no-op (the trigger source already submitted it)
-    * human_decision → parse the text field; if it matches /correct
-                       <prefix> or /scar, look up the originating
-                       agent_response, find its correlated
-                       file_change, and re-submit that file_change.
+What ships in 3c:
+- A TriggerSource protocol (or abstract base) with one method:
+    start(submit: Callable[[Event], None]) -> None
+    stop() -> None
+  Sources call ``submit`` to fan events into the controller.
+- FilesystemWatcher refactored to implement TriggerSource (no
+  behavioural change; the watcher already does this implicitly).
+- A new GitHookSource (issue #5 sketch — sketch only, gated behind
+  an explicit `karasu hook` invocation, NOT auto-installed in this
+  chunk).
+- LoopController accepts a list of TriggerSource instances and
+  manages their lifecycle alongside the worker + bus subscription.
+  start() spawns each source's start; stop() reverses.
 
-What does NOT ship in 3b:
-- Multi-source trigger plug-in (3c).
-- Retries beyond the resubmit cap.
-- Telemetry events (controller_action) — defer until reaction
-  has dogfood evidence.
-- Any change to AgentResponse, F3, F7, F8.
+What does NOT ship in 3c:
+- GitHub webhook receiver (issue #5).
+- A2A Agent Cards (issue #5).
+- Review-comment auto-handoff (issue #5).
+- Auto-installation of git hooks (`karasu install-hooks`).
+- Any change to AgentResponse, F3, F7, F8, surface contract.
 ```
 
 ## Surface contract — must respect
 
 ```text
-- Pipeline still does NOT consume human_decision events. The
-  CONTROLLER consumes them; the pipeline only sees the resubmitted
-  file_change.
-- The controller never mutates ScarEngine. /correct + /scar already
-  recorded the Scar (Phase 2 chunk 3); the controller only reacts
-  to that record by triggering a fresh dispatch.
-- Single-worker invariant: the resubmit goes through the same
-  bounded queue + worker. No parallelism.
-- Reaction cap: at most 3 resubmits per (originating event_id,
-  scar_id) tuple. Beyond the cap, log a warning and skip. Phase 1
-  had no retry; introducing one needs a stop rule.
+- Trigger sources are PRODUCERS. They call submit() and own no
+  callback semantics, no scheduling, no retries.
+- The controller is the only place that owns the worker queue and
+  the bus subscription. Sources do not subscribe to the bus.
+- Pipeline still does NOT consume human_decision. The controller's
+  bus subscription (chunk 3b) is the only consumer.
+- Single-worker invariant remains. Multiple sources fan into the
+  same queue; events still process serially.
+- Resubmit cap from chunk 3b applies to controller-originated
+  events; trigger-source events have their own lifecycle and do
+  not consume the cap.
 ```
 
 ## Pre-reads
 
 ```text
-1. docs/phase-3-loop-controller.md     — chunk 3b design (open question 1: cap)
-2. docs/phase-2-surface.md             — surface contract (frozen)
-3. docs/memory/current-state.md        — phase + capabilities
-4. docs/memory/session-log.md          — chunk 3a summary
-5. src/karasu/controller/loop.py       — extension target
-6. src/karasu/interface/commands.py    — find_agent_response,
-                                          parse_correction (reuse)
-7. src/karasu/eventbus/jsonl_bus.py    — JsonlTailReader
+1. docs/phase-3-loop-controller.md     — chunk 3c design (multi-source goal)
+2. docs/memory/current-state.md        — phase + capabilities
+3. docs/memory/session-log.md          — chunks 3a + 3b summaries
+4. docs/memory/decision-log.md         — controller decisions
+5. src/karasu/controller/loop.py       — extension target (start/stop will manage sources)
+6. src/karasu/watcher/fs_watcher.py    — first source, will gain a thin TriggerSource adapter
+7. issue #5 (archive)                  — git-hook sketch, A2A, webhook
 ```
 
 ## Open questions to resolve while implementing
 
 ```text
-1. Where does the bus subscription live? Lean: a new private
-   thread on LoopController that calls JsonlTailReader.read_new()
-   in a poll loop and dispatches to on_bus_event. Same shape as
-   TelegramInterface.run_application's job queue, but threaded.
+1. Is TriggerSource a Protocol (PEP 544 structural) or an abstract
+   base class? Lean: Protocol — the watcher already has start/stop
+   and Python's structural typing keeps the refactor minimal.
 
-2. How is the resubmit cap tracked? Lean: an in-memory dict on
-   LoopController keyed by (originating_id, scar_id). Resets on
-   process restart — we are not persisting controller state in
-   3b. Phase 3+ may extend.
+2. How does the controller signal a source to stop? Lean: each
+   source owns its own daemon thread (the watcher already does);
+   stop() on the source signals + joins. The controller does NOT
+   try to interrupt arbitrary source threads.
 
-3. Should the resubmit re-emit the file_change to the bus, or
-   pass a fresh in-memory Event? Lean: re-emit. Audit trail
-   shows the controller's reaction explicitly; no special
-   "resubmit" event type, just a normal file_change with
-   data.controller_resubmit=True so analyze can tell them apart.
+3. Should sources write directly to the bus, or hand events to
+   the controller and let it write? Lean: sources write the bus
+   event themselves (the watcher already does). The controller is
+   not the bus-write authority; it's the dispatch coordinator.
 
-4. What about /scar (no event_id)? Lean: target the latest
-   agent_response on the bus, same as Phase 2 chunk 3 capture
-   logic. Reuse latest_agent_response from commands.py.
+4. Git-hook source — how is it invoked? Lean: ``karasu hook
+   <name>`` CLI subcommand reads stdin / argv from the hook
+   environment, builds an Event, submits via the controller, and
+   exits when the queue drains. Mirrors the sketch in issue #5.
+   Auto-installation (`karasu install-hooks`) waits for a later
+   chunk.
 ```
 
 ## Do NOT do yet
 
 ```text
-- Do not start chunk 3c (multi-source trigger plug-in).
-- Do not parallelize the controller worker.
-- Do not abstract the adapter behind a plugin layer.
+- Do not start the GitHub webhook receiver (Phase 3+ archive).
+- Do not start the A2A Agent Cards work.
+- Do not auto-install git hooks; only land the hook source.
+- Do not parallelize the controller worker. Multi-source means
+  more producers, not more consumers.
 - Do not let the pipeline consume human_decision directly.
 - Do not touch AgentResponse, F3, F7, F8.
-- Do not persist controller state between runs.
 ```
 
 ## Exit condition
 
 ```text
 A new feat/* branch, ≤400 LOC, with:
-- LoopController.on_bus_event implemented and tested.
-- Bus subscription wired in cmd_watch.
-- Resubmit cap enforced; tests cover the cap and the happy path
-  (chat-recorded scar fires on the very next resubmit).
-- Memory files synced; this file pointed at chunk 3c.
+- TriggerSource protocol defined in src/karasu/controller/sources/.
+- FilesystemWatcher implements it (no behavioural change).
+- GitHookSource sketch with `karasu hook <name>` subcommand.
+- LoopController.add_source() / start() / stop() lifecycle.
+- Tests for the protocol contract, the git-hook source, and a
+  multi-source fan-in (events from two sources interleave correctly
+  on the bus).
+- Memory files synced; this file pointed at the post-3c audit gate.
 ```
 
 ## Audit gate after chunk 3c
 
 Per the Phase 2 cadence: ChatGPT reviews chunks 3a + 3b + 3c
-together once 3c is pushed. The maintainer hands the stack.
-**No new phase opens until the audit returns.**
+together once 3c is pushed. The maintainer hands the stack
+manually. **No new phase opens until the audit returns.**
 
 ## Anchor for the previous sessions
 
@@ -120,5 +128,7 @@ together once 3c is pushed. The maintainer hands the stack.
 - Phase 2 closed 2026-04-30 (PRs #30 #31 #32 #33 merged after audit
   + condition fix).
 - Phase 3 design merged 2026-04-30 (PR #34).
-- `feat/loop-controller-wrapper` (this session) — chunk 3a code,
-  11 new controller tests, 162/162 green locally.
+- `feat/loop-controller-wrapper` (PR #35) — chunk 3a code, 11 new
+  controller tests.
+- `feat/loop-controller-react` (this session) — chunk 3b code, 15
+  new controller tests, stacked on PR #35. 177/177 green locally.

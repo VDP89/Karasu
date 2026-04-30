@@ -4,6 +4,35 @@ Karasu is organized as a chain of small, independent components connected
 through an append-only event bus. Each component has one job and can be
 replaced or extended without touching the rest.
 
+## Karasu is a broker, not a decision engine
+
+This framing is a load-bearing invariant. State it explicitly so
+future contributors don't drift it:
+
+```text
+Karasu = message broker + memory writer.
+Karasu ≠ decision engine.
+```
+
+Concretely:
+
+- The **bus** is the source of truth. Every component reads from
+  and writes to it; no other shared state exists.
+- The **pipeline** is single-event synchronous. It classifies,
+  consults scars, dispatches, reports — and stops.
+- The **surface** (Telegram) is read + write over the bus. It
+  never calls the dispatcher, never executes decisions.
+- The **controller** coordinates dispatch on a single worker. It
+  observes the bus to react to chat-recorded scars (chunk 3b),
+  but the trigger is always a discrete human action, never the
+  *existence* of a scar.
+- **Scars** are stored corrections, not control flow primitives.
+  See `docs/scar-engine.md` "Golden rule".
+
+If a future change tempts you to make Karasu "decide" something
+(skip an agent because a scar exists, retry on its own, mutate
+in-flight events), check that framing first.
+
 ## Component layout
 
 ```

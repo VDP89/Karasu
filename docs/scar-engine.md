@@ -43,6 +43,40 @@ This means scars are first-class routing inputs, not post-hoc
 filters: an event that matches a scar never reaches the agent the
 classifier originally would have selected for it.
 
+## Golden rule — Scar ≠ execution
+
+This rule is non-negotiable. Stated explicitly so future contributors
+do not introduce control-flow regressions:
+
+```text
+Scar = stored correction only.
+Scar ≠ execution.
+Scar ≠ control-flow primitive.
+```
+
+Concretely, the codebase **must not**:
+
+- Skip dispatching to an agent because "a scar exists for this path".
+- Modify dispatch routing based on the *presence* of a scar (only
+  via the explicit `_apply_scar_override` field rewrite, which is
+  data correction, not control flow).
+- Auto-retry an event because a scar was found at consultation time.
+- Treat scars as a stateful agent with side effects.
+
+The only valid scar effect is the in-memory rewrite of
+``classification`` / ``priority`` / ``path`` performed by
+``Pipeline._apply_scar_override`` *during a normal dispatch* of a
+``file_change``. Every other use of scars (UI rendering via
+``/scars``, audit, telemetry) is read-only.
+
+Phase 3 chunk 3b (`/correct` / `/scar` resubmit) does NOT violate
+this rule. The trigger for the resubmit is the **human action**
+(`human_decision` event on the bus), not the *existence* of a scar
+in `ScarEngine`. The resubmit is bounded by `RESUBMIT_CAP=3` per
+originating `file_change.id`; subsequent dispatches that find the
+same scar via `_apply_scar_override` apply the correction without
+re-firing the loop.
+
 ## Phase 1 correction contract
 
 The Phase 1 pipeline routes off the event's classification, priority,

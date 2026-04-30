@@ -271,3 +271,40 @@ What did NOT change:
 - The "surface = sink on the read side" framing.
 - The deferral of LoopController, web UI, and Phase 2+ archive
   (issue #5).
+
+### 2026-04-30 — Phase 2 final shape (post-Phase-3 audit)
+
+The Phase 3 audit (ChatGPT, 2026-04-30) approved chunks 3a + 3b + 3c
+unconditionally except for one documentation requirement: pin down
+what Phase 2 actually became, so Phase 3+ work doesn't drift the
+contract again.
+
+```text
+Phase 2 = Surface + Read + Write (scar capture)
+NO execution
+NO feedback loop
+NO pipeline mutation
+```
+
+Concretely:
+
+- **Read** — `/status`, `/agents`, `/scars` render Karasu state to
+  the chat. They do not write.
+- **Write** — `/correct` and `/scar` write a `Scar` to ScarEngine
+  and a `human_decision` event to the bus. They do **not** mutate
+  the pipeline, the dispatcher, or any in-flight event. They do
+  not invoke any agent. The Scar is data on disk; whether it ever
+  fires is the pipeline's decision, on the next matching
+  `file_change`.
+- **Surface ≠ orchestrator** — TelegramInterface never calls into
+  the dispatcher, the pipeline, or the controller. Phase 3 chunk
+  3b's reaction loop runs in the **controller**, not the surface;
+  the surface only writes `human_decision`. The controller reads
+  the bus to learn about it.
+
+Phase 3 chunk 3b is the only place where a `human_decision` event
+triggers a fresh pipeline dispatch. That trigger is the **human
+action**, not the scar's existence (see
+`docs/scar-engine.md` "Golden rule"). The loop is bounded by
+`LoopController.RESUBMIT_CAP=3` and writes its own audit trail
+(`controller_resubmit=True` on the resubmitted `file_change`).

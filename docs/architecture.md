@@ -37,12 +37,19 @@ behaviour; chunks 3b (react to `human_decision` events) and 3c
 
 - **`watcher/`** — wraps `watchdog` and emits `file_change` events for
   every relevant filesystem change. Ignore patterns are read from config.
-  Hands events to the `LoopController` for downstream dispatch.
+  Implements `controller.sources.TriggerSource`; registered with the
+  `LoopController` for downstream dispatch.
 - **`controller/`** — `LoopController` owns the single worker thread
   that runs the pipeline. Bounded queue, daemon worker, crash
-  containment. Phase 3 chunk 3a is a refactor wrapper; later chunks
-  extend it to react to `human_decision` events and accept multiple
-  trigger sources. See [phase-3-loop-controller.md](phase-3-loop-controller.md).
+  containment. Reads `human_decision` events off the bus and resubmits
+  the originating `file_change` so chat-recorded scars fire (chunk 3b).
+  Manages a list of trigger sources via `add_source` (chunk 3c).
+  - **`controller/sources/`** — `TriggerSource` Protocol plus the
+    one-shot `git_hook` source. Long-running sources (watcher, future
+    webhook receiver, A2A peer) implement the Protocol; one-shot
+    producers (the `karasu hook` CLI) call `controller.submit`
+    directly.
+  See [phase-3-loop-controller.md](phase-3-loop-controller.md).
 - **`classifier/`** — assigns a `classification` and `priority` to each
   event using rule patterns from config. The scar engine can override
   the rule output.

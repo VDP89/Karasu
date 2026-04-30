@@ -7,6 +7,7 @@ Subcommands:
 * ``karasu tail``    — print JSONL events as they are observed.
 * ``karasu analyze`` — analyze event-log noise and distribution.
 * ``karasu chat``    — start the Telegram interface.
+* ``karasu hook``    — run as a git-hook trigger source (one-shot).
 """
 
 from __future__ import annotations
@@ -280,13 +281,11 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
     pipeline = Pipeline(classifier, dispatcher, reporter, sink, scars=scars)
 
-    # Phase 3 chunks 3a + 3b: pipeline runs through LoopController.
-    # Passing ``bus`` here also enables the chunk-3b bus subscription:
-    # /correct and /scar messages recorded on the bus by the Telegram
-    # surface trigger a resubmit of the originating file_change so the
-    # newly-recorded scar fires through the existing
-    # Pipeline._apply_scar_override path. Resubmits are capped to
-    # LoopController.RESUBMIT_CAP per originating file_change.
+    # Phase 3 chunks 3a + 3b + 3c: pipeline runs through
+    # LoopController, which (a) coordinates dispatch on a single
+    # worker, (b) reacts to /correct and /scar human_decision
+    # events by resubmitting the originating file_change, and
+    # (c) manages registered trigger sources (the watcher here).
     controller = LoopController(pipeline, bus=bus)
 
     watch_cfg = config.get("watch", {})
@@ -297,8 +296,57 @@ def cmd_watch(args: argparse.Namespace) -> int:
         controller=controller,
         debounce_ms=int(watch_cfg.get("debounce_ms", 250)),
     )
+    controller.add_source(watcher)
     print(f"karasu watch: writing events to {bus.path}", file=sys.stderr)
-    watcher.run_forever()
+    controller.run_forever()
+    return 0
+
+
+def cmd_hook(args: argparse.Namespace) -> int:
+    """Run a git-hook trigger source one-shot.
+
+    Invoked as ``karasu hook <name>`` from a hook script
+    (``.git/hooks/pre-commit`` etc.). Builds ``file_change`` events
+    from the current git state, writes them to the bus, drains
+    them through a controller worker, and exits.
+    """
+    from karasu.controller.sources.git_hook import (
+        SUPPORTED_HOOKS,
+        submit_for_hook,
+    )
+
+    if args.hook not in SUPPORTED_HOOKS:
+        print(
+            f"error: unsupported hook {args.hook!r}; expected one of "
+            f"{sorted(SUPPORTED_HOOKS)}",
+            file=sys.stderr,
+        )
+        return 2
+
+    config = _load_config(args.config)
+    bus = JsonlEventBus(_bus_path(config))
+    classifier = _classifier(config)
+    dispatcher = Dispatcher(bus=bus, adapters=_adapters(config))
+    reporter = HumanReporter(_trust(config))
+    scars = ScarEngine(_scars_path(config))
+
+    def sink(report) -> None:
+        print(report.text, flush=True)
+
+    pipeline = Pipeline(classifier, dispatcher, reporter, sink, scars=scars)
+
+    # No bus subscription for one-shot hook runs — there is no
+    # operator typing /correct mid-hook. Just the worker.
+    controller = LoopController(pipeline)
+    controller.start()
+    try:
+        count = submit_for_hook(args.hook, bus, controller.submit)
+        if controller._queue is not None:
+            controller._queue.join()
+    finally:
+        controller.stop()
+
+    print(f"karasu hook {args.hook}: {count} event(s)", file=sys.stderr)
     return 0
 
 
@@ -454,6 +502,16 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.set_defaults(func=cmd_analyze)
 
     sub.add_parser("chat", help="start the Telegram interface").set_defaults(func=cmd_chat)
+
+    hook = sub.add_parser(
+        "hook", help="run as a git hook trigger source (one-shot)"
+    )
+    hook.add_argument(
+        "hook",
+        choices=("pre-commit", "post-commit", "post-merge"),
+        help="git hook name",
+    )
+    hook.set_defaults(func=cmd_hook)
     return parser
 
 

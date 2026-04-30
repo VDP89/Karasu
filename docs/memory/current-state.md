@@ -27,7 +27,9 @@ Phase 3: IN PROGRESS — design doc merged (#34); chunk 3a (LoopController wrapp
 - Telegram inbound scar capture (`/correct`, `/scar`) ✔ — strict whitelist; pipeline does NOT consume in Phase 2
 - `LoopController` (single-worker dispatch coordinator) ✔ — behaviour-preserving wrapper around the existing pipeline
 - Controller bus subscription + reaction (`/correct`, `/scar` resubmit) ✔ — chunk 3b. Cap: 3 resubmits per originating `file_change`. Resubmits emit a fresh `file_change` with `controller_resubmit=True`.
-- Multi-source trigger plug-in (git hooks / webhook / A2A): DEFERRED to chunk 3c
+- `TriggerSource` Protocol + watcher as registered source ✔ — chunk 3c. Controller manages source lifecycle in `start`/`stop`.
+- `karasu hook <pre-commit|post-commit|post-merge>` ✔ — git-hook source as a one-shot CLI. Submits `file_change` events with `source="git_hook"` and `data.git_hook=<name>`.
+- GitHub webhook receiver / A2A Agent Cards / review-comment auto-handoff: DEFERRED to Phase 3+ archive (issue #5)
 - Pipeline still does NOT consume `human_decision` directly — only the controller reads them and resubmits a `file_change` so `Pipeline._apply_scar_override` picks up the chat-recorded scar on the next dispatch
 
 ## Verified behavior (Phase 1C closed)
@@ -71,10 +73,10 @@ Phase 3: IN PROGRESS — design doc merged (#34); chunk 3a (LoopController wrapp
 ## Next step (entry point)
 
 ```text
-Phase 3 chunk 3c — multi-source trigger plug-in. Generalise
-"watcher → controller" so git hooks (issue #5) become the second
-trigger source. GitHub webhook + A2A wait until 3c is in.
-See docs/memory/next-session.md.
+Phase 3 chunks 3a + 3b + 3c are pushed and stacked on
+feat/loop-controller-{wrapper,react,sources}. Audit gate per the
+Phase 2 cadence: maintainer hands the stack to ChatGPT for review
+before any new phase opens. See docs/memory/next-session.md.
 ```
 
 ## Do NOT do yet

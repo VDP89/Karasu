@@ -23,6 +23,7 @@ import queue
 import threading
 from typing import Callable
 
+from karasu.controller.sources import TriggerSource
 from karasu.eventbus import Event, JsonlEventBus, JsonlTailReader
 
 Callback = Callable[[Event], None]
@@ -77,6 +78,20 @@ class LoopController:
         self._bus_reader: JsonlTailReader | None = None
         self._resubmit_counts: dict[str, int] = {}
         self._resubmit_lock = threading.Lock()
+        # Trigger sources (chunk 3c). Each source's start() runs after
+        # the worker + bus subscription are up; stop() runs first on
+        # shutdown so producers stop emitting before the worker drains.
+        self._sources: list[TriggerSource] = []
+
+    def add_source(self, source: TriggerSource) -> None:
+        """Register a long-running trigger source.
+
+        Order of registration is order of start(). Sources can be
+        added before :meth:`start` (they will be started by it) or
+        after (they must be started by the caller — the controller
+        only manages sources that were registered before start).
+        """
+        self._sources.append(source)
 
     def submit(self, event: Event) -> None:
         """Enqueue ``event`` for the worker.
@@ -152,6 +167,18 @@ class LoopController:
         # this branch is a no-op.
         if self.bus is not None and self._bus_thread is None:
             self._start_bus_subscription_locked()
+        # Chunk 3c — start each registered trigger source AFTER the
+        # worker and bus thread are running. Sources may begin
+        # producing events immediately; they need the queue and
+        # subscription in place to handle them.
+        for source in self._sources:
+            try:
+                source.start()
+            except Exception:
+                _log.exception(
+                    "controller: trigger source %r failed to start",
+                    type(source).__name__,
+                )
 
     def _start_bus_subscription_locked(self) -> None:
         # Caller must guarantee no live bus thread exists.
@@ -192,14 +219,28 @@ class LoopController:
             stopping.wait(timeout=self._BUS_POLL_INTERVAL)
 
     def stop(self, timeout: float = 5.0) -> None:
-        """Signal the worker (and bus subscription) to stop.
+        """Signal trigger sources, bus subscription, and worker to stop.
 
-        Bus subscription is signalled first so any in-flight reaction
-        gets one last submit chance. Then the worker. If either hangs
-        past the timeout state stays intact so a future ``start``
-        raises rather than leaking.
+        Order:
+        1. Trigger sources first — stop producing before the worker
+           drains, otherwise dropped-on-shutdown events look like
+           bugs in the worker.
+        2. Bus subscription — one last reaction window, then exit.
+        3. Worker — drains the queue and exits.
+
+        If any thread hangs past the timeout state stays intact so a
+        future ``start`` raises rather than leaking.
         """
-        # Bus subscription first.
+        # Trigger sources first (chunk 3c).
+        for source in self._sources:
+            try:
+                source.stop()
+            except Exception:
+                _log.exception(
+                    "controller: trigger source %r raised during stop",
+                    type(source).__name__,
+                )
+        # Bus subscription next.
         if self._bus_thread is not None and self._bus_stopping is not None:
             self._bus_stopping.set()
             self._bus_thread.join(timeout=timeout)
@@ -230,6 +271,23 @@ class LoopController:
         self._worker = None
         self._queue = None
         self._stopping = None
+
+    def run_forever(self, poll_interval: float = 1.0) -> None:
+        """Block until ``KeyboardInterrupt``, then stop cleanly.
+
+        Calls :meth:`start` (which spawns the worker, bus
+        subscription, and registered trigger sources), sleeps in a
+        loop, and calls :meth:`stop` on Ctrl-C. Used by
+        ``cmd_watch``; tests drive the lifecycle manually.
+        """
+        import time
+
+        self.start()
+        try:
+            while True:
+                time.sleep(poll_interval)
+        except KeyboardInterrupt:
+            self.stop()
 
     # ------------------------------------------------------------------
     # Chunk 3b — bus reaction

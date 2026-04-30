@@ -185,19 +185,32 @@ class FilesystemWatcher:
         self._controller.stop(timeout=timeout)
 
     def start(self) -> None:
-        self.start_pipeline()
+        """Schedule and start the inotify observer.
+
+        Phase 3 chunk 3c: the watcher is a TriggerSource. The
+        controller starts its own worker + bus subscription before
+        calling this method, so ``start`` no longer manages the
+        pipeline lifecycle. ``start_pipeline``/``stop_pipeline``
+        remain as legacy delegators for tests that want to drive
+        the controller through the watcher directly.
+        """
         self._observer.schedule(_Handler(self), str(self.root), recursive=True)
         self._observer.start()
 
     def stop(self) -> None:
         self._observer.stop()
         self._observer.join()
-        self.stop_pipeline()
 
     def run_forever(self, poll_interval: float = 1.0) -> None:
+        # Standalone-watcher path: bring up the controller worker so
+        # callbacks run, then start the observer. Production goes
+        # through ``LoopController.run_forever`` instead, which
+        # manages the watcher as a registered source.
+        self.start_pipeline()
         self.start()
         try:
             while True:
                 time.sleep(poll_interval)
         except KeyboardInterrupt:
             self.stop()
+            self.stop_pipeline()

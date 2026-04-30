@@ -116,6 +116,29 @@ Discarded:
 
 ---
 
+### Phase 3 — TriggerSource Protocol + git-hook one-shot (chunk 3c)
+
+Decision:
+- Trigger sources are described by a `runtime_checkable` Protocol (`start`, `stop`). The watcher already had this shape; the protocol documents the seam without forcing inheritance.
+- `LoopController` manages a list of registered sources via `add_source`. `start()` calls each source's `start()` AFTER the worker and bus subscription are up; `stop()` calls each source's `stop()` FIRST so producers stop emitting before the worker drains.
+- `controller.run_forever()` is the production path for `karasu watch`. The watcher's own `run_forever` remains for standalone tests.
+- Git hooks are NOT registered sources. `karasu hook <name>` is a one-shot CLI that builds events and calls `controller.submit` directly, then drains the queue and exits.
+- `submit_for_hook(hook, bus, submit, runner)` writes events to the bus AND calls `submit`. Same pattern as the watcher: bus first, queue second.
+- Source `start`/`stop` exceptions are logged at `karasu.controller.loop` and do NOT break the controller.
+
+Reason:
+- The Protocol approach keeps the seam minimal. Future sources (GitHub webhook receiver, A2A peer) only need `start` + `stop` and can be registered without inheriting from anything.
+- One-shot vs long-running is a real distinction. Forcing git hooks into the registered-source model would make the controller manage subprocess state we don't need (the hook IS the subprocess).
+- Source exceptions surfaced as warnings rather than crashes preserve the rest of the pipeline. A flaky source loses its events; the worker and other sources keep functioning.
+
+Discarded:
+- ABC instead of Protocol: forces inheritance, increases the refactor cost for the watcher and any external producer.
+- Make git hooks long-running by polling git status: unnecessary; git fires the hook for us.
+- Stop sources in reverse registration order: only matters with inter-source dependencies, which the protocol forbids.
+- Make source exceptions fatal: a single bad source would take the whole controller down; not worth the simplicity.
+
+---
+
 ### Phase 3 — controller reacts to human_decision via resubmit (chunk 3b)
 
 Decision:

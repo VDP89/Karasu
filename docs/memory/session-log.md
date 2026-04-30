@@ -232,3 +232,48 @@ Impact:
 
 Next step:
 - Phase 3 chunk 3c — generalise trigger sources. Currently the watcher is the only `submit` caller. Chunk 3c introduces a plug-in interface so git hooks (issue #5) can fan into the same controller. GitHub webhook and A2A wait until 3c lands.
+
+---
+
+## 2026-04-30 (final) — Phase 3 chunk 3c: TriggerSource protocol + git-hook source
+
+What changed:
+- `src/karasu/controller/sources/__init__.py` — new `TriggerSource` Protocol (PEP 544 structural). `runtime_checkable` so `isinstance` confirms conformance. The watcher already had `start`/`stop`; documenting the seam costs a few lines.
+- `src/karasu/controller/sources/git_hook.py` — one-shot git-hook source. Pure helpers: `paths_for_hook(hook, runner)` (shells out to `git diff --cached / show / diff-tree`), `build_events(hook, paths)` (one `file_change` per path with `source="git_hook"` + `data.git_hook=<name>` + per-hook `change_type`: staged / committed / merged), and `submit_for_hook(hook, bus, submit, runner)` that wires path-extraction → bus.append → controller.submit.
+- `LoopController` extended:
+  - `add_source(source)` registers a `TriggerSource`.
+  - `start()` calls each source's `start()` AFTER the worker and bus subscription are up.
+  - `stop()` calls each source's `stop()` FIRST so producers stop emitting before the worker drains.
+  - `run_forever(poll_interval)` — convenience: `start()`, sleep loop, `stop()` on KeyboardInterrupt. Used by `cmd_watch`.
+  - Source start/stop exceptions logged (`karasu.controller.loop`) but do not break the controller.
+- `src/karasu/watcher/fs_watcher.py` — `start()` no longer calls `start_pipeline()`; only schedules the observer. The controller is responsible for the worker now. `stop()` symmetric. `start_pipeline`/`stop_pipeline` remain as legacy delegators (tests use them). `run_forever` keeps a standalone path that bootstraps both.
+- `src/karasu/__main__.py` — `cmd_watch` now calls `controller.add_source(watcher)` + `controller.run_forever()`. New `cmd_hook` subcommand: builds a one-shot controller (no bus subscription), starts it, calls `submit_for_hook`, drains, stops.
+- `tests/test_controller_sources.py` (new, 18 tests):
+  - Protocol conformance for the recording stub and the watcher.
+  - Source lifecycle (start order after worker, stop order before worker).
+  - Multiple sources started in registration order.
+  - Source `start()` exception logged + worker stays alive.
+  - Source `stop()` exception logged + controller shuts down.
+  - Multi-source fan-in: two producers submit; events land in FIFO order per source.
+  - Git-hook helpers: `SUPPORTED_HOOKS`, `paths_for_hook` for each hook, blank-line skipping, unknown hook handling.
+  - `build_events` shape per hook + unknown hook.
+  - `submit_for_hook` happy path, no-paths, unsupported-hook ValueError.
+  - End-to-end git-hook flow through a live controller.
+  - `controller.start()` starts the watcher's observer when the watcher is registered as a source.
+- `docs/architecture.md` — controller layer expanded to mention the sources package.
+
+Decisions:
+- `TriggerSource` is a `runtime_checkable` Protocol, not an ABC. The watcher already had the right shape; `isinstance(..., TriggerSource)` documents the seam without forcing inheritance. Future sources (webhook receiver, A2A peer) only need `start()` + `stop()`.
+- The git-hook source is NOT a registered `TriggerSource`. Hooks are one-shot CLI invocations; long-running registration would force the controller to manage subprocess state we don't need.
+- `submit_for_hook` writes to the bus AND calls `submit`. Same pattern the watcher uses (write first, then enqueue).
+- The watcher's `start()` no longer bootstraps the worker. The controller is the lifecycle authority for the worker. `start_pipeline`/`stop_pipeline` and `watcher.run_forever` remain as standalone-test paths.
+- Source start exceptions are logged but do NOT break the controller. A failed source loses its events, but the worker and other sources keep functioning.
+- Source stop ordering is in registration order (not reverse). Stopping producers in the order they were added is simpler and matches the start order; reverse would only matter if sources had inter-dependencies, which the protocol forbids.
+
+Impact:
+- Phase 3 surface complete: dispatch coordinator (chunk 3a) → reaction loop (chunk 3b) → multi-source plug-in (chunk 3c).
+- Operators can install git hooks via `.git/hooks/<name>` calling `karasu hook <name>`. Pre-commit / post-commit / post-merge events join the same dispatch queue as the watcher's filesystem events.
+- No change to `AgentResponse`, F3, F7, F8, surface contract.
+
+Next step:
+- Audit gate per Phase 2 cadence. PRs #34 (design) + #35 (chunk 3a) + #36 (chunk 3b) + #37 (chunk 3c) form the stack. Maintainer hands them to ChatGPT for review before any new phase opens.

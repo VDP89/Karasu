@@ -75,8 +75,10 @@ chunk or phase starts. See docs/memory/next-session.md.
 ## Do NOT do yet
 
 ```text
-- Do not add a LoopController or scheduler before the human surface is designed.
-- Do not mutate scars from chat / Telegram (still deferred).
+- Do not add a LoopController or scheduler.
+- Do not let the pipeline react to `human_decision` events. Chat-
+  originated scars (chunk 3) fire only via the existing
+  `Pipeline._apply_scar_override` on the next file_change.
 - Do not parallelize or batch adapter calls.
 - Do not abstract the adapter behind a plugin layer.
 ```

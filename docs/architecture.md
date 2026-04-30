@@ -7,9 +7,9 @@ replaced or extended without touching the rest.
 ## Component layout
 
 ```
-┌──────────┐   ┌────────────┐   ┌────────┐   ┌──────────┐   ┌────────────┐
-│ watcher  │──▶│ classifier │──▶│ router │──▶│ adapters │──▶│ reporter   │
-└──────────┘   └────────────┘   └────────┘   └──────────┘   └────────────┘
+┌──────────┐                ┌────────────┐                ┌──────────┐
+│ watcher  │──▶ controller ─▶│ classifier │──▶ router ──▶│ adapters │──▶ reporter
+└──────────┘                └────────────┘                └──────────┘
       │              │              │             │               │
       └──────────────┴──────────────┴─────────────┴───────────────┘
                                     ▼
@@ -26,10 +26,23 @@ replaced or extended without touching the rest.
                        └──────────────────────┘
 ```
 
+The watcher hands each `file_change` to the **LoopController** instead
+of running the pipeline inline. The controller owns one bounded
+queue + one worker thread; it dispatches the pipeline call from that
+worker. Phase 3 chunk 3a introduced this seam without changing
+behaviour; chunks 3b (react to `human_decision` events) and 3c
+(plug-in trigger sources beyond the watcher) build on top.
+
 ## Modules
 
 - **`watcher/`** — wraps `watchdog` and emits `file_change` events for
   every relevant filesystem change. Ignore patterns are read from config.
+  Hands events to the `LoopController` for downstream dispatch.
+- **`controller/`** — `LoopController` owns the single worker thread
+  that runs the pipeline. Bounded queue, daemon worker, crash
+  containment. Phase 3 chunk 3a is a refactor wrapper; later chunks
+  extend it to react to `human_decision` events and accept multiple
+  trigger sources. See [phase-3-loop-controller.md](phase-3-loop-controller.md).
 - **`classifier/`** — assigns a `classification` and `priority` to each
   event using rule patterns from config. The scar engine can override
   the rule output.

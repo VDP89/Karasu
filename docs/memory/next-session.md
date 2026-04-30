@@ -2,86 +2,123 @@
 
 ## Goal
 
-**Audit gate — Phase 2 review by ChatGPT before any new chunk.**
+**Phase 3 chunk 3b — react to `human_decision` events on the bus.**
 
-Phase 2 chunks 1+2+3 are pushed:
+Chunk 3a (LoopController wrapper) is shipped and merged on `main`.
+The architectural seam exists; behaviour is identical to pre-3a.
+Chunk 3b makes the controller actually *react*: when a Telegram
+`/correct` or `/scar` lands a `human_decision` event on the bus,
+the controller resolves the originating `file_change` and
+re-submits it. The existing `Pipeline._apply_scar_override` picks
+up the chat-recorded scar on the resubmit.
 
-- **PR #30** — design doc `docs/phase-2-surface.md` (no code).
-- **PR #31** — chunk 1: outbound Telegram sink.
-- **PR #32** — chunk 2: read-only slash commands `/status`, `/agents`, `/scars`. Stacked on #31.
-- **PR #33** — chunk 3: inbound scar capture `/correct`, `/scar`. Stacked on #32.
-
-Per the operator policy: ChatGPT acts as the reviewer for this repo and is invoked manually. The maintainer passes the PR set to ChatGPT for the audit. **No new chunk or phase starts until the audit returns.**
-
-## Pre-reads for the audit
+## Scope
 
 ```text
-1. docs/phase-2-surface.md             — surface contract (the source of truth)
-2. docs/memory/current-state.md        — phase + capabilities snapshot
-3. docs/memory/session-log.md          — chunk-by-chunk record
-4. docs/memory/decision-log.md         — durable decisions
-5. src/karasu/interface/telegram_bot.py — TelegramInterface
-6. src/karasu/interface/commands.py    — pure formatters + write handlers
-7. tests/test_interface_commands.py    — 32 tests
-8. tests/test_telegram_bot.py          — 25 tests (drain, send, handle_command, handle_write_command)
+What ships in 3b:
+- LoopController gains a JsonlTailReader subscription to the bus.
+- A new method on_bus_event(event) inspects each event:
+    * agent_response → no-op (already dispatched)
+    * file_change    → no-op (the trigger source already submitted it)
+    * human_decision → parse the text field; if it matches /correct
+                       <prefix> or /scar, look up the originating
+                       agent_response, find its correlated
+                       file_change, and re-submit that file_change.
+
+What does NOT ship in 3b:
+- Multi-source trigger plug-in (3c).
+- Retries beyond the resubmit cap.
+- Telemetry events (controller_action) — defer until reaction
+  has dogfood evidence.
+- Any change to AgentResponse, F3, F7, F8.
 ```
 
-## Questions ChatGPT should be asked
+## Surface contract — must respect
 
 ```text
-1. Does the surface contract in docs/phase-2-surface.md match the
-   shipped behaviour? Any drift between the design and chunks 1-3?
-2. Is the trigger-derivation strategy (re-classify path on /correct
-   and /scar) defensible, or should classification be persisted on
-   the file_change at watch time?
-3. Is the strict-whitelist policy on write commands the right
-   default, or should it be opt-in via a separate YAML key?
-4. Does the human_decision audit-trail-on-every-attempt rule create
-   any privacy / volume concerns we missed?
-5. Is the CommandHandler glue in TelegramInterface.run_application
-   covered well enough by the pure-piece tests, or does it need its
-   own integration check?
+- Pipeline still does NOT consume human_decision events. The
+  CONTROLLER consumes them; the pipeline only sees the resubmitted
+  file_change.
+- The controller never mutates ScarEngine. /correct + /scar already
+  recorded the Scar (Phase 2 chunk 3); the controller only reacts
+  to that record by triggering a fresh dispatch.
+- Single-worker invariant: the resubmit goes through the same
+  bounded queue + worker. No parallelism.
+- Reaction cap: at most 3 resubmits per (originating event_id,
+  scar_id) tuple. Beyond the cap, log a warning and skip. Phase 1
+  had no retry; introducing one needs a stop rule.
 ```
 
-## If the audit accepts
+## Pre-reads
 
 ```text
-- Merge #31 → #32 → #33 in order (each base re-targeted to main as
-  the previous lands).
-- Open Phase 3 entry point: PWA / web UI design doc, OR LoopController
-  design doc. Decide based on operator priorities at that point.
-- Issue #5 (Phase 2+ archive) becomes the source of next chunks
-  (git hooks trigger, GitHub webhook, A2A Agent Card, review-comment
-  auto-handoff).
+1. docs/phase-3-loop-controller.md     — chunk 3b design (open question 1: cap)
+2. docs/phase-2-surface.md             — surface contract (frozen)
+3. docs/memory/current-state.md        — phase + capabilities
+4. docs/memory/session-log.md          — chunk 3a summary
+5. src/karasu/controller/loop.py       — extension target
+6. src/karasu/interface/commands.py    — find_agent_response,
+                                          parse_correction (reuse)
+7. src/karasu/eventbus/jsonl_bus.py    — JsonlTailReader
 ```
 
-## If the audit asks for changes
+## Open questions to resolve while implementing
 
 ```text
-- File the requested changes as one focused commit per concern on
-  the relevant chunk's branch.
-- Keep stack order intact unless the audit asks to collapse the
-  chunks — premature collapse loses review history.
-- Re-request the audit after the changes are pushed. Do not start a
-  new phase until ChatGPT signs off.
+1. Where does the bus subscription live? Lean: a new private
+   thread on LoopController that calls JsonlTailReader.read_new()
+   in a poll loop and dispatches to on_bus_event. Same shape as
+   TelegramInterface.run_application's job queue, but threaded.
+
+2. How is the resubmit cap tracked? Lean: an in-memory dict on
+   LoopController keyed by (originating_id, scar_id). Resets on
+   process restart — we are not persisting controller state in
+   3b. Phase 3+ may extend.
+
+3. Should the resubmit re-emit the file_change to the bus, or
+   pass a fresh in-memory Event? Lean: re-emit. Audit trail
+   shows the controller's reaction explicitly; no special
+   "resubmit" event type, just a normal file_change with
+   data.controller_resubmit=True so analyze can tell them apart.
+
+4. What about /scar (no event_id)? Lean: target the latest
+   agent_response on the bus, same as Phase 2 chunk 3 capture
+   logic. Reuse latest_agent_response from commands.py.
 ```
 
-## Do NOT do during the audit window
+## Do NOT do yet
 
 ```text
-- Do not start chunk 4 or any Phase 3 work.
-- Do not parallelize or batch adapter calls.
-- Do not let the pipeline react to scars-from-chat in Phase 2 (the
-  human_decision events on the bus are passive records).
+- Do not start chunk 3c (multi-source trigger plug-in).
+- Do not parallelize the controller worker.
+- Do not abstract the adapter behind a plugin layer.
+- Do not let the pipeline consume human_decision directly.
 - Do not touch AgentResponse, F3, F7, F8.
-- Do not introduce a LoopController.
+- Do not persist controller state between runs.
 ```
+
+## Exit condition
+
+```text
+A new feat/* branch, ≤400 LOC, with:
+- LoopController.on_bus_event implemented and tested.
+- Bus subscription wired in cmd_watch.
+- Resubmit cap enforced; tests cover the cap and the happy path
+  (chat-recorded scar fires on the very next resubmit).
+- Memory files synced; this file pointed at chunk 3c.
+```
+
+## Audit gate after chunk 3c
+
+Per the Phase 2 cadence: ChatGPT reviews chunks 3a + 3b + 3c
+together once 3c is pushed. The maintainer hands the stack.
+**No new phase opens until the audit returns.**
 
 ## Anchor for the previous sessions
 
 - Phase 1C closed 2026-04-29 (PR #29).
-- `docs/phase-2-surface.md` (PR #30) — design only.
-- `feat/telegram-outbound-sink` (PR #31) — chunk 1 code, 18 new tests.
-- `feat/telegram-slash-commands` (PR #32) — chunk 2 code, 12 new tests, stacked on #31.
-- `feat/telegram-scar-capture` (PR #33) — chunk 3 code, 32 new tests, stacked on #32.
-- 150/150 tests green locally on the chunk-3 tip.
+- Phase 2 closed 2026-04-30 (PRs #30 #31 #32 #33 merged after audit
+  + condition fix).
+- Phase 3 design merged 2026-04-30 (PR #34).
+- `feat/loop-controller-wrapper` (this session) — chunk 3a code,
+  11 new controller tests, 162/162 green locally.

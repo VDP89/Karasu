@@ -116,6 +116,42 @@ Discarded:
 
 ---
 
+### Phase 3 — controller as wrapper, watcher delegates (chunk 3a)
+
+Decision:
+- Single-worker dispatch logic moves out of `FilesystemWatcher`
+  into `LoopController`. The watcher constructs (or accepts) a
+  controller and routes events via `controller.submit`.
+- The watcher keeps `start_pipeline` / `stop_pipeline` as thin
+  delegators and exposes `_queue` / `_worker` / `_stopping` as
+  read-only properties that forward to the controller. Existing
+  watcher tests pass unchanged.
+- `cmd_watch` builds the controller explicitly so chunks 3b and
+  3c can extend it without touching the watcher.
+
+Reason:
+- Refactor without behavioural change is the chunk-3a goal. The
+  parity test in `tests/test_controller.py` enforces that the
+  bus output is identical to the direct synchronous path.
+- Centralising the worker in the controller frees chunk 3b to
+  add a bus subscription + reaction logic without entangling
+  the watcher.
+- Backward-compat properties on the watcher are explicit refactor
+  scaffolding. They can be removed in a later chunk if the test
+  suite migrates to drive the controller directly.
+
+Discarded:
+- Replace the watcher API entirely (drop `start_pipeline` /
+  `stop_pipeline`): would break every existing watcher test in
+  one chunk. Rejected for review burden.
+- Make the controller optional and fall back to the old inline
+  behaviour: doubles the code paths and undermines the chunk-3b
+  reaction loop, which assumes the controller is always present.
+- Async event loop instead of threads: would force a second
+  runtime alongside the Telegram surface. Threads stay.
+
+---
+
 ### Phase 2 — redact args in human_decision for unauthorized writes (PR #33, audit fix)
 
 Decision:

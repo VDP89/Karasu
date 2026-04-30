@@ -26,6 +26,7 @@ import yaml
 from karasu import __version__
 from karasu.adapters import AgentAdapter, ClaudeCodeAdapter, CodexAdapter
 from karasu.classifier import ClassificationRule, RuleClassifier
+from karasu.controller import LoopController
 from karasu.eventbus import Event, JsonlEventBus, JsonlTailReader
 from karasu.interface import TelegramInterface
 from karasu.interface.commands import (
@@ -279,12 +280,17 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
     pipeline = Pipeline(classifier, dispatcher, reporter, sink, scars=scars)
 
+    # Phase 3 chunk 3a: pipeline runs through LoopController. Behaviour
+    # is identical to the pre-chunk path (single bounded queue + single
+    # worker thread); the seam is in place for chunks 3b and 3c.
+    controller = LoopController(pipeline)
+
     watch_cfg = config.get("watch", {})
     watcher = FilesystemWatcher(
         root=watch_cfg.get("path", "."),
         bus=bus,
         ignore=watch_cfg.get("ignore", DEFAULT_IGNORE),
-        on_event=pipeline,
+        controller=controller,
         debounce_ms=int(watch_cfg.get("debounce_ms", 250)),
     )
     print(f"karasu watch: writing events to {bus.path}", file=sys.stderr)

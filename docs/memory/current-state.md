@@ -5,7 +5,7 @@
 Phase 1A: COMPLETED
 Phase 1B: COMPLETED (no-adapter pass validated, F1–F5 closed)
 Phase 1C: COMPLETED (real Claude adapter loop validated, F6–F8 closed)
-Phase 2: IN PROGRESS — chunk 1 (Telegram outbound sink) shipped; surface contract frozen in `docs/phase-2-surface.md`
+Phase 2: IN PROGRESS — chunks 1 (outbound sink) + 2 (read-only slash commands) shipped; surface contract frozen in `docs/phase-2-surface.md`
 
 ## System status
 
@@ -22,8 +22,9 @@ Phase 2: IN PROGRESS — chunk 1 (Telegram outbound sink) shipped; surface contr
 - `DEFAULT_IGNORE` covers bus, logs and tmp files ✔
 - Per-adapter `timeout_s` configurable from YAML ✔
 - Telegram outbound sink (`karasu chat`) ✔
-- Telegram inbound override loop / slash commands: DEFERRED
-- LoopController / scar capture from chat: DEFERRED
+- Telegram read-only slash commands (`/status`, `/agents`, `/scars`) ✔
+- Telegram inbound scar capture (`/correct`, `/scar`): DEFERRED
+- LoopController: DEFERRED
 
 ## Verified behavior (Phase 1C closed)
 
@@ -66,8 +67,8 @@ Phase 2: IN PROGRESS — chunk 1 (Telegram outbound sink) shipped; surface contr
 ## Next step (entry point)
 
 ```text
-Phase 2 — chunk 2: decide between slash commands (read-only `/status`,
-`/agents`, `/scars`) or scar-capture inbound (`/correct`, `/scar`).
+Phase 2 — chunk 3: inbound scar capture (`/correct <event_id> field=value`,
+`/scar field=value`) writing to ScarEngine via the bus.
 See docs/memory/next-session.md.
 ```
 

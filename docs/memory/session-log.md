@@ -94,3 +94,28 @@ Impact:
 
 Next step:
 - Phase 2 chunk 2 — decide between read-only slash commands (`/status`, `/agents`, `/scars`) or inbound scar-capture (`/correct`, `/scar`). Both are documented as deferred in `docs/phase-2-surface.md`.
+
+---
+
+## 2026-04-29 (still later) — Phase 2 chunk 2: read-only slash commands
+
+What changed:
+- `src/karasu/interface/commands.py` — pure formatters: `format_status(bus)`, `format_agents(adapters)`, `format_scars(scars)`. No telegram dependency; tests call them directly.
+- `TelegramInterface.handle_command(name, user_id)` — pure dispatch. Whitelist check first (short-circuits before provider runs), then provider lookup, then call. Returns canned strings for unauthorized / unknown / not-configured.
+- `TelegramInterface.run_application(reader, reporter, poll_interval)` — wires the actual `python-telegram-bot` Application: three CommandHandlers + a JobQueue task that calls `drain` and forwards reports. ``pragma: no cover`` — pure pieces are tested separately.
+- `karasu chat` rewritten again: builds adapters/scars/providers, hands them to the interface, calls `run_application`. The manual drain loop is gone.
+- `tests/test_interface_commands.py` (8 tests) and `tests/test_telegram_bot.py` (+5 tests). 118/118 pass locally.
+- `docs/local-dogfood.md` — slash-command section appended.
+
+Decisions:
+- Providers are lambdas closing over runtime state, not new dataclasses. `Report` is the only contract on the surface side; commands stay format-text-out-on-demand.
+- Whitelist short-circuits before the provider runs. Tests assert the provider is not consulted on unauthorized calls (no timing leak).
+- `run_application` is the only place `python-telegram-bot.Application` is built. Drain happens via the JobQueue, not a parallel thread — single event loop.
+
+Impact:
+- Operator can poll Karasu state from Telegram without leaving the chat: version, event counts, last event, registered agents, active scars.
+- Outbound flow from chunk 1 is preserved (drain runs as a JobQueue task at the same `poll_interval`).
+- No change to `AgentResponse`, F3, F7, F8 contracts.
+
+Next step:
+- Phase 2 chunk 3 — inbound scar capture. `/correct <event_id> field=value` and `/scar field=value` parse the message, derive the trigger from the latest `agent_response`, record a Scar via ScarEngine. Pipeline still does NOT react in Phase 2.

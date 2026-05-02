@@ -310,3 +310,69 @@ Next step:
 - Mergear F9 + F10 + F11.
 - Cerrar issue #39 cuando los tres landeen.
 - Phase 3+ archive: pre-mortem doc-only PR primero, después chunks por concept (issue #5).
+
+---
+
+## 2026-05-02 (Phase 3+ chunk 4a) — GitHub webhook receiver
+
+What changed:
+- `docs/phase-3-plus-pre-mortem.md` (#48) merged after two audit rounds (APPROVE WITH MINOR REQUIRED CHANGES → all six REQUERIDOS + two NICE-TO-HAVE applied → APPROVE).
+- `src/karasu/controller/sources/webhook.py` — new module:
+  - `WebhookHandler` (pure logic): HMAC verify with `hmac.compare_digest`, body size cap (1 MiB default, 413 on oversize), JSON parse (422 on malformed), Content-Length sanity (411 on missing/mismatch), in-memory dedup ring (1024 deliveries), event mapping for `pull_request_review_comment.created` → `file_change` with `source="github_webhook"` + full GitHub metadata. Order: size → JSON → HMAC, all BEFORE any side effect.
+  - `WebhookSource` (TriggerSource): `http.server.ThreadingHTTPServer` in a daemon thread. `start`/`stop` lifecycle; `address` property exposes the bound port for `port=0` ephemeral binding in tests.
+  - `WebhookConfigError`: raised at construction if secret is missing, empty, or shorter than 16 bytes.
+  - `build_webhook_source` factory used by `cmd_serve`.
+- `src/karasu/__main__.py` — new `karasu serve --host --port` subcommand. Reads `KARASU_WEBHOOK_SECRET`. Fails CLOSED with exit 2 if absent, empty, or short (F-WH-9). Builds the controller + source and `controller.run_forever()`.
+- `tests/test_webhook_source.py` — 26 new tests covering F-WH-1/2/3/5/7/8/9/10. Includes end-to-end live HTTP roundtrip on an ephemeral port.
+- `docs/local-dogfood.md` — new "Phase 3+ chunk 4a" section. Historical "do not add webhooks" line annotated `(LIFTED in Phase 3+ chunk 4a)`.
+
+Decisions:
+- Order of checks (audit F-WH-8): Content-Length → Content-Length match → JSON parse → HMAC verify. Body size and JSON validity rejected BEFORE the signing path so rejection latency cannot leak signing-key timing.
+- Secret minimum 16 bytes (audit F-WH-9). Below that → `WebhookConfigError` at handler construction; `cmd_serve` re-checks first to print a friendly error and exit 2 before any port is bound.
+- Dedup is in-memory only (audit F-WH-10). Documented constraint: GitHub does not retry on 200, so the post-restart re-delivery window is narrow and acceptable for the MVP.
+- Single mapping (`pull_request_review_comment.created`) in chunk 4a. Other event types ack 200 with no event so GitHub's delivery success metric stays clean and chunk 4c can extend mapping without re-engineering.
+- Route boundary explicit (audit F-A2A-5): chunk 4a accepts only `POST /webhook`. Other paths/methods → 404/405. Chunk 4b will add `GET /.well-known/agent-card.json` without overlap.
+- Did NOT implement per-source-IP rate limit (F-WH-6). The controller's bounded queue is the backstop; if dogfood evidence demands tighter rate limiting it ships in a focused PR rather than bloating chunk 4a.
+
+Impact:
+- Phase 3+ archive opened. The webhook receiver is the second long-running source (alongside the watcher) plugging into the chunk-3c TriggerSource Protocol.
+- Pipeline still does NOT consume `human_decision`. The webhook receiver is a producer only; it does NOT trigger `/correct` or `/scar`. Issue #47 (cap-local) is unchanged.
+- 228/228 tests pass locally (202 prior + 26 new).
+- No change to `AgentResponse`, F3, F7, F8, surface contract, single-worker invariant.
+
+Next step:
+- Audit the chunk 4a PR. If accepted, merge and arranque chunk 4b (A2A Agent Card). If pre-req constraints land first (NICE-TO-HAVE #1 priority persist + NICE-TO-HAVE #3 startup warning + issue #47 outline), chunk 4c becomes unblocked too.
+
+---
+
+## 2026-05-02 (Phase 3+ chunk 4a, audit follow-up) — F-WH-6 + F-A2A-5 + cmd_serve tests
+
+What changed:
+- Audit on PR #49 returned NO APPROVED with one blocking REQUERIDO: F-WH-6 was deferred in the PR body but the pre-mortem listed it as a failure mode requiring 429. Two NICE-TO-HAVE: explicit F-A2A-5 test for POST /.well-known/agent-card.json → 405, and cmd_serve fail-closed tests.
+- src/karasu/controller/sources/webhook.py:
+  - New `_RateLimiter` class — sliding-window per-source-IP token bucket. Configurable `max_per_window`, `window_seconds=60.0` default. Lock-protected. Cleanup pass when dict size exceeds `_RATE_LIMIT_CLEANUP_THRESHOLD=1024` to bound memory under path-scan attacks.
+  - `WebhookHandler` accepts `rate_limit_per_minute: int | None = 60` (default 60/minute, `None` disables — used by tests). Rejects zero / negative with `ValueError`.
+  - `handle()` signature gains `source_ip: str = "0.0.0.0"`. Rate limit check runs FIRST, before path / method / body / signing checks, so a flood from one peer cannot drain CPU on the verifier.
+  - `_AGENT_CARD_PATH = "/.well-known/agent-card.json"` reserved for chunk 4b. Path is known to the receiver: POST → 405 (method not allowed for the resource, even though 4a doesn't ship GET); GET → 404 with "agent-card not implemented yet" body. Chunk 4b only has to fill the GET branch.
+  - HTTP transport (`_RequestHandler._dispatch`) passes `self.client_address[0]` as `source_ip` to the handler.
+  - `build_webhook_source` exposes `rate_limit_per_minute` parameter; `__all__` exports `DEFAULT_RATE_LIMIT_PER_MINUTE`.
+- tests/test_webhook_source.py — 11 new tests:
+  - F-WH-6: returns 429 above threshold, isolates per source IP, runs before path check, can be disabled with None, rejects zero/negative.
+  - F-A2A-5: POST /.well-known/agent-card.json → 405, GET → 404 (4a placeholder), GET /webhook → 405.
+  - cmd_serve fail-closed: missing / empty / short secret → exit 2 with the right error message, before binding any port. Drives the real `main(["serve", ...])` entry point through monkeypatched env vars.
+- 239/239 pass locally (228 prior + 11 new).
+
+Decisions:
+- Rate limit check FIRST (audit choice). Cheaper than HMAC verify; protects path-scan attacks. Authenticated bursts pay the limiter cost too — acceptable for MVP since we expect a single GitHub origin.
+- /.well-known/agent-card.json is a reserved path in 4a, not just unknown. Returning 405 on POST today means chunk 4b literally only has to add the GET response body.
+- `rate_limit_per_minute=None` is supported as an explicit opt-out for tests that need many requests in a row. Production callers should always set a positive integer.
+- Cleanup of the IP→deque dict is bounded but lazy (every >1024 entries triggers a sweep); avoids per-call sweeps for the common case.
+
+Impact:
+- F-WH-6 contradiction between PR body and pre-mortem closed: the failure mode is implemented and tested, no longer "out of scope".
+- F-A2A-5 boundary now pinned in chunk 4a so chunk 4b can extend without re-engineering the route check.
+- cmd_serve fail-closed now has automated coverage; previously only manual.
+- No change to AgentResponse, F3, F7, F8, surface contract.
+
+Next step:
+- Re-audit chunk 4a PR #49. If accepted, merge and arranque chunk 4b (A2A Agent Card) which fills the reserved GET handler.

@@ -29,7 +29,8 @@ Phase 3: COMPLETED + DOGFOOD-VALIDATED + AUDIT-ACCEPTED — chunks 3a + 3b + 3c 
 - Controller bus subscription + reaction (`/correct`, `/scar` resubmit) ✔ — chunk 3b. Cap: 3 resubmits per originating `file_change`. Resubmits emit a fresh `file_change` with `controller_resubmit=True`.
 - `TriggerSource` Protocol + watcher as registered source ✔ — chunk 3c. Controller manages source lifecycle in `start`/`stop`.
 - `karasu hook <pre-commit|post-commit|post-merge>` ✔ — git-hook source as a one-shot CLI. Submits `file_change` events with `source="git_hook"` and `data.git_hook=<name>`.
-- GitHub webhook receiver / A2A Agent Cards / review-comment auto-handoff: DEFERRED to Phase 3+ archive (issue #5)
+- `karasu serve --host --port` ✔ (Phase 3+ chunk 4a) — GitHub webhook receiver. HMAC-verified, body-size-capped (1 MiB), dedup ring (1024 deliveries), maps `pull_request_review_comment.created` → `file_change` with `source="github_webhook"` + `github_*` metadata. Fails CLOSED on missing/short secret (F-WH-9). Implements `TriggerSource`.
+- A2A Agent Cards / review-comment auto-handoff: DEFERRED (chunks 4b, 4c)
 - Pipeline still does NOT consume `human_decision` directly — only the controller reads them and resubmits a `file_change` so `Pipeline._apply_scar_override` picks up the chat-recorded scar on the next dispatch
 
 ## Verified behavior (Phase 1C closed)
@@ -86,18 +87,15 @@ Cap enforcement: 6 `/scar` rapid-fire → exactly 3 resubmits, 3 cap warnings, 0
 ## Next step (entry point)
 
 ```text
-Phase 3+ archive — pre-mortem doc-only PR first.
-Audit signed off readiness; the 2 REQUERIDOS are applied and the
-3 NICE-TO-HAVE are scoped (one applied, two queued as parallel
-hardening tasks). Pick one concept after pre-mortem audit:
-- GitHub webhook receiver (HMAC + delivery dedup)
-- A2A Agent Cards (discovery /agent-card.json)
-- Review-comment auto-handoff to Claude Code
-See docs/memory/next-session.md.
+Phase 3+ chunk 4b — A2A Agent Cards. Mounts
+GET /.well-known/agent-card.json on the existing webhook server
+(F-A2A-5 route boundary). Discovery only, NOT capability negotiation.
+≤300 LOC. See docs/phase-3-plus-pre-mortem.md § 4b and
+docs/memory/next-session.md.
 
 Queued hardening tasks (NICE-TO-HAVE from audit, may go in parallel):
 - Persist effective priority on agent_response.data
-- Startup log when adapter trust_level >= 2
+- Startup log when adapter trust_level >= 2 (HARD pre-req for chunk 4c)
 ```
 
 ## Do NOT do yet

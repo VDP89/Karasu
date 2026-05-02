@@ -41,3 +41,6 @@ class TriggerSource(Protocol):
 
     def stop(self) -> None:  # pragma: no cover - protocol
         ...
+
+
+__all__ = ["TriggerSource"]

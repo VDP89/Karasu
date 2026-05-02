@@ -7,7 +7,8 @@ It exists so Claude Code, Codex, ChatGPT, and future agents can restart work wit
 ## Files
 
 - [`current-state.md`](current-state.md) — latest stable project state, active phase, open decisions, and next session entry point.
-- [`session-log.md`](session-log.md) — chronological bitacora of important sessions, merges, decisions, and phase transitions.
+- [`session-log.md`](session-log.md) — chronological bitacora of important sessions, merges, decisions, and phase transitions. One paragraph per session; per-session deep dives live in `sessions/`.
+- [`sessions/`](sessions/) — per-session deep-dive bitácoras: setup, real-time debugging, evidence captured, lessons learned. Written for sessions that close a phase, surface multiple findings, or run a dogfood. See [`sessions/README.md`](sessions/README.md) for the convention.
 - [`decision-log.md`](decision-log.md) — durable architectural and product decisions, including what was deferred and why.
 - [`next-session.md`](next-session.md) — startup checklist for any agent beginning a new work session.
 

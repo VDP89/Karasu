@@ -245,5 +245,18 @@ class TelegramInterface:
                         chat_id=self.chat_id, text=self.format(report)
                     )
 
-        application.job_queue.run_repeating(_drain_job, interval=poll_interval)
+        # F10 — coalesce missed runs into one and keep max_instances=1
+        # so concurrent _drain_job invocations cannot race on the
+        # JsonlTailReader's offset (the reader is not thread-safe).
+        # APScheduler's default ``coalesce=False`` floods the log with
+        # "maximum number of running instances reached" warnings when
+        # ``send_message`` takes longer than ``poll_interval``;
+        # ``coalesce=True`` collapses the queued misses into a single
+        # follow-up run after the in-flight one finishes. Surfaced
+        # during the Phase 3 dogfood (issue #39).
+        application.job_queue.run_repeating(
+            _drain_job,
+            interval=poll_interval,
+            job_kwargs={"coalesce": True, "max_instances": 1},
+        )
         application.run_polling()

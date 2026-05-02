@@ -25,7 +25,7 @@ maintainer; do not absorb the change into a feature PR.
 |-------|------------------------|--------------------------------------------------|------------------------------------------------------------------------|
 | D-001 | Event bus              | JSONL flat file                                  | Simple, no dependencies, crash-safe, version-controllable              |
 | D-002 | Agent communication    | CLI/HTTP adapters (Phase 1), A2A (Phase 2)       | Start simple, standardize later                                        |
-| D-003 | Human-in-the-loop      | Trust gradient per agent (0→3)                   | More nuanced than binary approve/reject                                |
+| D-003 | Human-in-the-loop      | Trust gradient per agent (0→3)                   | More nuanced than binary approve/reject. **At trust_level≥2 the agent modifies operator state without per-call approval; see `docs/local-dogfood.md` "Trust gradient — what `trust_level` actually does in production" for the operational warning.** |
 | D-004 | State persistence      | JSONL                                            | No database dependency                                                 |
 | D-005 | Watcher                | watchdog (Python)                                | Mature, cross-platform, event-driven                                   |
 | D-006 | Correction memory      | Scar engine (Lucy mechanism)                     | Corrections become routing rules                                       |

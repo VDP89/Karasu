@@ -4,10 +4,15 @@
 
 **Phase 3+ archive — pre-mortem doc-only PR first, then chunks.**
 
-Phase 3 is COMPLETE + DOGFOOD-VALIDATED (issue #39 closed cleanly).
-Three F-PRs filed from the dogfood (#40, #41, #42) — all small,
-all P1/P3, none blocking architectural work. Once they merge,
-Phase 3+ archive (issue #5) opens.
+Phase 3 is **COMPLETE + DOGFOOD-VALIDATED + AUDIT-ACCEPTED** (issue #39
+closed cleanly; audit recorded in
+`docs/memory/phase-3-dogfood-audit-2026-05-02.md`). Three F-PRs filed
+from the dogfood (#40, #41, #42) — all small, all P1/P3, none
+blocking architectural work. The audit returned 2 REQUERIDOS (both
+applied: trust=2 docs warning + cap-local-per-origin issue opened)
+and 3 NICE-TO-HAVE: one applied (sessions `_template.md`), two queued
+as parallel hardening (persist priority on agent_response, startup
+log for trust>=2). Phase 3+ archive (issue #5) is unblocked.
 
 ## Phase 3+ archive concepts (issue #5 — sketch + sized)
 

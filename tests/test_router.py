@@ -145,3 +145,87 @@ def test_dispatch_metadata_is_empty_for_watcher_events(
     assert "github_body" not in request.metadata
     assert request.metadata["path"] == "a.py"
     assert request.metadata["classification"] == "code_change"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 audit follow-up — persist effective priority on agent_response.data
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_persists_priority_on_agent_response(
+    bus: JsonlEventBus,
+) -> None:
+    """An operator inspecting events.jsonl post-hoc must be able to
+    audit "what priority did this dispatch run at?" without
+    cross-referencing the originating file_change. The dispatcher
+    persists the effective priority on agent_response.data."""
+    stub = _StubAdapter()
+    dispatcher = Dispatcher(bus=bus, adapters=[stub])
+
+    event = Event(
+        type="file_change",
+        source="watcher",
+        data={
+            "path": "a.py",
+            "classification": "code_change",
+            "priority": "high",
+        },
+    )
+    dispatcher.dispatch(event)
+    response_event = list(bus.read())[-1]
+
+    assert response_event.type == "agent_response"
+    assert response_event.data["priority"] == "high"
+
+
+def test_dispatch_priority_defaults_to_normal_when_absent(
+    bus: JsonlEventBus,
+) -> None:
+    """When the file_change carries no priority field, the dispatch
+    runs at the documented default ("normal") and that default is
+    persisted on agent_response. The audit trail must reflect the
+    REAL priority used, not "missing"."""
+    stub = _StubAdapter()
+    dispatcher = Dispatcher(bus=bus, adapters=[stub])
+
+    event = Event(
+        type="file_change",
+        source="watcher",
+        data={"path": "a.py", "classification": "code_change"},
+    )
+    dispatcher.dispatch(event)
+    response_event = list(bus.read())[-1]
+
+    assert response_event.data["priority"] == "normal"
+
+
+def test_dispatch_priority_reflects_scar_override(
+    bus: JsonlEventBus,
+) -> None:
+    """When a scar overrides priority before dispatch (e.g.
+    ``/scar priority=high``), the agent_response must show the
+    POST-override priority — that's the value the adapter actually
+    saw and that future analyze passes need to attribute the
+    dispatch to."""
+    stub = _StubAdapter()
+    dispatcher = Dispatcher(bus=bus, adapters=[stub])
+
+    # Simulate an event whose priority was rewritten by a scar
+    # override before reaching the dispatcher (the pipeline mutates
+    # data.priority in-place when applying a scar).
+    rewritten = Event(
+        type="file_change",
+        source="watcher",
+        data={
+            "path": "a.py",
+            "classification": "code_change",
+            "priority": "high",  # was "normal", overridden by scar
+        },
+    )
+    dispatcher.dispatch(rewritten)
+    response_event = list(bus.read())[-1]
+
+    assert response_event.data["priority"] == "high"
+    # Adapter saw the same effective priority — agent_response and
+    # request agree, no audit-trail divergence.
+    assert stub.calls[0].priority == "high"

@@ -65,11 +65,22 @@ class Dispatcher:
             metadata=dict(event.data),
         )
         response = adapter.dispatch(request)
+        # Phase 3 audit follow-up: persist the EFFECTIVE priority
+        # (i.e. the value that actually reached the adapter, after
+        # any scar / classifier override) on the agent_response so
+        # `analyze` can audit dispatch priority post-hoc without
+        # cross-referencing the originating file_change. This is an
+        # additive schema bump on agent_response.data; old
+        # consumers that ignore the field continue to work.
         return self.bus.append(
             Event(
                 type="agent_response",
                 source="adapter",
-                data={"correlates": event.id, "path": request.path},
+                data={
+                    "correlates": event.id,
+                    "path": request.path,
+                    "priority": request.priority,
+                },
                 dispatch={
                     "agent": adapter.name,
                     "status": "completed" if response.success else "failed",

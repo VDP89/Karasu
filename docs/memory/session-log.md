@@ -598,3 +598,30 @@ Impact:
 
 Next step:
 - Audit the PR. After merge, two follow-ups remain (F-HANDOFF-6 path-existence fallback, persist effective priority on agent_response.data); none blocking.
+
+---
+
+## 2026-05-02 (Phase 3+ post-archive) — F-HANDOFF-6 path-existence fallback
+
+What changed:
+- Audit-deferred follow-up from chunk 4c. Closes F-HANDOFF-6 part 2 (the path-existence half — edited / deleted comments were already filtered at the webhook receiver in chunk 4a).
+- `src/karasu/adapters/prompt_builder.py`:
+  - New `_default_path_exists(path)` — `Path.exists()` lookup with empty-path-guard and `OSError` swallowing (pathological inputs like embedded NUL on POSIX must not let an `OSError` escape into the prompt builder).
+  - `PromptBuilder.__init__` accepts an optional `path_exists` callable, defaulting to `_default_path_exists`. Injectable so tests probe both branches without touching the filesystem and a future deployment can swap in a git-tree-aware probe (e.g. "is this path in HEAD's tree?") without subclassing.
+  - `_build_github` probes the workspace at prompt-build time. When the path is present, the existing canonical "Karasu review-comment handoff:" header is emitted unchanged. When the path is absent, the header gains a `(metadata-only)` suffix and a `NOTE: path '<X>' is not present in the current workspace ... Do NOT attempt edits; treat this dispatch as informational only.` block lands between the header and the USER DATA prefix. Body is still fenced + capped — F-HANDOFF-1 / F-HANDOFF-5 primitives are preserved in the metadata-only branch by design (a force-pushed-away path is exactly when input is most suspect).
+- `tests/test_claude_prompt_builder.py` — 8 new tests covering: path-present uses canonical header without `(metadata-only)`; path-missing emits the metadata-only header + the NOTE + the `Do NOT attempt edits` instruction + USER DATA still labels the body; metadata-only branch preserves fence+cap; `path_exists` is consulted per build with the request path; default probe treats empty path as missing; default probe handles `OSError` as missing; default probe returns True for an existing tmp_path file; metadata-only branch quotes the path with repr-style quoting so paths with whitespace render unambiguously.
+- 332/332 pass locally (324 prior + 8 new). 23 existing prompt_builder tests continued to pass — their assertions hold in both branches because the metadata-only variant is a strict additive on the path-present variant for the security primitives they pin.
+
+Decisions:
+- `path_exists` is a callable kwarg, not a config knob. Default is filesystem; tests inject; future git-tree-aware probes inject. Configurability through the YAML would need a runtime resolver registry, which isn't justified yet (one production probe at a time).
+- The metadata-only header gets `(metadata-only)` as a suffix, not a prefix. The model's first-line context is still "review-comment handoff"; the suffix makes the missing-path case visible without breaking the canonical mental model.
+- Empty path reads as missing (not as cwd). Otherwise an event with `path=""` would silently advertise the operator's repo root as editable. Path probes against `""` return False explicitly.
+- `OSError` from `Path.exists` is swallowed and treated as missing. Pathological inputs (embedded NUL, very long paths on Windows, etc.) shouldn't crash the dispatch — the metadata-only fallback is the safe stop.
+- The body is still fenced + capped in the metadata-only branch. Reasoning: a force-pushed-away path is exactly when the comment author's input is most suspect (chain reordering, branch deletion). Weakening the F-HANDOFF-1 / F-HANDOFF-5 primitives there would be the wrong direction.
+
+Impact:
+- Chunk 4c is now hardened against the second half of F-HANDOFF-6. The first half (edited / deleted comments) is filtered at the receiver. Together: the dispatch the model sees either has a valid editable path OR is explicitly labelled as informational with the model instructed not to edit.
+- Frozen contracts untouched.
+
+Next step:
+- Audit the PR. After merge, one follow-up remains: persist effective priority on agent_response.data (Phase 3 audit, non-blocking).

@@ -33,7 +33,7 @@ Phase 3: COMPLETED + DOGFOOD-VALIDATED + AUDIT-ACCEPTED — chunks 3a + 3b + 3c 
 - A2A Agent Card endpoint ✔ (Phase 3+ chunk 4b) — `karasu serve` also serves `GET /.well-known/agent-card.json` with the static `AgentCard` JSON describing 4 baseline skills (watch-filesystem, route-events, receive-github-webhooks, record-corrections). Discovery only; capability negotiation deferred. POST on the card path → 405 (F-A2A-5 boundary held).
 - A2A outbound discovery ✔ (chunk 4b follow-up) — `fetch_card(base_url, *, timeout=5.0)` does a stdlib-only HTTP GET against a peer's `/.well-known/agent-card.json` and returns the parsed JSON dict. `karasu peers <url>` is the CLI wrapper: read-only, prints either formatted text (default) or raw JSON (`--json`). Configurable timeout (`--timeout`). All errors (network failure, non-2xx, bad JSON, non-object payload, zero/negative timeout) surface as `AgentCardFetchError` / `ValueError` so the caller has a small exception surface.
 - Trust-gradient startup warning ✔ (NICE-TO-HAVE #3, hard pre-req for chunk 4c) — `AgentAdapter.__init__` emits a structured `logging.WARNING` on `karasu.adapters.base` whenever `trust_level >= AUTONOMOUS_TRUST_LEVEL` (=2). `cmd_watch` / `cmd_serve` additionally print a loud stderr banner once at startup listing every autonomous adapter by `name(trust=N)`. Both layers reference `docs/local-dogfood.md` "Trust gradient — what trust_level actually does in production".
-- Review-comment auto-handoff ✔ (Phase 3+ chunk 4c) — `Dispatcher` copies `event.data` into `AgentRequest.metadata` as a shallow copy; `PromptBuilder` (`src/karasu/adapters/prompt_builder.py`) detects the github branch by presence of `metadata["github_body"]` and produces a USER-DATA-labelled, capped (4 KiB body / 256 B author), fenced prompt. Fence length is dynamic: one longer than the longest backtick run in the body, so a reviewer's own ` ``` ` blocks survive as content rather than closing the fence prematurely (F-HANDOFF-1 hardening). Truncation marker quotes both bytes and chars: `[truncated, original was N bytes / M chars]`. `ClaudeCodeAdapter` accepts an optional `prompt_builder` kwarg and delegates prompt construction. F-HANDOFF-1 (injection fence + dynamic length), F-HANDOFF-3 (builder abstraction), F-HANDOFF-5 (body cap + marker) all addressed. Single-hop only; chaining bounded by issue #47 cap shape when implementation lands.
+- Review-comment auto-handoff ✔ (Phase 3+ chunk 4c) — `Dispatcher` copies `event.data` into `AgentRequest.metadata` as a shallow copy; `PromptBuilder` (`src/karasu/adapters/prompt_builder.py`) detects the github branch by presence of `metadata["github_body"]` and produces a USER-DATA-labelled, capped (4 KiB body / 256 B author), fenced prompt. Fence length is dynamic: one longer than the longest backtick run in the body, so a reviewer's own ` ``` ` blocks survive as content rather than closing the fence prematurely (F-HANDOFF-1 hardening). Truncation marker quotes both bytes and chars. When the comment's path is absent from the workspace (force-pushed away, branch deleted, etc.), the builder falls back to a metadata-only variant whose header is suffixed `(metadata-only)`, includes a `Do NOT attempt edits` note, and still fences the body as USER DATA (F-HANDOFF-6). The path probe is injectable (`path_exists` callable) so tests / git-tree-aware deployments can swap it. `ClaudeCodeAdapter` accepts an optional `prompt_builder` kwarg and delegates prompt construction. F-HANDOFF-1, F-HANDOFF-3, F-HANDOFF-5, F-HANDOFF-6 all addressed.
 - Pipeline still does NOT consume `human_decision` directly — only the controller reads them and resubmits a `file_change` so `Pipeline._apply_scar_override` picks up the chat-recorded scar on the next dispatch
 
 ## Verified behavior (Phase 1C closed)
@@ -90,29 +90,25 @@ Cap enforcement: 6 `/scar` rapid-fire → exactly 3 resubmits, 3 cap warnings, 0
 ## Next step (entry point)
 
 ```text
-Phase 3+ chunk 4c — review-comment auto-handoff: SHIPPED.
-PR open on feat/review-comment-handoff awaiting audit.
-Implementation: Dispatcher copies event.data into
-AgentRequest.metadata; PromptBuilder isolates the github
-branch with F-HANDOFF-1 fence + USER DATA prefix and
-F-HANDOFF-5 body cap (4 KiB) + truncation marker;
-ClaudeCodeAdapter delegates prompt construction to the
-builder. 289/289 pass locally.
+Phase 3+ archive (issue #5) is essentially closed in terms
+of code. All chunks (4a / 4b / 4c) and their gates (#53 /
+#54) merged; chunk 4c hardening (#56) merged; issue #47
+implementation (#57) merged; chunk 4b outbound-discovery
+follow-up (#58) merged; chunk 4c F-HANDOFF-6 path fallback
+(#59) merged.
 
-Phase 3+ archive (issue #5) is essentially closed once
-chunk 4c lands. Remaining items are open-ended follow-ups:
+Remaining items are open-ended, non-blocking follow-ups:
 
-Optional follow-ups (NICE-TO-HAVE, not blocking):
-- Issue #47 implementation PR (cap shape from PR #53
-  design; Option B chain cap with origin-aware tracking,
-  CHAIN_CAP=3, F-CAP-1..F-CAP-5).
-- fetch_card helper + karasu peers <url> CLI for outbound
-  A2A discovery (deferred from chunk 4b).
 - Persist effective priority on agent_response.data
   (deferred from Phase 3 audit).
-- F-HANDOFF-6 path-existence fallback to "metadata-only"
-  prompt for force-pushed-away paths (deferred from
-  chunk 4c scope).
+- Dogfood controlado de chunk 4c con un PR real a
+  trust_level=1 — operativo, no código (requiere computadora
+  para correr karasu serve + GitHub webhook + monitoreo bus).
+- Future: git-tree-aware path probe injectable in
+  PromptBuilder (validate against HEAD's tree, not just
+  filesystem cwd). Audit-noted on PR #59.
+- Future: optional retry on network error in fetch_card
+  (audit-noted on PR #58).
 ```
 
 ## Do NOT do yet

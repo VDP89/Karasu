@@ -256,3 +256,43 @@ only the metadata is operationally useful in those cases).
 Authorized calls record the full ``/<name> <args>`` so the operator
 can reconstruct what they sent. The pipeline does NOT consume
 ``human_decision`` events in Phase 2.
+
+## ⚠️ Trust gradient — what `trust_level` actually does in production
+
+The `trust_level` field on each agent in `karasu.yaml` controls
+whether the operator stays in the loop for every adapter response,
+or the agent acts on its own. The four levels (per
+`docs/decisions.md` D-003):
+
+```text
+trust_level=0  CONFIRM       — every action requires explicit human confirmation
+trust_level=1  NOTIFY_SYNC   — agent acts, human is notified and can intervene
+trust_level=2  NOTIFY_ASYNC  — agent acts, human is notified asynchronously
+trust_level=3  SILENT        — agent acts silently and only reports on failure
+```
+
+**At `trust_level >= 2`, the agent can modify files in the watched
+directory without per-call approval.** Phase 3 dogfood (issue #39,
+2026-05-02) confirmed this live: with Claude at `trust_level=2`,
+Claude rewrote `sample.py` autonomously to fix a divide-by-zero bug
+the operator had introduced. This is the contract operating as
+designed — but it is the only place where Karasu lets an agent
+mutate operator state without a confirmation step, so it deserves
+explicit acknowledgement before you point it at a real workspace.
+
+**Operational guidance:**
+
+- For **first-time setups** or **unfamiliar workloads**, start at
+  `trust_level=1`. You'll see every action as a `[DECISION]` in
+  Telegram before it commits, and you can scar / reject before the
+  next dispatch picks the same path.
+- Move to `trust_level=2` only after you've watched the agent
+  handle your repository for a session and you trust the diffs.
+- `trust_level=3` (silent) is for agents whose failure modes
+  you've already characterised — e.g. linters, formatters with
+  deterministic output. Not recommended for code-modifying
+  agents.
+
+The trust gradient is per-agent, not per-path or per-classification.
+Phase 3+ may extend it; until then, set `trust_level` to the
+weakest tier that still gives you the autonomy you want.

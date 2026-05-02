@@ -30,6 +30,11 @@ Examples:
 - `2026-05-02-phase-3-dogfood.md`
 - `2026-05-15-webhook-receiver-integration.md`
 
+A blank starter lives at [`_template.md`](_template.md). Copy it
+to `YYYY-MM-DD-<slug>.md` and fill in the sections in order. The
+underscore prefix keeps it sorted at the top and signals it's not
+a real session entry.
+
 ## Shape
 
 Each file should cover, in order:

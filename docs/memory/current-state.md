@@ -6,7 +6,7 @@ Phase 1A: COMPLETED
 Phase 1B: COMPLETED (no-adapter pass validated, F1–F5 closed)
 Phase 1C: COMPLETED (real Claude adapter loop validated, F6–F8 closed)
 Phase 2: COMPLETED — chunks 1+2+3 merged (#30 #31 #32 #33). Audit accepted with one round of changes (PR #33 contract alignment + redaction).
-Phase 3: COMPLETED + DOGFOOD-VALIDATED — chunks 3a + 3b + 3c merged (#34 #35 #36 #37). Live dogfood 2026-05-02 (issue #39) validated end-to-end: `/scar` → controller resubmit (94 ms) → pipeline applies scar → second dispatch with `priority=high` → response back to Telegram. Cap held at 3 under spam. Three operational findings filed: F9 (#40), F10 (#41), F11 (#42).
+Phase 3: COMPLETED + DOGFOOD-VALIDATED + AUDIT-ACCEPTED — chunks 3a + 3b + 3c merged (#34 #35 #36 #37). Live dogfood 2026-05-02 (issue #39) validated end-to-end: `/scar` → controller resubmit (94 ms) → pipeline applies scar → second dispatch with `priority=high` → response back to Telegram. Cap held at 3 under spam. Three operational findings filed: F9 (#40), F10 (#41), F11 (#42). Audit forward-look returned by ChatGPT and recorded in [`docs/memory/phase-3-dogfood-audit-2026-05-02.md`](phase-3-dogfood-audit-2026-05-02.md): 2 REQUERIDOS applied this PR (trust=2 docs warning + cap-local-per-origin issue), 1 NICE-TO-HAVE applied (sessions template), 2 NICE-TO-HAVE queued for Phase 3+ hardening (priority persist + startup warning).
 
 ## System status
 
@@ -86,12 +86,18 @@ Cap enforcement: 6 `/scar` rapid-fire → exactly 3 resubmits, 3 cap warnings, 0
 ## Next step (entry point)
 
 ```text
-Phase 3+ archive (issue #5) opens once F9 (#40), F10 (#41), F11 (#42)
-merge. Pre-mortem doc first; then pick one of:
+Phase 3+ archive — pre-mortem doc-only PR first.
+Audit signed off readiness; the 2 REQUERIDOS are applied and the
+3 NICE-TO-HAVE are scoped (one applied, two queued as parallel
+hardening tasks). Pick one concept after pre-mortem audit:
 - GitHub webhook receiver (HMAC + delivery dedup)
 - A2A Agent Cards (discovery /agent-card.json)
 - Review-comment auto-handoff to Claude Code
 See docs/memory/next-session.md.
+
+Queued hardening tasks (NICE-TO-HAVE from audit, may go in parallel):
+- Persist effective priority on agent_response.data
+- Startup log when adapter trust_level >= 2
 ```
 
 ## Do NOT do yet

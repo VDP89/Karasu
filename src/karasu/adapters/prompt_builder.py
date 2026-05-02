@@ -6,7 +6,7 @@ review-comment). A future LoopController rule table will replace
 the builder per failure mode F-HANDOFF-3 in
 ``docs/phase-3-plus-pre-mortem.md``.
 
-The github branch addresses two failure modes:
+The github branch addresses three failure modes:
 
 - F-HANDOFF-1 (prompt injection from PR comments): the comment
   body is wrapped in a backtick fence whose length is one more
@@ -24,11 +24,22 @@ The github branch addresses two failure modes:
   BEFORE the prompt is built. On overflow we append an explicit
   "[truncated, original was N bytes / M chars]" marker so
   neither the operator nor the model is silently misled.
+
+- F-HANDOFF-6 (stale or missing referent): when the path the
+  comment refers to is no longer present in the workspace
+  (force-pushed away, branch deleted, repo not yet checked out
+  at this revision), the builder emits a "metadata-only"
+  variant of the github prompt that explicitly tells the model
+  the file is missing and instructs it NOT to attempt edits.
+  The body is still fenced as USER DATA; the model gets the
+  context but no claim that the path is editable.
 """
 
 from __future__ import annotations
 
 import re
+from pathlib import Path
+from typing import Callable
 
 from karasu.adapters.base import AgentRequest
 
@@ -84,19 +95,41 @@ def _truncate_with_marker(text: str, cap_bytes: int) -> str:
     )
 
 
+def _default_path_exists(path: str) -> bool:
+    """Default workspace probe used by :class:`PromptBuilder`.
+
+    Pure ``Path.exists`` lookup. Empty / missing path is treated
+    as "does not exist" so an empty string never reads as a
+    workspace root.
+    """
+    if not path:
+        return False
+    try:
+        return Path(path).exists()
+    except OSError:
+        # Pathological input (e.g. embedded NUL on POSIX) — treat
+        # as missing rather than letting the OSError escape into
+        # the prompt builder.
+        return False
+
+
 class PromptBuilder:
     """Build the prompt string an adapter sends to its CLI.
 
     Default branch matches the pre-chunk-4c one-line dispatch
     summary. The github branch fires when ``request.metadata``
     carries ``github_body`` and produces a fenced, capped,
-    USER-DATA-labelled prompt.
+    USER-DATA-labelled prompt. When the comment's ``path`` is
+    not present in the workspace (F-HANDOFF-6), the github
+    branch falls back to a "metadata-only" variant that tells
+    the model the file is missing.
     """
 
     def __init__(
         self,
         body_cap_bytes: int = DEFAULT_BODY_CAP_BYTES,
         author_cap_bytes: int = DEFAULT_AUTHOR_CAP_BYTES,
+        path_exists: Callable[[str], bool] = _default_path_exists,
     ) -> None:
         if body_cap_bytes <= 0:
             raise ValueError(
@@ -108,6 +141,11 @@ class PromptBuilder:
             )
         self.body_cap_bytes = body_cap_bytes
         self.author_cap_bytes = author_cap_bytes
+        # Injectable so tests can probe both branches without
+        # touching the filesystem and so a future deployment can
+        # swap in a git-tree-aware probe (e.g. "is this path in
+        # the current HEAD's tree?") without subclassing.
+        self.path_exists = path_exists
 
     def build(self, request: AgentRequest) -> str:
         if request.metadata.get("github_body") is not None:
@@ -134,8 +172,27 @@ class PromptBuilder:
         )
         pr = meta.get("github_pr")
         repo = meta.get("github_repo") or "<unknown>"
+        # F-HANDOFF-6: probe the workspace at prompt-build time. The
+        # webhook receiver already filters .edited / .deleted
+        # actions; this catches the harder case where the path was
+        # valid at comment-creation time but has since been
+        # force-pushed away or the operator hasn't checked out the
+        # branch yet.
+        path_present = bool(self.path_exists(request.path))
+        if path_present:
+            kind = "review-comment handoff"
+            note = ""
+        else:
+            kind = "review-comment handoff (metadata-only)"
+            note = (
+                f"NOTE: path {request.path!r} is not present in the "
+                "current workspace (force-push, branch deleted, or "
+                "repo not yet checked out at this revision). Do NOT "
+                "attempt edits; treat this dispatch as informational "
+                "only.\n\n"
+            )
         header = (
-            f"Karasu review-comment handoff: {request.classification} "
+            f"Karasu {kind}: {request.classification} "
             f"on {request.path} (priority={request.priority})\n"
             f"  repo: {repo}\n"
             f"  pr:   {pr}\n"
@@ -146,6 +203,7 @@ class PromptBuilder:
         fence = _fence_for(body)
         return (
             f"{header}\n"
+            f"{note}"
             f"{_USER_DATA_PREFIX}\n\n"
             f"{fence}\n{body}\n{fence}"
         )

@@ -310,3 +310,138 @@ def test_claude_adapter_default_builder_emits_default_prompt() -> None:
     adapter = ClaudeCodeAdapter()
     argv = adapter._build_argv(_request(path="x.py", priority="high"))
     assert argv[-1] == "Karasu dispatch: code_change on x.py (priority=high)"
+
+
+# ---------------------------------------------------------------------------
+# F-HANDOFF-6 — path-existence fallback to metadata-only prompt
+# ---------------------------------------------------------------------------
+
+
+def test_github_branch_uses_normal_header_when_path_present() -> None:
+    """When the workspace has the file, the github branch emits the
+    canonical "Karasu review-comment handoff:" header — no
+    "(metadata-only)" suffix, no NOTE about a missing path."""
+    builder = PromptBuilder(path_exists=lambda _p: True)
+    prompt = builder.build(
+        _request(
+            path="src/foo.py",
+            metadata={"github_body": "rename foo to bar"},
+        )
+    )
+    assert "Karasu review-comment handoff: code_change on src/foo.py" in prompt
+    assert "(metadata-only)" not in prompt
+    assert "not present in the current workspace" not in prompt
+
+
+def test_github_branch_falls_back_to_metadata_only_when_path_missing() -> None:
+    """F-HANDOFF-6: when the path is not in the workspace, the
+    builder emits a metadata-only variant that names the path,
+    explains why it's missing, and instructs the model NOT to
+    attempt edits. The body is still fenced as USER DATA — the
+    model still sees the comment, just with no claim of edit
+    authority."""
+    builder = PromptBuilder(path_exists=lambda _p: False)
+    prompt = builder.build(
+        _request(
+            path="src/gone.py",
+            metadata={"github_body": "rename foo to bar"},
+        )
+    )
+    assert "(metadata-only)" in prompt
+    assert "'src/gone.py' is not present" in prompt
+    assert "Do NOT attempt edits" in prompt
+    # Security primitives still hold in the metadata-only branch.
+    assert "USER DATA" in prompt
+    assert "rename foo to bar" in prompt
+
+
+def test_metadata_only_branch_preserves_fence_and_cap() -> None:
+    """Defence in depth: the metadata-only branch must still
+    fence + cap the body. A regression that drops either would
+    weaken F-HANDOFF-1 / F-HANDOFF-5 just for force-pushed-away
+    paths, which is exactly when the author's input is most
+    suspect (chain reordering, branch deletion)."""
+    builder = PromptBuilder(
+        path_exists=lambda _p: False, body_cap_bytes=32
+    )
+    body_with_inner_fence = "look:\n```python\nattack()\n```"
+    prompt = builder.build(
+        _request(metadata={"github_body": body_with_inner_fence + "x" * 100})
+    )
+    # Cap held: original body bytes count makes it past the
+    # truncation marker.
+    assert "[truncated, original was" in prompt
+    # Outer fence is at least 4 backticks (one longer than the
+    # inner 3-run); inner ``` survived as content.
+    runs_of_4_or_more = re.findall(r"(?<!`)`{4,}(?!`)", prompt)
+    assert len(runs_of_4_or_more) == 2  # opening + closing
+
+
+def test_path_exists_callable_is_consulted_per_build() -> None:
+    """The path probe runs once per build call. A future deployment
+    that swaps in a git-tree-aware probe must observe the request
+    path on every dispatch."""
+    seen: list[str] = []
+
+    def probe(path: str) -> bool:
+        seen.append(path)
+        return False
+
+    builder = PromptBuilder(path_exists=probe)
+    builder.build(
+        _request(path="a.py", metadata={"github_body": "x"})
+    )
+    builder.build(
+        _request(path="b.py", metadata={"github_body": "y"})
+    )
+    assert seen == ["a.py", "b.py"]
+
+
+def test_default_path_exists_treats_empty_path_as_missing() -> None:
+    """An empty path string must read as "missing", not as the cwd.
+    Otherwise an event with ``path=""`` would silently advertise
+    the operator's repo root as editable."""
+    from karasu.adapters.prompt_builder import _default_path_exists
+
+    assert _default_path_exists("") is False
+
+
+def test_default_path_exists_handles_oserror_as_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pathological input (embedded NUL on POSIX, etc.) must not
+    let an OSError escape into the prompt builder."""
+    from karasu.adapters import prompt_builder as pb_module
+
+    def raising_exists(self) -> bool:
+        raise OSError("simulated pathological path")
+
+    monkeypatch.setattr(pb_module.Path, "exists", raising_exists)
+    assert pb_module._default_path_exists("a.py") is False
+
+
+def test_default_path_exists_returns_true_for_existing_path(
+    tmp_path: Path,
+) -> None:
+    """Sanity: the default probe is real Path.exists; a known-good
+    file in tmp_path reads as present."""
+    from karasu.adapters.prompt_builder import _default_path_exists
+
+    real_file = tmp_path / "real.py"
+    real_file.write_text("# real\n")
+    assert _default_path_exists(str(real_file)) is True
+
+
+def test_metadata_only_branch_quotes_path_unambiguously() -> None:
+    """The NOTE about the missing path uses repr-style quoting so a
+    path containing whitespace or special characters renders
+    unambiguously in the prompt (and so the model reading it
+    knows where the path string ends)."""
+    builder = PromptBuilder(path_exists=lambda _p: False)
+    prompt = builder.build(
+        _request(
+            path="src/dir with space/x.py",
+            metadata={"github_body": "x"},
+        )
+    )
+    assert "'src/dir with space/x.py'" in prompt

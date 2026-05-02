@@ -6,7 +6,7 @@ Phase 1A: COMPLETED
 Phase 1B: COMPLETED (no-adapter pass validated, F1–F5 closed)
 Phase 1C: COMPLETED (real Claude adapter loop validated, F6–F8 closed)
 Phase 2: COMPLETED — chunks 1+2+3 merged (#30 #31 #32 #33). Audit accepted with one round of changes (PR #33 contract alignment + redaction).
-Phase 3: IN PROGRESS — design doc merged (#34); chunk 3a (LoopController wrapper) shipped. Behaviour-preserving refactor: watcher now delegates queue + worker to `LoopController`. Chunks 3b (react to `human_decision`) and 3c (multi-source plug-in) pending.
+Phase 3: COMPLETED + DOGFOOD-VALIDATED — chunks 3a + 3b + 3c merged (#34 #35 #36 #37). Live dogfood 2026-05-02 (issue #39) validated end-to-end: `/scar` → controller resubmit (94 ms) → pipeline applies scar → second dispatch with `priority=high` → response back to Telegram. Cap held at 3 under spam. Three operational findings filed: F9 (#40), F10 (#41), F11 (#42).
 
 ## System status
 
@@ -51,18 +51,21 @@ Phase 3: IN PROGRESS — design doc merged (#34); chunk 3a (LoopController wrapp
 
 `karasu analyze` final pass: duplication factor 1.0×, max events/sec 1, watcher exit clean. Output of `claude -p` was substantive — auto-discovery let it read `sample.py`, `karasu.yaml` and `events.jsonl` and reason about the dispatch payload.
 
-## Findings F1–F8 — all resolved
+## Findings F1–F11
 
-| | Status | PR |
-|---|---|---|
-| F1 cascade               | resolved (collateral)     | #15 |
-| F2 Windows ignore        | resolved                  | #15 |
-| F3 1:1 no-route response | resolved (option B)       | #22 |
-| F4 no debounce           | resolved                  | #18 |
-| F5 watcher exit code 2   | not reproduced post-fix   | (collateral #15) |
-| F6 self-noise on bus     | resolved                  | #27 |
-| F7 dispatch on delete    | resolved                  | #26 |
-| F8 timeout not configurable | resolved               | #28 |
+| | Phase | Status | PR |
+|---|---|---|---|
+| F1 cascade               | 1B | resolved (collateral)     | #15 |
+| F2 Windows ignore        | 1B | resolved                  | #15 |
+| F3 1:1 no-route response | 1B | resolved (option B)       | #22 |
+| F4 no debounce           | 1B | resolved                  | #18 |
+| F5 watcher exit code 2   | 1B | not reproduced post-fix   | (collateral #15) |
+| F6 self-noise on bus     | 1C | resolved                  | #27 |
+| F7 dispatch on delete    | 1C | resolved                  | #26 |
+| F8 timeout not configurable | 1C | resolved               | #28 |
+| F9 missing [job-queue] extra | 3 dogfood | filed              | #40 |
+| F10 drain skip warnings  | 3 dogfood | filed                  | #41 |
+| F11 Notepad atomic-write tmp | 3 dogfood | filed              | #42 |
 
 ## Current risks
 
@@ -70,13 +73,25 @@ Phase 3: IN PROGRESS — design doc merged (#34); chunk 3a (LoopController wrapp
 - No upper bound on adapter concurrency yet (Phase 1 keeps dispatch synchronous)
 - Telegram / UI design not started
 
+## Phase 3 dogfood metrics (issue #39)
+
+| Step | Time |
+|------|------|
+| `/scar` sent → controller resubmit | 94 ms |
+| Resubmit → second `agent_response` | ~28-30 s (puro `claude -p`) |
+| End-to-end `/scar` → corrected response in Telegram | ~29 s |
+
+Cap enforcement: 6 `/scar` rapid-fire → exactly 3 resubmits, 3 cap warnings, 0 leaks. Single-worker invariant preserved. Bus shows `controller_resubmit=true` + `resubmit_origin` traceability. Claude verbalized "the scar rule fired correctly — that's why this arrives at high" — direct confirmation that `_apply_scar_override` rewrote priority on the resubmit.
+
 ## Next step (entry point)
 
 ```text
-Phase 3 chunks 3a + 3b + 3c are pushed and stacked on
-feat/loop-controller-{wrapper,react,sources}. Audit gate per the
-Phase 2 cadence: maintainer hands the stack to ChatGPT for review
-before any new phase opens. See docs/memory/next-session.md.
+Phase 3+ archive (issue #5) opens once F9 (#40), F10 (#41), F11 (#42)
+merge. Pre-mortem doc first; then pick one of:
+- GitHub webhook receiver (HMAC + delivery dedup)
+- A2A Agent Cards (discovery /agent-card.json)
+- Review-comment auto-handoff to Claude Code
+See docs/memory/next-session.md.
 ```
 
 ## Do NOT do yet

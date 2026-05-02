@@ -277,3 +277,34 @@ Impact:
 
 Next step:
 - Audit gate per Phase 2 cadence. PRs #34 (design) + #35 (chunk 3a) + #36 (chunk 3b) + #37 (chunk 3c) form the stack. Maintainer hands them to ChatGPT for review before any new phase opens.
+
+---
+
+## 2026-05-02 — Phase 3 dogfood validated, F9/F10/F11 filed
+
+What changed:
+- Dogfood ejecutado en sandbox local Windows (Python 3.13.5, Claude Code 2.1.123, python-telegram-bot 22.7). Sandbox `C:\karasu-phase3-sandbox\` con `karasu.yaml` + bot `@Karasu_dogfood_bot` + `allowed_users: [7509793010]`.
+- Loop chunk 3b validado end-to-end: `/scar priority=high` en Telegram → surface graba Scar + `human_decision` → controller (94 ms después) detecta y emite `file_change` con `controller_resubmit=true` → pipeline aplica `_apply_scar_override` → claude responde con priority=high.
+- Cap enforcement validado: 6 `/scar` consecutivos → exactamente 3 resubmits, 3 warnings de "cap (3) reached", 0 leaks.
+- **Claude verbalizó textualmente** "the scar rule fired correctly — that's why this arrives at high", confirmando que el priority rewrite sí llega al adapter (cosa que no podíamos ver en el bus porque agent_response no persiste priority).
+- Issue #39 actualizado con tabla completa de evidencia, latencias, observaciones por slot del runbook.
+- Tres findings filed:
+  - F9 (#40, P1) — `pyproject.toml` falta `[job-queue]` extra. `karasu chat` crashea en fresh install.
+  - F10 (#41, P3) — `_drain_job` flooding APScheduler warnings cuando send_message > poll_interval. Cosmetic.
+  - F11 (#42, P3) — `DEFAULT_IGNORE *.tmp` no matchea Notepad atomic-write. Cosmetic.
+- PR #38 (integration tests + runbook) mergeado a main antes del dogfood. 201 → 202 tests con F11 fix.
+
+Decisions:
+- Trust=2 con autonomous execution funciona bien en producción real: Claude editó `sample.py` solo para arreglar un divide-by-zero. No fue bug — es el contrato Phase 1A operando como diseñado.
+- Bus poll de 0.5 s da una latencia de detección sub-segundo (94 ms medido). No hay incentivo para tightening la constante.
+- Single-worker + cap=3 funciona bajo spam real. La key del cap por `originating_file_change.id` es suficiente.
+
+Impact:
+- Phase 3 cerrada con evidencia operacional. Lucy-Syndrome correction loop probado en vivo por primera vez con Claude CLI real.
+- Tres focused F-PRs abiertos siguiendo el patrón Phase 1C.
+- No bloquea Phase 3+ archive (webhook / A2A / handoff). Una vez F9/F10/F11 mergeen, pre-mortem doc para la siguiente fase.
+
+Next step:
+- Mergear F9 + F10 + F11.
+- Cerrar issue #39 cuando los tres landeen.
+- Phase 3+ archive: pre-mortem doc-only PR primero, después chunks por concept (issue #5).

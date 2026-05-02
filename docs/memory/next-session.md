@@ -29,11 +29,19 @@ adapter prompt builder.
    code edits; operator MUST get visible feedback at startup.
    Promoted from "recommendation" to hard pre-req in the Phase 3+
    pre-mortem audit.
-   STATUS: pending. ~50 LOC + tests, ~1h work.
+   STATUS: LANDED on main as PR #54 (squash merge e43808a).
+   AgentAdapter.__init__ emits a structured logging.WARNING on
+   karasu.adapters.base when trust_level >= AUTONOMOUS_TRUST_LEVEL
+   (=2). cmd_watch / cmd_serve print a loud stderr banner once
+   per startup; cmd_hook stays silent (one-shot per commit).
+   12 tests including a contract-pin via inspect.getsource that
+   asserts the banner helper is wired into cmd_watch and
+   cmd_serve only.
 ```
 
-If pre-req 2 has not yet landed, do it first. Pre-req 1 is now
-satisfied as design; the implementation PR is independent of 4c.
+If pre-req 1 doc-only outline has not yet merged (PR #53 still
+in audit), wait for it before opening chunk 4c. Pre-req 2 is
+done.
 
 ## Scope (chunk 4c)
 

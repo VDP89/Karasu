@@ -64,8 +64,19 @@ NEW state on LoopController:
 
 NEW field on the resubmitted file_change event:
   data.controller_chain_depth: int
-    Persisted on the bus so analyze can count chain depths and
-    so the controller can recover state on restart.
+    Persisted on the bus so analyze can audit chain depths
+    post-hoc and so a fresh resubmit can compute its own depth
+    from its parent's persisted value.
+
+    NOTE on restart semantics: the persisted depth lets analyze
+    reconstruct chain depth ACROSS restarts (the bus is the
+    canonical record). It does NOT restore the live cap counter
+    _chain_counts after a controller restart — that state is
+    in-memory and per-process. After a restart, an operator who
+    /scar's a chain that was already at cap pre-restart will
+    get one extra shot at the chain. This is the same trade-off
+    as F-WH-2 (dedup ring) and is consistent with the explicit
+    out-of-scope item below.
 ```
 
 ### Why a chain depth and not a global session cap
@@ -154,6 +165,12 @@ distributed-chain protection.
 ## Implementation sketch (NOT in this PR)
 
 ```python
+# Module-level guard against pathological lineage chains.
+# CHAIN_CAP bounds resubmits, not walk cost — a forged or cyclic
+# lineage could otherwise spin _chain_root forever (F-CAP-5).
+MAX_CHAIN_WALK_DEPTH = 64  # 21x the default CHAIN_CAP
+
+
 # In LoopController._resubmit_for:
 correlates_id = agent_response.data.get("correlates")
 original = self._find_file_change(bus, correlates_id)
@@ -174,6 +191,19 @@ with self._chain_lock:
         return
     self._chain_counts[root_id] = count + 1
 
+# Compute the new event's chain depth.
+# Only trust controller_chain_depth on events the controller
+# itself emitted (F-CAP-2). For any other source the field is
+# untrusted input and the depth resets to 1 (this resubmit is
+# the first hop on a chain rooted at `original`).
+if (
+    original.source == "controller"
+    and isinstance(original.data.get("controller_chain_depth"), int)
+):
+    new_depth = original.data["controller_chain_depth"] + 1
+else:
+    new_depth = 1
+
 # Emit the resubmit, persist depth on the bus.
 new_event = bus.append(Event(
     type="file_change",
@@ -182,25 +212,45 @@ new_event = bus.append(Event(
         **original.data,
         "controller_resubmit": True,
         "resubmit_origin": original.id,
-        "controller_chain_depth": original.data.get(
-            "controller_chain_depth", 0
-        ) + 1,
+        "controller_chain_depth": new_depth,
     },
 ))
 self.submit(new_event)
 
 
 def _chain_root(self, file_change: Event) -> str:
-    """Walk resubmit_origin back to the root file_change.id."""
+    """Walk resubmit_origin back to the root file_change.id.
+
+    Defences:
+    - F-CAP-1: missing parent → treat current as root.
+    - F-CAP-2: only follow lineage on source="controller" events
+      with controller_resubmit=True. External sources can carry
+      controller_resubmit / resubmit_origin / controller_chain_depth
+      as untrusted strings and we MUST NOT walk through them.
+    - F-CAP-5: bounded walk via visited_set (cycle break) AND
+      MAX_CHAIN_WALK_DEPTH (forged-deep-lineage break). On either
+      trip, treat the current cursor as the root and continue.
+    """
     cursor = file_change
-    while cursor.data.get("controller_resubmit"):
+    visited: set[str] = set()
+    for _ in range(MAX_CHAIN_WALK_DEPTH):
+        if cursor.id in visited:
+            return cursor.id  # F-CAP-5: cycle detected
+        visited.add(cursor.id)
+        # F-CAP-2: only follow lineage on controller-emitted events.
+        if cursor.source != "controller":
+            return cursor.id
+        if not cursor.data.get("controller_resubmit"):
+            return cursor.id
         parent_id = cursor.data.get("resubmit_origin")
-        if not parent_id:
+        if not isinstance(parent_id, str) or not parent_id:
             return cursor.id
         parent = self._find_file_change(self.bus, parent_id)
         if parent is None:
-            return cursor.id  # parent was log-rotated away
+            return cursor.id  # F-CAP-1: parent was log-rotated away
         cursor = parent
+    # F-CAP-5: walk depth ceiling reached. Treat the deepest reached
+    # ancestor as the root rather than continuing forever.
     return cursor.id
 ```
 
@@ -234,13 +284,22 @@ F-CAP-1  Chain root walk hits a missing parent.
                 worst case is a chain that lost its true root
                 gets its own fresh cap counter. Still bounded.
 
-F-CAP-2  Chain depth field collisions.
-         Wrong: an external producer (peer agent, future source)
-                could set data.controller_chain_depth on its own
-                events and confuse the walk.
-         Right: only trust the field on events with
-                source="controller". Walks ignore the field on
-                other sources and treat them as depth 0 / root.
+F-CAP-2  Chain depth / lineage fields on non-controller sources.
+         Wrong: an external producer (peer agent, future source,
+                webhook payload reflected verbatim) could set
+                data.controller_chain_depth, controller_resubmit,
+                or resubmit_origin on its own events and either
+                (a) inflate the depth so a fresh chain starts at
+                cap, or (b) drag the walk through arbitrary ids.
+         Right: trust controller_chain_depth ONLY on events with
+                source="controller". When emitting a resubmit
+                whose parent has any other source, set the new
+                event's depth to 1 (this resubmit is the first
+                hop). Walks (_chain_root) likewise stop at any
+                cursor whose source != "controller", treating it
+                as the root regardless of which controller_*
+                fields it carries. Mirrored explicitly in the
+                implementation sketch above.
 
 F-CAP-3  In-memory chain dict grows unbounded.
          Wrong: every chain root accumulates forever in
@@ -261,27 +320,96 @@ F-CAP-4  Concurrent resubmits race on the chain dict.
                 already serialises the worker; the lock covers
                 the bus subscription thread + any other
                 producer that hits _resubmit_for.
+
+F-CAP-5  Cyclic / forged / pathologically deep lineage.
+         Wrong: _chain_root follows resubmit_origin transitively
+                with no upper bound on walk depth. A bus that
+                contains a forged event A whose resubmit_origin
+                points at B, where B's resubmit_origin loops back
+                to A (or where the chain is N=10_000 hops deep
+                via crafted events), spins the walk forever or
+                burns CPU on every resubmit.
+         Right: two layered defences in _chain_root:
+                  (a) visited_set tracks ids already walked in
+                      this call. On revisit, treat the current
+                      cursor as the root and stop.
+                  (b) MAX_CHAIN_WALK_DEPTH (default 64, ~21x
+                      CHAIN_CAP) bounds the loop count even
+                      without a cycle. On ceiling, treat the
+                      deepest cursor as the root.
+                Both are independent: (a) catches cycles
+                regardless of length; (b) catches forged-deep
+                lineage that never repeats an id. The cap counts
+                resubmits emitted by the controller, but the
+                walk cost must be bounded BY CONSTRUCTION since
+                lineage can be supplied by untrusted producers
+                even with F-CAP-2 in place (an attacker who only
+                sets the lineage fields once on a single forged
+                event, then issues legitimate resubmits chained
+                onto it, would otherwise force a deep walk on
+                every subsequent _resubmit_for).
 ```
 
 ## Test sketch (NOT in this PR; will land with the implementation)
 
 ```text
+Core invariants:
 - Single chain: 3 resubmits OK, 4th capped with chain-root id.
 - Independent chains: chain[A] at cap doesn't block chain[B].
 - Spam at depth 1: same response /scar'd N times → 3 resubmits,
   3 capped. Same observable behaviour as today's per-origin cap.
 - Mid-chain progressing: /scar on each new response in turn →
   chain depth increments, capped at the configured value.
-- _chain_root on missing parent: walk treats current as root.
-- F-CAP-2: external file_change with source="watcher" carrying
-  data.controller_chain_depth=99 is treated as root depth 0.
+
+F-CAP-1 (missing parent):
+- _chain_root on missing parent: parent_id present but bus has
+  no event with that id → walk treats current cursor as root.
+
+F-CAP-2 (untrusted lineage on non-controller events):
+- External file_change with source="watcher" carrying
+  data.controller_chain_depth=99 is treated as depth 0 root
+  by both _chain_root (stops at the watcher event) and the
+  emit path (new resubmit gets depth=1, not 100).
+- File_change with source="github_webhook" carrying
+  controller_resubmit=True is NOT walked through; treated as
+  root.
+- File_change with source="controller" but
+  controller_resubmit absent / falsy is treated as root.
+
+F-CAP-5 (cyclic / forged-deep lineage):
+- Cycle: events A and B, each source="controller", with
+  resubmit_origin pointing at the other → _chain_root returns
+  on second visit, does not infinite-loop.
+- Self-loop: event A with resubmit_origin=A.id → _chain_root
+  returns on second visit.
+- Pathologically deep but acyclic lineage: chain of N >
+  MAX_CHAIN_WALK_DEPTH events, each source="controller" →
+  walk stops at the ceiling, treats deepest reached cursor as
+  root, _resubmit_for completes in bounded time.
+
+Restart semantics:
+- _chain_counts is in-memory, per-process. After a controller
+  restart, a chain that was at cap pre-restart admits one
+  more resubmit (counter resets). Persisted depth on bus
+  events is unaffected — analyze still reports correct depth
+  values across the restart boundary.
+
+Eviction (F-CAP-3, NICE-TO-HAVE from audit round 1):
+- _chain_counts size never exceeds the configured ceiling.
+  When ceiling is hit, oldest entry (insertion-order or
+  last-touched) is evicted. After eviction, if a /scar lands
+  on the evicted chain root, the operator gets one fresh
+  shot — same trade-off as F-WH-10 dedup ring overflow.
 ```
 
 ## Out of scope
 
-- Persisting `_chain_counts` across restarts. The dogfood window
-  for re-fire post-restart is the same as the F-WH-10 dedup
-  window — narrow and acceptable.
+- Persisting `_chain_counts` across restarts. The bus persists
+  `controller_chain_depth` so analyze can audit chain depth
+  across restarts, but the live cap counter is intentionally
+  in-memory and per-process. Cross-restart re-fire window is
+  the same shape as F-WH-10 dedup ring overflow — narrow and
+  acceptable.
 - Per-user-id caps for chat-recorded scars. Trust gradient is
   per-agent, not per-user.
 - Telemetry on capped chains as a controller_action event. Defer

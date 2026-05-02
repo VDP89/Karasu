@@ -91,23 +91,39 @@ Cap enforcement: 6 `/scar` rapid-fire → exactly 3 resubmits, 3 cap warnings, 0
 ## Next step (entry point)
 
 ```text
-Phase 3+ archive (issue #5) is essentially closed in terms
-of code. All chunks (4a / 4b / 4c) and their gates (#53 /
-#54) merged; chunk 4c hardening (#56) merged; issue #47
-implementation (#57) merged; chunk 4b outbound-discovery
-follow-up (#58) merged; chunk 4c F-HANDOFF-6 path fallback
-(#59) merged.
+README Fase 1 + Fase 2: COMPLETE.
+README Fase 3 (PWA + Advanced): NOT STARTED.
 
-Remaining items are open-ended, non-blocking follow-ups:
+Phase 3+ archive (issue #5) is closed in code. All chunks
+(4a / 4b / 4c) and their gates (#53 / #54) merged; chunk 4c
+hardening (#56), issue #47 implementation (#57), chunk 4b
+outbound-discovery (#58), chunk 4c F-HANDOFF-6 path fallback
+(#59), and Phase 3 priority-persist follow-up (#60) all
+merged. 335/335 pass.
+
+Next session picks up the UI surface. Parallel branch
+feat/ui-1-runtime (origin) has the scaffolding from a
+ChatGPT-driven session; operator asked Claude Code to take
+over (ChatGPT continues as auditor only). Branch is
+~8-9 PRs behind main; pickup plan is to cherry-pick the 6
+UI commits onto a fresh branch from current main.
+
+See docs/memory/next-session.md for the chunk sequence
+(UI-1 rebase, UI-2 Win95 layout, UI-3 Live Map, UI-4 detail
+panel, UI-5 server tests, UI-6+ push / offline / trust mgmt).
+
+Remaining items beyond the UI work:
 
 - Dogfood controlado de chunk 4c con un PR real a
-  trust_level=1 — operativo, no código (requiere computadora
-  para correr karasu serve + GitHub webhook + monitoreo bus).
+  trust_level=1 — operativo, no código (requiere computadora;
+  operator targets Monday). NOT blocking UI work.
 - Future: git-tree-aware path probe injectable in
-  PromptBuilder (validate against HEAD's tree, not just
-  filesystem cwd). Audit-noted on PR #59.
+  PromptBuilder (audit-noted on PR #59).
 - Future: optional retry on network error in fetch_card
   (audit-noted on PR #58).
+- Future: helper effective_priority(event) and optional
+  dual priority_original / priority_effective fields if
+  analytics surface a need (audit-noted on PR #60).
 ```
 
 ## Do NOT do yet

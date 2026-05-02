@@ -1,4 +1,4 @@
-"""Tests for the GitHub webhook receiver — Phase 3+ chunk 4a.
+"""Tests for the GitHub webhook receiver — Phase 3+ chunks 4a + 4b.
 
 Failure-mode coverage per ``docs/phase-3-plus-pre-mortem.md``:
 
@@ -7,14 +7,20 @@ Failure-mode coverage per ``docs/phase-3-plus-pre-mortem.md``:
 - F-WH-3   resource leak on shutdown (start / stop without leak)
 - F-WH-5   metadata round-trip (review-comment → file_change)
 - F-WH-6   per-source-IP rate limiting (429 over threshold,
-           per-IP isolation, runs before path check)
+           per-IP isolation, runs before path check, applies to
+           card endpoint too)
 - F-WH-7   route boundary (only POST /webhook accepted)
 - F-WH-8   payload DoS (oversize → 413; malformed JSON → 422; both
            BEFORE HMAC, no signing-key timing leak)
 - F-WH-9   missing or short secret → fail-closed (handler + cmd_serve)
 - F-WH-10  dedup is in-memory (declared)
-- F-A2A-5  /.well-known/agent-card.json reserved (POST → 405,
-           GET → 404 in chunk 4a; 4b adds the GET handler)
+- F-A2A-5  /.well-known/agent-card.json reserved (POST → 405;
+           GET → 404 when no card configured, 200 + JSON when
+           configured per chunk 4b)
+
+Chunk 4b also covers the wire-side AgentCard via end-to-end live
+HTTP (Content-Type application/json + valid JSON body). The card
+SHAPE itself is tested in tests/test_a2a_card.py.
 
 F-WH-4 (loop amplification) holds trivially because the receiver
 doesn't trigger /correct or /scar.
@@ -666,10 +672,11 @@ def test_handler_post_on_agent_card_path_returns_405() -> None:
     assert event is None
 
 
-def test_handler_get_on_agent_card_path_returns_404_in_chunk_4a() -> None:
-    """Chunk 4a doesn't ship the GET handler yet; the path is
-    reserved but unimplemented. Chunk 4b will replace this with the
-    static AgentCard JSON."""
+def test_handler_get_on_agent_card_path_returns_404_when_no_card_configured() -> None:
+    """When the operator opts out of publishing a card
+    (``agent_card_json=None``), GET on the reserved path is 404
+    with a clear "not configured" body. Chunk 4b's other tests
+    cover the 200 + JSON path when a card IS configured."""
     handler = WebhookHandler(secret=VALID_SECRET)
     status, response_body, event = handler.handle(
         "/.well-known/agent-card.json",
@@ -678,7 +685,7 @@ def test_handler_get_on_agent_card_path_returns_404_in_chunk_4a() -> None:
         b"",
     )
     assert status == 404
-    assert b"not implemented yet" in response_body
+    assert b"not configured" in response_body
     assert event is None
 
 
@@ -737,3 +744,156 @@ def test_cmd_serve_exits_2_when_secret_too_short(
     err = capsys.readouterr().err
     assert rc == 2
     assert "at least" in err
+
+
+# ---------------------------------------------------------------------------
+# Chunk 4b — A2A AgentCard endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_handler_get_agent_card_returns_200_json_when_configured() -> None:
+    """Pre-serialised JSON passed via ``agent_card_json`` is served
+    verbatim on GET /.well-known/agent-card.json."""
+    card_json = b'{"name": "test-agent", "skills": []}'
+    handler = WebhookHandler(secret=VALID_SECRET, agent_card_json=card_json)
+
+    status, response_body, event = handler.handle(
+        "/.well-known/agent-card.json",
+        "GET",
+        {"content-length": "0"},
+        b"",
+    )
+
+    assert status == 200
+    assert response_body == card_json
+    assert event is None
+
+
+def test_handler_post_agent_card_still_405_even_when_card_configured() -> None:
+    """Route boundary holds regardless of whether the GET handler
+    is wired. POST on the card path is method-not-allowed."""
+    card_json = b'{"name": "x"}'
+    handler = WebhookHandler(secret=VALID_SECRET, agent_card_json=card_json)
+
+    status, _, _ = handler.handle(
+        "/.well-known/agent-card.json",
+        "POST",
+        {"content-length": "10"},
+        b"x" * 10,
+    )
+    assert status == 405
+
+
+def test_handler_card_endpoint_does_not_consume_rate_limit_bucket_for_other_paths() -> None:
+    """Bucket is per-IP, shared across paths (per F-WH-6 design).
+    Verify a card GET counts toward the same bucket as a /webhook POST."""
+    card_json = b'{"name": "x"}'
+    handler = WebhookHandler(
+        secret=VALID_SECRET,
+        agent_card_json=card_json,
+        rate_limit_per_minute=2,
+    )
+
+    # 2 GETs on the card path consume the bucket.
+    handler.handle(
+        "/.well-known/agent-card.json", "GET", {"content-length": "0"}, b"",
+        source_ip="5.5.5.5",
+    )
+    handler.handle(
+        "/.well-known/agent-card.json", "GET", {"content-length": "0"}, b"",
+        source_ip="5.5.5.5",
+    )
+    # 3rd request from same IP — even on a different path — capped.
+    body = _review_comment_payload()
+    status, _, _ = handler.handle(
+        "/webhook", "POST", _headers(body), body, source_ip="5.5.5.5"
+    )
+    assert status == 429
+
+
+# ---------------------------------------------------------------------------
+# Chunk 4b — build_webhook_source serializes the card
+# ---------------------------------------------------------------------------
+
+
+def test_build_webhook_source_serializes_agent_card(bus: JsonlEventBus) -> None:
+    """When ``agent_card`` is supplied to ``build_webhook_source``
+    the handler ends up with the JSON bytes ready to serve."""
+    from karasu.a2a import build_karasu_card
+
+    card = build_karasu_card(base_url="http://127.0.0.1:9000")
+    source = build_webhook_source(
+        secret=VALID_SECRET.decode("utf-8"),
+        bus=bus,
+        submit=lambda e: None,
+        host="127.0.0.1",
+        port=0,
+        agent_card=card,
+    )
+    handler = source._handler
+    assert handler._agent_card_json is not None
+    parsed = json.loads(handler._agent_card_json)
+    assert parsed["name"] == "karasu"
+    assert parsed["url"] == "http://127.0.0.1:9000"
+    assert any(s["id"] == "watch-filesystem" for s in parsed["skills"])
+
+
+def test_build_webhook_source_no_card_keeps_fallback(bus: JsonlEventBus) -> None:
+    """No ``agent_card`` argument → handler falls back to the
+    "not configured" 404 placeholder."""
+    source = build_webhook_source(
+        secret=VALID_SECRET.decode("utf-8"),
+        bus=bus,
+        submit=lambda e: None,
+        host="127.0.0.1",
+        port=0,
+    )
+    assert source._handler._agent_card_json is None
+
+
+# ---------------------------------------------------------------------------
+# End-to-end live HTTP — GET /.well-known/agent-card.json
+# ---------------------------------------------------------------------------
+
+
+def _get(url: str) -> tuple[int, bytes, str]:
+    """Tiny HTTP GET helper. Returns (status, body, content_type)."""
+    try:
+        with urllib.request.urlopen(url, timeout=2.0) as resp:
+            return (
+                resp.status,
+                resp.read(),
+                resp.headers.get("Content-Type", ""),
+            )
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read(), exc.headers.get("Content-Type", "")
+
+
+def test_source_serves_card_with_application_json_content_type(
+    bus: JsonlEventBus,
+) -> None:
+    from karasu.a2a import build_karasu_card
+
+    card = build_karasu_card(base_url=None)
+    source = build_webhook_source(
+        secret=VALID_SECRET.decode("utf-8"),
+        bus=bus,
+        submit=lambda e: None,
+        host="127.0.0.1",
+        port=0,
+        agent_card=card,
+    )
+    source.start()
+    try:
+        host, port = source.address
+        status, body, content_type = _get(
+            f"http://{host}:{port}/.well-known/agent-card.json"
+        )
+        assert status == 200
+        assert content_type.startswith("application/json")
+        parsed = json.loads(body)
+        assert parsed["name"] == "karasu"
+        assert isinstance(parsed["skills"], list)
+        assert len(parsed["skills"]) == 4  # baseline skill count
+    finally:
+        source.stop()

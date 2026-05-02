@@ -14,7 +14,7 @@ def test_default_ignore_covers_self_generated_paths() -> None:
     # F6 — the bus, log captures, and editor tmp files must be on the
     # default ignore list so a fresh ``karasu.yaml`` without an explicit
     # ``watch.ignore`` does not amplify its own output.
-    expected = {"events.jsonl", "*.log", "*.tmp", ".karasu/"}
+    expected = {"events.jsonl", "*.log", "*.tmp", "*.tmp.*", ".karasu/"}
     missing = expected - set(DEFAULT_IGNORE)
     assert not missing, f"DEFAULT_IGNORE missing: {sorted(missing)}"
 

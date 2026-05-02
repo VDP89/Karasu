@@ -141,6 +141,11 @@ def test_ignore_pattern_skips_event(tmp_path: Path, bus: JsonlEventBus) -> None:
         ("events.jsonl", "events.jsonl"),
         ("*.log", "watch.log"),
         ("*.tmp", "draft.tmp"),
+        # F11 — Notepad's atomic-write artifacts have format
+        # ``<original>.tmp.<PID>.<TS>``; they end in digits, NOT
+        # in ``.tmp``, so the plain ``*.tmp`` glob misses them.
+        # Surfaced live during the Phase 3 dogfood (issue #39).
+        ("*.tmp.*", "sample.py.tmp.5296.1777729004615"),
     ],
 )
 def test_default_ignore_skips_self_generated_paths(

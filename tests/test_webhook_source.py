@@ -6,16 +6,18 @@ Failure-mode coverage per ``docs/phase-3-plus-pre-mortem.md``:
 - F-WH-2   delivery dedup (idempotent on repeat)
 - F-WH-3   resource leak on shutdown (start / stop without leak)
 - F-WH-5   metadata round-trip (review-comment → file_change)
+- F-WH-6   per-source-IP rate limiting (429 over threshold,
+           per-IP isolation, runs before path check)
 - F-WH-7   route boundary (only POST /webhook accepted)
 - F-WH-8   payload DoS (oversize → 413; malformed JSON → 422; both
            BEFORE HMAC, no signing-key timing leak)
-- F-WH-9   missing or short secret → fail-closed
+- F-WH-9   missing or short secret → fail-closed (handler + cmd_serve)
 - F-WH-10  dedup is in-memory (declared)
+- F-A2A-5  /.well-known/agent-card.json reserved (POST → 405,
+           GET → 404 in chunk 4a; 4b adds the GET handler)
 
-F-WH-4 (loop amplification) and F-WH-6 (rate limiting) are
-documented constraints rather than runnable tests; F-WH-4 holds
-trivially because the receiver doesn't trigger /correct or /scar,
-and F-WH-6 lands in a follow-up chunk if dogfood demands it.
+F-WH-4 (loop amplification) holds trivially because the receiver
+doesn't trigger /correct or /scar.
 """
 
 from __future__ import annotations
@@ -532,3 +534,206 @@ def test_source_works_as_registered_trigger_source(
         assert seen[0].data["path"] == "src/y.py"
     finally:
         controller.stop()
+
+
+# ---------------------------------------------------------------------------
+# F-WH-6 — per-source-IP rate limiting (audit-required)
+# ---------------------------------------------------------------------------
+
+
+def test_handler_rate_limit_returns_429_above_threshold() -> None:
+    handler = WebhookHandler(secret=VALID_SECRET, rate_limit_per_minute=3)
+    body = _review_comment_payload()
+
+    # First three from one IP go through (200 with event).
+    for i in range(3):
+        status, _, _ = handler.handle(
+            "/webhook",
+            "POST",
+            _headers(body, delivery=f"d-{i}"),
+            body,
+            source_ip="1.2.3.4",
+        )
+        assert status == 200
+
+    # Fourth from the SAME IP gets capped with 429 BEFORE any other
+    # check. Body and signature both still valid; the rate limit
+    # decides regardless.
+    status, response_body, event = handler.handle(
+        "/webhook",
+        "POST",
+        _headers(body, delivery="d-3"),
+        body,
+        source_ip="1.2.3.4",
+    )
+    assert status == 429
+    assert b"too many requests" in response_body
+    assert event is None
+
+
+def test_handler_rate_limit_isolates_per_source_ip() -> None:
+    handler = WebhookHandler(secret=VALID_SECRET, rate_limit_per_minute=2)
+    body = _review_comment_payload()
+
+    # IP A consumes its full bucket.
+    handler.handle(
+        "/webhook", "POST", _headers(body, delivery="a-1"), body,
+        source_ip="1.1.1.1",
+    )
+    handler.handle(
+        "/webhook", "POST", _headers(body, delivery="a-2"), body,
+        source_ip="1.1.1.1",
+    )
+    status_a, _, _ = handler.handle(
+        "/webhook", "POST", _headers(body, delivery="a-3"), body,
+        source_ip="1.1.1.1",
+    )
+    assert status_a == 429
+
+    # IP B has its own fresh bucket.
+    status_b, _, event_b = handler.handle(
+        "/webhook", "POST", _headers(body, delivery="b-1"), body,
+        source_ip="2.2.2.2",
+    )
+    assert status_b == 200
+    assert event_b is not None
+
+
+def test_handler_rate_limit_runs_before_path_check() -> None:
+    """F-WH-6 ordering: rate limit caps cost regardless of path.
+
+    Even a request to an unknown path counts toward the bucket.
+    Otherwise an attacker could path-scan unbounded.
+    """
+    handler = WebhookHandler(secret=VALID_SECRET, rate_limit_per_minute=2)
+    handler.handle(
+        "/", "GET", {"content-length": "0"}, b"", source_ip="9.9.9.9"
+    )
+    handler.handle(
+        "/foo", "GET", {"content-length": "0"}, b"", source_ip="9.9.9.9"
+    )
+    status, _, _ = handler.handle(
+        "/bar", "GET", {"content-length": "0"}, b"", source_ip="9.9.9.9"
+    )
+    assert status == 429
+
+
+def test_handler_rate_limit_disabled_when_none() -> None:
+    """``rate_limit_per_minute=None`` disables the limiter entirely.
+
+    Used by tests that need to make many requests; production callers
+    should always set a positive limit.
+    """
+    handler = WebhookHandler(secret=VALID_SECRET, rate_limit_per_minute=None)
+    body = _review_comment_payload()
+    for i in range(50):
+        status, _, _ = handler.handle(
+            "/webhook",
+            "POST",
+            _headers(body, delivery=f"unbounded-{i}"),
+            body,
+            source_ip="3.3.3.3",
+        )
+        assert status == 200
+
+
+def test_handler_rate_limit_rejects_zero_or_negative() -> None:
+    with pytest.raises(ValueError, match="positive"):
+        WebhookHandler(secret=VALID_SECRET, rate_limit_per_minute=0)
+    with pytest.raises(ValueError, match="positive"):
+        WebhookHandler(secret=VALID_SECRET, rate_limit_per_minute=-1)
+
+
+# ---------------------------------------------------------------------------
+# F-A2A-5 — explicit route boundary on /.well-known/agent-card.json
+# ---------------------------------------------------------------------------
+
+
+def test_handler_post_on_agent_card_path_returns_405() -> None:
+    """Even before chunk 4b mounts the GET handler, POST on the
+    reserved A2A path is method-not-allowed (NOT 404). This pins
+    the route boundary so chunk 4b only has to add a GET handler
+    without rewriting the boundary check."""
+    handler = WebhookHandler(secret=VALID_SECRET)
+    body = b'{"action": "created"}'
+    status, _, event = handler.handle(
+        "/.well-known/agent-card.json",
+        "POST",
+        {"content-length": str(len(body))},
+        body,
+    )
+    assert status == 405
+    assert event is None
+
+
+def test_handler_get_on_agent_card_path_returns_404_in_chunk_4a() -> None:
+    """Chunk 4a doesn't ship the GET handler yet; the path is
+    reserved but unimplemented. Chunk 4b will replace this with the
+    static AgentCard JSON."""
+    handler = WebhookHandler(secret=VALID_SECRET)
+    status, response_body, event = handler.handle(
+        "/.well-known/agent-card.json",
+        "GET",
+        {"content-length": "0"},
+        b"",
+    )
+    assert status == 404
+    assert b"not implemented yet" in response_body
+    assert event is None
+
+
+def test_handler_get_on_webhook_returns_405() -> None:
+    """Mirror of the agent-card boundary: GET on /webhook is also
+    method-not-allowed for the resource."""
+    handler = WebhookHandler(secret=VALID_SECRET)
+    status, _, _ = handler.handle(
+        "/webhook", "GET", {"content-length": "0"}, b""
+    )
+    assert status == 405
+
+
+# ---------------------------------------------------------------------------
+# cmd_serve fail-closed tests (NICE-TO-HAVE #2)
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_serve_exits_2_when_secret_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    """F-WH-9: missing KARASU_WEBHOOK_SECRET → exit 2 BEFORE any
+    port is bound. Verified through ``main`` so we exercise the
+    real fail-closed path."""
+    monkeypatch.delenv("KARASU_WEBHOOK_SECRET", raising=False)
+    monkeypatch.chdir(tmp_path)
+    from karasu.__main__ import main
+
+    rc = main(["serve", "--port", "0"])
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "KARASU_WEBHOOK_SECRET is not set" in err
+
+
+def test_cmd_serve_exits_2_when_secret_empty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.setenv("KARASU_WEBHOOK_SECRET", "")
+    monkeypatch.chdir(tmp_path)
+    from karasu.__main__ import main
+
+    rc = main(["serve", "--port", "0"])
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "KARASU_WEBHOOK_SECRET is not set" in err
+
+
+def test_cmd_serve_exits_2_when_secret_too_short(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.setenv("KARASU_WEBHOOK_SECRET", "too-short")  # 9 bytes < 16
+    monkeypatch.chdir(tmp_path)
+    from karasu.__main__ import main
+
+    rc = main(["serve", "--port", "0"])
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "at least" in err

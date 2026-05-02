@@ -25,6 +25,7 @@ import hmac
 import json
 import logging
 import threading
+import time
 from collections import deque
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -50,6 +51,66 @@ DEFAULT_MAX_BODY_BYTES = 1 * 1024 * 1024
 # Per F-WH-10: NOT persisted across restart. GitHub does not retry
 # on 200 responses, so post-restart re-delivery is a narrow window.
 DEFAULT_DEDUP_RING_SIZE = 1024
+
+# F-WH-6: per-source-IP rate limit. Sliding-window token bucket.
+# Defaults sized for a small project; operators tune via the
+# WebhookHandler constructor (or pass ``rate_limit_per_minute=None``
+# to disable for tests / trusted networks).
+DEFAULT_RATE_LIMIT_PER_MINUTE = 60
+# Cleanup empty buckets when the dict grows past this — bounds
+# memory under path-scan / IP-spoof attacks. Cheap dict scan.
+_RATE_LIMIT_CLEANUP_THRESHOLD = 1024
+
+
+class _RateLimiter:
+    """Per-source-IP sliding-window rate limiter.
+
+    F-WH-6 mitigation. Each ``allow(source_ip)`` call records the
+    current monotonic time in that IP's deque, drops entries older
+    than ``window_seconds``, and returns ``False`` if the bucket
+    is full. Thread-safe; the HTTP server is multi-threaded.
+    """
+
+    def __init__(
+        self,
+        max_per_window: int,
+        window_seconds: float = 60.0,
+    ) -> None:
+        if max_per_window <= 0:
+            raise ValueError(
+                f"rate limit must be positive; got {max_per_window}"
+            )
+        self._max = max_per_window
+        self._window = window_seconds
+        self._buckets: dict[str, deque[float]] = {}
+        self._lock = threading.Lock()
+
+    def allow(self, source_ip: str) -> bool:
+        now = time.monotonic()
+        with self._lock:
+            if len(self._buckets) > _RATE_LIMIT_CLEANUP_THRESHOLD:
+                self._cleanup_locked(now)
+            bucket = self._buckets.setdefault(source_ip, deque())
+            # Drop entries that fell out of the window.
+            cutoff = now - self._window
+            while bucket and bucket[0] <= cutoff:
+                bucket.popleft()
+            if len(bucket) >= self._max:
+                return False
+            bucket.append(now)
+            return True
+
+    def _cleanup_locked(self, now: float) -> None:
+        # Caller holds the lock. Drop buckets whose newest entry has
+        # already aged out — those IPs haven't sent in over ``window``.
+        cutoff = now - self._window
+        stale = [
+            ip
+            for ip, bucket in self._buckets.items()
+            if not bucket or bucket[-1] <= cutoff
+        ]
+        for ip in stale:
+            del self._buckets[ip]
 
 
 class WebhookConfigError(ValueError):
@@ -79,11 +140,19 @@ class WebhookHandler:
     rejection latency cannot leak signing-key timing.
     """
 
+    # F-A2A-5 (audit): /.well-known/agent-card.json is reserved for
+    # chunk 4b. In chunk 4a the path is known to the receiver but not
+    # yet implemented. Listed here so the route-boundary check can
+    # answer 405 on POST (method-not-allowed for this resource) even
+    # before chunk 4b mounts the GET handler.
+    _AGENT_CARD_PATH = "/.well-known/agent-card.json"
+
     def __init__(
         self,
         secret: bytes,
         max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
         dedup_ring_size: int = DEFAULT_DEDUP_RING_SIZE,
+        rate_limit_per_minute: int | None = DEFAULT_RATE_LIMIT_PER_MINUTE,
     ) -> None:
         if not secret or len(secret) < MIN_SECRET_LENGTH:
             raise WebhookConfigError(
@@ -95,6 +164,13 @@ class WebhookHandler:
         self._delivered: deque[str] = deque(maxlen=dedup_ring_size)
         self._delivered_set: set[str] = set()
         self._lock = threading.Lock()
+        # F-WH-6: rate limiter. ``None`` disables (used by tests that
+        # need to make many requests; production always sets a limit).
+        self._rate_limiter: _RateLimiter | None = (
+            _RateLimiter(rate_limit_per_minute)
+            if rate_limit_per_minute is not None
+            else None
+        )
 
     def handle(
         self,
@@ -102,21 +178,41 @@ class WebhookHandler:
         method: str,
         headers: dict[str, str],
         body: bytes,
+        source_ip: str = "0.0.0.0",
     ) -> tuple[int, bytes, Event | None]:
         """Process one request.
 
         Returns ``(status_code, response_body, file_change_event_or_None)``.
         Caller writes status + body to the wire and (if event is not
-        None) submits the event to the controller.
+        None) submits the event to the controller. Caller passes the
+        peer's source IP so the rate limiter (F-WH-6) can bucket
+        per-origin.
         """
-        # F-A2A-5: enforce route boundary. Only POST /webhook is
-        # accepted in chunk 4a. Other paths/methods get 405; chunk 4b
-        # will add GET /.well-known/agent-card.json without breaking
-        # this guard because that's a different path.
-        if path != "/webhook":
+        # F-WH-6: per-source-IP rate limit. Runs FIRST, before any
+        # path / method / body / signing work, so a flood from a
+        # single peer cannot drain CPU on the verifier path.
+        if self._rate_limiter is not None and not self._rate_limiter.allow(
+            source_ip
+        ):
+            return 429, b"too many requests\n", None
+
+        # F-A2A-5: enforce route boundary. /webhook accepts POST only;
+        # /.well-known/agent-card.json is reserved for chunk 4b — POST
+        # there is method-not-allowed for the resource (405) even
+        # though chunk 4a doesn't yet implement GET. Anything else is
+        # 404. Chunk 4b adds the GET handler without changing this
+        # guard.
+        if path == "/webhook":
+            if method != "POST":
+                return 405, b"method not allowed\n", None
+        elif path == self._AGENT_CARD_PATH:
+            if method != "GET":
+                return 405, b"method not allowed\n", None
+            # Chunk 4a does not implement GET; chunk 4b will replace
+            # this with the static AgentCard JSON.
+            return 404, b"agent-card not implemented yet\n", None
+        else:
             return 404, b"not found\n", None
-        if method != "POST":
-            return 405, b"method not allowed\n", None
 
         # F-WH-8 (1/3): Content-Length BEFORE anything else.
         try:
@@ -322,8 +418,14 @@ def _make_request_handler_class(
             read_cap = handler._max_body_bytes + 1
             body = self.rfile.read(min(length, read_cap)) if length > 0 else b""
             request_headers = {k.lower(): v for k, v in self.headers.items()}
+            # F-WH-6: pass the peer IP into the handler so the rate
+            # limiter can bucket per-origin. ``client_address`` is
+            # ``(host, port)`` per BaseHTTPRequestHandler.
+            source_ip = (
+                self.client_address[0] if self.client_address else "0.0.0.0"
+            )
             status, response_body, event = handler.handle(
-                self.path, method, request_headers, body
+                self.path, method, request_headers, body, source_ip=source_ip
             )
             self.send_response(status)
             self.send_header("Content-Length", str(len(response_body)))
@@ -351,6 +453,7 @@ def build_webhook_source(
     port: int = 8080,
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
     dedup_ring_size: int = DEFAULT_DEDUP_RING_SIZE,
+    rate_limit_per_minute: int | None = DEFAULT_RATE_LIMIT_PER_MINUTE,
 ) -> WebhookSource:
     """Construct a :class:`WebhookSource` end-to-end.
 
@@ -361,6 +464,7 @@ def build_webhook_source(
         secret=secret.encode("utf-8") if isinstance(secret, str) else secret,
         max_body_bytes=max_body_bytes,
         dedup_ring_size=dedup_ring_size,
+        rate_limit_per_minute=rate_limit_per_minute,
     )
     return WebhookSource(
         handler=handler,
@@ -378,5 +482,6 @@ __all__: Iterable[str] = (
     "build_webhook_source",
     "DEFAULT_MAX_BODY_BYTES",
     "DEFAULT_DEDUP_RING_SIZE",
+    "DEFAULT_RATE_LIMIT_PER_MINUTE",
     "MIN_SECRET_LENGTH",
 )

@@ -90,29 +90,25 @@ Cap enforcement: 6 `/scar` rapid-fire → exactly 3 resubmits, 3 cap warnings, 0
 ## Next step (entry point)
 
 ```text
-Phase 3+ chunk 4c — review-comment auto-handoff: SHIPPED.
-PR open on feat/review-comment-handoff awaiting audit.
-Implementation: Dispatcher copies event.data into
-AgentRequest.metadata; PromptBuilder isolates the github
-branch with F-HANDOFF-1 fence + USER DATA prefix and
-F-HANDOFF-5 body cap (4 KiB) + truncation marker;
-ClaudeCodeAdapter delegates prompt construction to the
-builder. 289/289 pass locally.
+Phase 3+ archive (issue #5) is essentially closed in terms
+of code. All chunks (4a / 4b / 4c) and their gates (#53 /
+#54) merged; chunk 4c hardening (#56) merged; issue #47
+implementation (#57) merged; chunk 4b outbound-discovery
+follow-up (#58) merged; chunk 4c F-HANDOFF-6 path fallback
+(#59) merged.
 
-Phase 3+ archive (issue #5) is essentially closed once
-chunk 4c lands. Remaining items are open-ended follow-ups:
+Remaining items are open-ended, non-blocking follow-ups:
 
-Optional follow-ups (NICE-TO-HAVE, not blocking):
-- Issue #47 implementation PR (cap shape from PR #53
-  design; Option B chain cap with origin-aware tracking,
-  CHAIN_CAP=3, F-CAP-1..F-CAP-5).
-- fetch_card helper + karasu peers <url> CLI for outbound
-  A2A discovery (deferred from chunk 4b).
 - Persist effective priority on agent_response.data
   (deferred from Phase 3 audit).
-- F-HANDOFF-6 path-existence fallback to "metadata-only"
-  prompt for force-pushed-away paths (deferred from
-  chunk 4c scope).
+- Dogfood controlado de chunk 4c con un PR real a
+  trust_level=1 — operativo, no código (requiere computadora
+  para correr karasu serve + GitHub webhook + monitoreo bus).
+- Future: git-tree-aware path probe injectable in
+  PromptBuilder (validate against HEAD's tree, not just
+  filesystem cwd). Audit-noted on PR #59.
+- Future: optional retry on network error in fetch_card
+  (audit-noted on PR #58).
 ```
 
 ## Do NOT do yet

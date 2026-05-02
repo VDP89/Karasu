@@ -2,90 +2,95 @@
 
 ## Goal
 
-**Phase 3 audit gate.**
+**Phase 3+ archive — pre-mortem doc-only PR first, then chunks.**
 
-Phase 3 chunks 3a + 3b + 3c are pushed and stacked:
+Phase 3 is COMPLETE + DOGFOOD-VALIDATED (issue #39 closed cleanly).
+Three F-PRs filed from the dogfood (#40, #41, #42) — all small,
+all P1/P3, none blocking architectural work. Once they merge,
+Phase 3+ archive (issue #5) opens.
 
-- **PR #34** — design doc `docs/phase-3-loop-controller.md` (merged).
-- **PR #35** — chunk 3a: `LoopController` wrapper around the existing pipeline.
-- **PR #36** — chunk 3b: bus subscription + reaction (resubmit on `/correct` / `/scar`). Stacked on #35.
-- **PR #37** — chunk 3c: `TriggerSource` Protocol + watcher as registered source + `karasu hook` CLI. Stacked on #36.
-
-Per the operator policy: ChatGPT acts as the reviewer. The
-maintainer hands the PR set to ChatGPT for the audit. **No new
-chunk or phase starts until the audit returns.**
-
-## Pre-reads for the audit
+## Phase 3+ archive concepts (issue #5 — sketch + sized)
 
 ```text
-1. docs/phase-3-loop-controller.md     — surface contract (frozen)
-2. docs/memory/current-state.md        — phase + capabilities snapshot
-3. docs/memory/session-log.md          — chunk-by-chunk record
-4. docs/memory/decision-log.md         — durable decisions
-5. src/karasu/controller/loop.py       — LoopController (worker + bus + sources)
-6. src/karasu/controller/sources/      — TriggerSource Protocol + git_hook
-7. src/karasu/watcher/fs_watcher.py    — refactor: source-shaped lifecycle
-8. tests/test_controller.py            — 26 tests (chunks 3a + 3b)
-9. tests/test_controller_sources.py    — 18 tests (chunk 3c)
+1. GitHub webhook receiver
+   - HMAC-SHA256 verify against X-Hub-Signature-256
+   - Translator: pull_request_review_comment.created → file_change
+     with source=github + metadata (github_pr, github_repo, ...)
+   - CLI: karasu serve --host --port
+   - Delivery dedup via X-GitHub-Delivery
+   - Plugs into chunk 3c TriggerSource if long-running, or one-shot
+     CLI like git_hook if invoked per-event
+
+2. A2A Agent Cards
+   - AgentCard / Skill / AgentCapabilities dataclasses
+   - build_karasu_card() with 4 core skills
+   - fetch_card(base_url) over httpx
+   - WebhookServer.handle_get(path) serves /.well-known/agent-card.json
+   - Discovery + capability negotiation; cosmetic without LoopController
+     (which we have now), so meaningful from this phase forward
+
+3. Review-comment auto-handoff
+   - Dispatcher copies event.data into AgentRequest.metadata
+   - ClaudeCodeAdapter._build_prompt() detects github_body + github_pr,
+     emits "Address this review comment ..." prompt
+   - Reference implementation; LoopController will eventually generalize
+     this with a rule table
 ```
 
-## Questions ChatGPT should be asked
+## Recommended order
 
 ```text
-1. Does the surface contract in docs/phase-3-loop-controller.md
-   match the shipped behaviour across chunks 3a + 3b + 3c? Any drift?
-2. Is the resubmit cap (3 per originating file_change.id) the
-   right shape, or should it be (id, scar_id) keyed?
-3. Is the Protocol + duck-typed `start`/`stop` enough as the
-   trigger-source contract, or should we move to an ABC?
-4. Should the git-hook source persist a `git_hook_run` event on
-   the bus to record which hook fired and when, or is the per-
-   path `git_hook` field sufficient?
-5. The watcher's `start_pipeline`/`stop_pipeline` legacy
-   delegators only exist to keep the existing test suite passing.
-   Worth removing in a Phase 3+ cleanup, or leave as scaffolding?
+1. Pre-mortem (docs-only): docs/phase-3-plus-pre-mortem.md
+   For each of the three concepts: failure modes, frozen-contract
+   risks, scope of damage if implemented wrong. Mirror the
+   Phase 2 / Phase 3 design-first cadence.
+
+2. After audit accept: pick ONE concept (likely webhook receiver —
+   smallest scope, plugs into existing TriggerSource pattern).
+3. Chunk by chunk per the standard cadence (≤400 LOC, focused PR,
+   audit before merge).
 ```
 
-## If the audit accepts
+## Frozen contracts (must NOT change)
 
 ```text
-- Merge #35 → #36 → #37 in order (each base re-targeted to main as
-  the previous lands).
-- Open the next phase. Three candidates from issue #5 archive:
-  GitHub webhook receiver, A2A Agent Cards, review-comment
-  auto-handoff. Each plugs into chunk 3c's TriggerSource (or
-  one-shot CLI) seam without further controller refactoring.
+- AgentResponse (Phase 1A)
+- F3 dispatcher semantics (suppression on no-route)
+- F7 dispatch_on (code_change excludes deleted by default)
+- F8 timeout_s per-agent
+- Surface contract from docs/phase-2-surface.md
+- Single-worker invariant (controller + worker + bus subscription
+  serial through one queue)
+- Scar = stored correction only (docs/scar-engine.md "Golden rule")
+- I-001..I-006 invariants in docs/decisions.md
 ```
 
-## If the audit asks for changes
+## Pre-reads for the pre-mortem
 
 ```text
-- File the requested changes as one focused commit per concern on
-  the relevant chunk's branch.
-- Keep stack order intact unless the audit asks to collapse the
-  chunks — premature collapse loses review history.
-- Re-request the audit after the changes are pushed. Do not start a
-  new phase until ChatGPT signs off.
+1. docs/phase-3-loop-controller.md     — chunk 3a/3b/3c contract
+2. docs/scar-engine.md                 — Golden rule
+3. docs/decisions.md                   — I-001..I-006 invariants
+4. docs/memory/current-state.md        — phase + capabilities
+5. issue #5 (open)                     — Phase 3+ archive sketches
+6. issue #39 (closed, dogfood)         — what real loop behavior looks like
+7. src/karasu/controller/sources/      — TriggerSource pattern
 ```
 
-## Do NOT do during the audit window
+## Do NOT do yet
 
 ```text
-- Do not start GitHub webhook / A2A / review-comment handoff work.
+- Do not start webhook receiver / A2A / handoff implementation
+  before the pre-mortem doc lands and gets audited.
 - Do not parallelize the controller worker.
-- Do not abstract the adapter behind a plugin layer.
 - Do not let the pipeline consume human_decision directly.
 - Do not touch AgentResponse, F3, F7, F8.
+- Do not bypass the audit gate.
 ```
 
-## Anchor for the previous sessions
+## Anchor
 
-- Phase 1C closed 2026-04-29 (PR #29).
-- Phase 2 closed 2026-04-30 (PRs #30 #31 #32 #33 merged after audit
-  + condition fix).
-- Phase 3 design merged 2026-04-30 (PR #34).
-- `feat/loop-controller-wrapper` (PR #35) — chunk 3a, 11 new tests.
-- `feat/loop-controller-react` (PR #36) — chunk 3b, 15 new tests.
-- `feat/loop-controller-sources` (PR #37) — chunk 3c, 18 new tests.
-- 197/197 tests green locally on the chunk-3c tip (88 prior + 30
-  Phase 2 + 11 + 15 + 18 + 35 controller / interface / sources).
+- Phase 3 closed 2026-05-02 (PRs #34/#35/#36/#37 merged, #38 integration tests, #39 dogfood closed).
+- F9 (#40), F10 (#41), F11 (#42) filed from dogfood. All small, two cosmetic, one P1.
+- 202/202 tests green on main after F11.
+- Bot `@Karasu_dogfood_bot` exists in the operator's Telegram for any future smoke runs.

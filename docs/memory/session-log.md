@@ -310,3 +310,35 @@ Next step:
 - Mergear F9 + F10 + F11.
 - Cerrar issue #39 cuando los tres landeen.
 - Phase 3+ archive: pre-mortem doc-only PR primero, después chunks por concept (issue #5).
+
+---
+
+## 2026-05-02 (Phase 3+ chunk 4a) — GitHub webhook receiver
+
+What changed:
+- `docs/phase-3-plus-pre-mortem.md` (#48) merged after two audit rounds (APPROVE WITH MINOR REQUIRED CHANGES → all six REQUERIDOS + two NICE-TO-HAVE applied → APPROVE).
+- `src/karasu/controller/sources/webhook.py` — new module:
+  - `WebhookHandler` (pure logic): HMAC verify with `hmac.compare_digest`, body size cap (1 MiB default, 413 on oversize), JSON parse (422 on malformed), Content-Length sanity (411 on missing/mismatch), in-memory dedup ring (1024 deliveries), event mapping for `pull_request_review_comment.created` → `file_change` with `source="github_webhook"` + full GitHub metadata. Order: size → JSON → HMAC, all BEFORE any side effect.
+  - `WebhookSource` (TriggerSource): `http.server.ThreadingHTTPServer` in a daemon thread. `start`/`stop` lifecycle; `address` property exposes the bound port for `port=0` ephemeral binding in tests.
+  - `WebhookConfigError`: raised at construction if secret is missing, empty, or shorter than 16 bytes.
+  - `build_webhook_source` factory used by `cmd_serve`.
+- `src/karasu/__main__.py` — new `karasu serve --host --port` subcommand. Reads `KARASU_WEBHOOK_SECRET`. Fails CLOSED with exit 2 if absent, empty, or short (F-WH-9). Builds the controller + source and `controller.run_forever()`.
+- `tests/test_webhook_source.py` — 26 new tests covering F-WH-1/2/3/5/7/8/9/10. Includes end-to-end live HTTP roundtrip on an ephemeral port.
+- `docs/local-dogfood.md` — new "Phase 3+ chunk 4a" section. Historical "do not add webhooks" line annotated `(LIFTED in Phase 3+ chunk 4a)`.
+
+Decisions:
+- Order of checks (audit F-WH-8): Content-Length → Content-Length match → JSON parse → HMAC verify. Body size and JSON validity rejected BEFORE the signing path so rejection latency cannot leak signing-key timing.
+- Secret minimum 16 bytes (audit F-WH-9). Below that → `WebhookConfigError` at handler construction; `cmd_serve` re-checks first to print a friendly error and exit 2 before any port is bound.
+- Dedup is in-memory only (audit F-WH-10). Documented constraint: GitHub does not retry on 200, so the post-restart re-delivery window is narrow and acceptable for the MVP.
+- Single mapping (`pull_request_review_comment.created`) in chunk 4a. Other event types ack 200 with no event so GitHub's delivery success metric stays clean and chunk 4c can extend mapping without re-engineering.
+- Route boundary explicit (audit F-A2A-5): chunk 4a accepts only `POST /webhook`. Other paths/methods → 404/405. Chunk 4b will add `GET /.well-known/agent-card.json` without overlap.
+- Did NOT implement per-source-IP rate limit (F-WH-6). The controller's bounded queue is the backstop; if dogfood evidence demands tighter rate limiting it ships in a focused PR rather than bloating chunk 4a.
+
+Impact:
+- Phase 3+ archive opened. The webhook receiver is the second long-running source (alongside the watcher) plugging into the chunk-3c TriggerSource Protocol.
+- Pipeline still does NOT consume `human_decision`. The webhook receiver is a producer only; it does NOT trigger `/correct` or `/scar`. Issue #47 (cap-local) is unchanged.
+- 228/228 tests pass locally (202 prior + 26 new).
+- No change to `AgentResponse`, F3, F7, F8, surface contract, single-worker invariant.
+
+Next step:
+- Audit the chunk 4a PR. If accepted, merge and arranque chunk 4b (A2A Agent Card). If pre-req constraints land first (NICE-TO-HAVE #1 priority persist + NICE-TO-HAVE #3 startup warning + issue #47 outline), chunk 4c becomes unblocked too.

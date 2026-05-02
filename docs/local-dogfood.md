@@ -164,7 +164,7 @@ are flagged inline.
 ```text
 - do not add Telegram                       (LIFTED in Phase 2 chunk 1, PR #31)
 - do not add LoopController                 (still in force)
-- do not add webhooks                        (still in force; see issue #5)
+- do not add webhooks                        (LIFTED in Phase 3+ chunk 4a, PR #50)
 - do not add /correct                       (LIFTED in Phase 2 chunk 3, PR #33)
 - do not mutate scars from Telegram/chat    (LIFTED in Phase 2 chunk 3, PR #33)
 ```
@@ -296,3 +296,66 @@ explicit acknowledgement before you point it at a real workspace.
 The trust gradient is per-agent, not per-path or per-classification.
 Phase 3+ may extend it; until then, set `trust_level` to the
 weakest tier that still gives you the autonomy you want.
+
+## Phase 3+ chunk 4a — GitHub webhook receiver (optional)
+
+A long-running HTTP server that accepts GitHub webhooks, verifies
+the HMAC, dedups by ``X-GitHub-Delivery``, and translates supported
+events into ``file_change`` events on the bus. Plugs into the
+controller as a registered ``TriggerSource``.
+
+```bash
+# 16+ byte secret. Configure the same value as the webhook in the
+# GitHub repo settings.
+export KARASU_WEBHOOK_SECRET="<at-least-16-bytes>"
+karasu serve --host 127.0.0.1 --port 8080
+```
+
+Both the env var and a working bus configuration are mandatory.
+Per F-WH-9 the receiver fails closed if the secret is missing,
+empty, or shorter than 16 bytes — exit code 2 before any port is
+bound.
+
+### Supported events
+
+Chunk 4a maps **only** ``pull_request_review_comment.created``
+into a ``file_change`` with ``source="github_webhook"`` and
+``data.change_type="review_comment"``. The event carries the GitHub
+metadata (``github_pr``, ``github_repo``, ``github_comment_id``,
+``github_author``, ``github_body``) for chunk 4c (auto-handoff) to
+build a richer prompt later.
+
+Other event types and actions ack 200 without producing a bus
+event. Edited / deleted comments and review comments without a
+path are no-op (per F-HANDOFF-6).
+
+### Security boundary
+
+```text
+- Bind to 127.0.0.1 by default. External exposure (--host 0.0.0.0)
+  is operator opt-in; pair it with TLS termination upstream
+  (nginx, Caddy, ...).
+- Secret length minimum: 16 bytes. The receiver refuses to start
+  with anything shorter (F-WH-9).
+- HMAC verify uses hmac.compare_digest. Signature mismatch → 401
+  with no signing-key timing leak.
+- Body size cap: 1 MiB by default (F-WH-8). Oversize → 413 BEFORE
+  HMAC verify so timing leaks are bounded by the size check, not
+  by the signing path.
+- Dedup ring: 1024 deliveries, in-memory only. Does NOT survive
+  process restart (F-WH-10). GitHub does not retry on 200, so the
+  re-delivery window is narrow but real.
+- Karasu remains one-way GitHub → bus. The receiver does NOT
+  comment, label, or otherwise mutate GitHub state. Token-based
+  operations are out of scope until a future chunk explicitly
+  declares them.
+```
+
+### What does NOT ship in 4a
+
+- A2A Agent Card endpoint (chunk 4b will mount
+  ``GET /.well-known/agent-card.json`` on the same server).
+- Auto-handoff prompt builder for review comments (chunk 4c).
+- Other GitHub event types (push, issue, workflow_run).
+- Per-source-IP rate limiting (F-WH-6 — defer until dogfood
+  evidence demands it).

@@ -8,6 +8,7 @@ Subcommands:
 * ``karasu analyze`` — analyze event-log noise and distribution.
 * ``karasu chat``    — start the Telegram interface.
 * ``karasu hook``    — run as a git-hook trigger source (one-shot).
+* ``karasu serve``   — run the GitHub webhook receiver (Phase 3+ chunk 4a).
 """
 
 from __future__ import annotations
@@ -309,6 +310,75 @@ def cmd_watch(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    """Run the GitHub webhook receiver as a long-running source.
+
+    Phase 3+ chunk 4a (#48). Reads ``KARASU_WEBHOOK_SECRET`` from
+    env and fails CLOSED if it is missing, empty, or shorter than
+    ``MIN_SECRET_LENGTH`` (F-WH-9). Builds the handler + source,
+    registers the source with a fresh ``LoopController``, runs
+    forever.
+    """
+    from karasu.controller.sources.webhook import (
+        MIN_SECRET_LENGTH,
+        WebhookConfigError,
+        build_webhook_source,
+    )
+
+    # F-WH-9: fail closed before binding the port. Never start the
+    # listener with an unsafe secret.
+    secret = os.environ.get("KARASU_WEBHOOK_SECRET", "")
+    if not secret:
+        print(
+            "error: KARASU_WEBHOOK_SECRET is not set; refusing to start "
+            "the webhook receiver insecure",
+            file=sys.stderr,
+        )
+        return 2
+    if len(secret) < MIN_SECRET_LENGTH:
+        print(
+            f"error: KARASU_WEBHOOK_SECRET must be at least "
+            f"{MIN_SECRET_LENGTH} bytes; got {len(secret)}",
+            file=sys.stderr,
+        )
+        return 2
+
+    config = _load_config(args.config)
+    bus = JsonlEventBus(_bus_path(config))
+    classifier = _classifier(config)
+    dispatcher = Dispatcher(bus=bus, adapters=_adapters(config))
+    reporter = HumanReporter(_trust(config))
+    scars = ScarEngine(_scars_path(config))
+
+    def sink(report) -> None:
+        print(report.text, flush=True)
+
+    pipeline = Pipeline(classifier, dispatcher, reporter, sink, scars=scars)
+    controller = LoopController(pipeline, bus=bus)
+
+    try:
+        source = build_webhook_source(
+            secret=secret,
+            bus=bus,
+            submit=controller.submit,
+            host=args.host,
+            port=args.port,
+        )
+    except WebhookConfigError as exc:
+        # Should already have been caught above, but defence in
+        # depth — never let an unsafe config silently slip through.
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    controller.add_source(source)
+    print(
+        f"karasu serve: webhook receiver on http://{args.host}:{args.port}/webhook",
+        file=sys.stderr,
+    )
+    controller.run_forever()
+    return 0
+
+
 def cmd_hook(args: argparse.Namespace) -> int:
     """Run a git-hook trigger source one-shot.
 
@@ -519,6 +589,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="git hook name",
     )
     hook.set_defaults(func=cmd_hook)
+
+    serve = sub.add_parser(
+        "serve",
+        help="run the GitHub webhook receiver (long-running TriggerSource)",
+    )
+    serve.add_argument("--host", default="127.0.0.1", help="HTTP bind host")
+    serve.add_argument("--port", type=int, default=8080, help="HTTP bind port")
+    serve.set_defaults(func=cmd_serve)
+
     return parser
 
 

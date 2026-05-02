@@ -444,3 +444,28 @@ Impact:
 
 Next step:
 - Audit both gate PRs. After both merge, open `feat/review-comment-handoff` (chunk 4c). Phase 3+ archive (issue #5) is essentially closed after 4c.
+
+---
+
+## 2026-05-02 (Phase 3+ chunk 4c gate-2 audit round 1) — REQUERIDO absorbed
+
+What changed:
+- Gate 2 (NICE-TO-HAVE #3 startup warning) opened as PR #54. First audit returned NO APROBADO with 1 REQUERIDO + 2 NICE-TO-HAVE.
+- REQUERIDO: `_announce_autonomous_adapters(adapters)` had been wired into `cmd_hook` in addition to the contracted `cmd_watch` / `cmd_serve`. Out-of-scope diff that contaminated stderr on every commit.
+- Fix (commit ba3994e):
+  - Removed the call from `cmd_hook`. Inline doc comment explains why: hook flow is one-shot per commit, operator already opted into the trust gradient when launching the long-running `cmd_watch` / `cmd_serve` session, structured `logging.WARNING` from `AgentAdapter.__init__` still fires for headless collectors.
+  - Added `test_banner_is_wired_into_cmd_watch_and_cmd_serve_only` using `inspect.getsource` to pin the wiring boundary: helper string MUST appear in `cmd_watch` and `cmd_serve`, MUST NOT appear in `cmd_hook`. A future contributor adding the helper to a one-shot entry point trips this test.
+- NICE-TO-HAVE 2 absorbed: `flush=True` on the banner `print` so the warning is visible immediately even when stderr is line- or block-buffered.
+- NICE-TO-HAVE 1 (real integration test of `cmd_watch` / `cmd_serve` through `main([...])`) deferred this round — contract-pin via `inspect.getsource` covers the same regression surface at lower cost; re-flag if auditor escalates to REQUERIDO.
+- 268/268 pass locally (267 prior + 1 contract test).
+
+Decisions:
+- The cmd_hook silence is a positive contract, not an oversight. Pinning it with a test (not just a comment) is the durable mitigation.
+- `inspect.getsource` based contract pins are an acceptable substitute for full integration tests when the alternative requires stubbing process-blocking entry points (`cmd_watch`'s watcher loop, `cmd_serve`'s socket bind). They do not replace integration tests for behaviour, but they cover the wiring-boundary regression class.
+
+Impact:
+- PR #54 awaits re-audit. Both chunk-4c gates remain in flight (PR #53 cap-design + PR #54 trust-warning); both still required before chunk 4c opens.
+- No frozen-contract changes. AgentResponse, F3, F7, F8, surface=sink, single-worker invariant, scar=stored-correction-only, I-001..I-006, TriggerSource Protocol all untouched.
+
+Next step:
+- Re-audit on PR #54. If APROBADO, merge. PR #53 audit awaited in parallel. Once both land on main, open `feat/review-comment-handoff` (chunk 4c).

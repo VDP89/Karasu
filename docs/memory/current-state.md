@@ -92,10 +92,16 @@ Cap enforcement: 6 `/scar` rapid-fire → exactly 3 resubmits, 3 cap warnings, 0
 Phase 3+ chunk 4c — review-comment auto-handoff.
 HARD pre-reqs (status):
   1. Issue #47 (cap-local-per-origin) outline plan — PR #53
-     open, awaiting audit.
+     open, awaiting first audit.
   2. NICE-TO-HAVE #3 — startup warning when adapter
-     trust_level >= 2 — PR open on feat/trust-startup-warning,
-     awaiting audit.
+     trust_level >= 2 — PR #54 open on
+     feat/trust-startup-warning. First audit NO APROBADO
+     (1 REQUERIDO + 2 NICE-TO-HAVE). Round-1 fix shipped
+     (commit ba3994e): banner leaked into cmd_hook removed,
+     contract-pin test added via inspect.getsource,
+     flush=True on the banner. Full main([...]) integration
+     test deferred to round 2 if escalated. Awaiting
+     re-audit. 268/268 green locally.
 Both must merge before chunk 4c opens.
 6 failure modes filed (F-HANDOFF-1..6) including prompt
 injection, trust=2 amplification, prompt bloat. See

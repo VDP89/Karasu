@@ -533,14 +533,18 @@ def test_resubmit_cap_enforced(bus: JsonlEventBus) -> None:
         source="interface",
         data={"user": 1, "text": f"/correct {agent_response.id[:8]} p=h"},
     )
-    # Fire the same /correct RESUBMIT_CAP + 2 times. Only the first
-    # RESUBMIT_CAP should produce a resubmit; the rest are bounded.
-    for _ in range(LoopController.RESUBMIT_CAP + 2):
+    # Fire the same /correct CHAIN_CAP + 2 times. Only the first
+    # CHAIN_CAP should produce a resubmit; the rest are bounded.
+    # Spam at depth 1 (same response /scar'd N times) all increments
+    # the same chain counter, so the observable behaviour matches the
+    # pre-issue-#47 per-originating-id cap.
+    for _ in range(LoopController.CHAIN_CAP + 2):
         controller.on_bus_event(decision, bus)
 
-    assert len(seen) == LoopController.RESUBMIT_CAP
+    assert len(seen) == LoopController.CHAIN_CAP
     for resubmit in seen:
         assert resubmit.data["resubmit_origin"] == file_change.id
+        assert resubmit.data["controller_chain_depth"] == 1
 
 
 def test_resubmit_skipped_when_correlates_missing(bus: JsonlEventBus) -> None:
@@ -662,3 +666,361 @@ def test_end_to_end_bus_reaction(bus: JsonlEventBus) -> None:
     assert len(seen) == 1
     assert seen[0].data["resubmit_origin"] == file_change.id
     assert seen[0].data["controller_resubmit"] is True
+
+
+# ---------------------------------------------------------------------------
+# Issue #47 — chain cap with origin-aware tracking
+#
+# Failure modes (see docs/phase-3-cap-design.md):
+#   F-CAP-1  missing parent during walk → treat current as root.
+#   F-CAP-2  untrusted lineage on non-controller events → trust
+#            controller_chain_depth / controller_resubmit /
+#            resubmit_origin ONLY when source="controller".
+#   F-CAP-3  in-memory dict growth → bounded eviction.
+#   F-CAP-5  cyclic / forged / pathologically deep lineage →
+#            visited_set + MAX_CHAIN_WALK_DEPTH.
+# ---------------------------------------------------------------------------
+
+
+def _controller_resubmit_event(
+    bus: JsonlEventBus,
+    *,
+    parent_id: str,
+    depth: int,
+    path: str = "sample.py",
+) -> Event:
+    """Append a synthetic controller-emitted resubmit event.
+
+    Useful for white-box tests that need to walk a multi-hop
+    chain without driving the full /scar reaction path.
+    """
+    return bus.append(
+        Event(
+            type="file_change",
+            source="controller",
+            data={
+                "path": path,
+                "change_type": "modified",
+                "controller_resubmit": True,
+                "resubmit_origin": parent_id,
+                "controller_chain_depth": depth,
+            },
+        )
+    )
+
+
+def test_chain_root_returns_self_for_watcher_event(
+    bus: JsonlEventBus,
+) -> None:
+    """A non-controller event is the root of its own chain by
+    definition; F-CAP-2 stops the walk there."""
+    file_change, _ = _seed_chain(bus)
+    controller = LoopController(lambda e: None, bus=bus)
+
+    assert controller._chain_root(file_change, bus) == file_change.id
+
+
+def test_chain_root_walks_multi_hop_controller_lineage(
+    bus: JsonlEventBus,
+) -> None:
+    """A 3-hop controller chain walks back to the watcher root."""
+    root, _ = _seed_chain(bus)
+    hop1 = _controller_resubmit_event(bus, parent_id=root.id, depth=1)
+    hop2 = _controller_resubmit_event(bus, parent_id=hop1.id, depth=2)
+    hop3 = _controller_resubmit_event(bus, parent_id=hop2.id, depth=3)
+    controller = LoopController(lambda e: None, bus=bus)
+
+    assert controller._chain_root(hop3, bus) == root.id
+
+
+def test_chain_root_treats_missing_parent_as_root_f_cap_1(
+    bus: JsonlEventBus,
+) -> None:
+    """F-CAP-1: parent_id present but not on the bus (log-rotated
+    away or partial replay) → walk treats the current cursor as
+    root rather than crashing."""
+    orphan = bus.append(
+        Event(
+            type="file_change",
+            source="controller",
+            data={
+                "path": "x.py",
+                "controller_resubmit": True,
+                "resubmit_origin": "no-such-id-on-bus",
+                "controller_chain_depth": 1,
+            },
+        )
+    )
+    controller = LoopController(lambda e: None, bus=bus)
+
+    assert controller._chain_root(orphan, bus) == orphan.id
+
+
+def test_chain_root_ignores_lineage_on_non_controller_source_f_cap_2(
+    bus: JsonlEventBus,
+) -> None:
+    """F-CAP-2: a watcher / webhook / external producer carrying
+    controller_resubmit=True / resubmit_origin / chain_depth on
+    its data MUST be treated as a root — not walked through."""
+    forged = bus.append(
+        Event(
+            type="file_change",
+            source="github_webhook",
+            data={
+                "path": "x.py",
+                "controller_resubmit": True,
+                "resubmit_origin": "any-id",
+                "controller_chain_depth": 99,
+            },
+        )
+    )
+    controller = LoopController(lambda e: None, bus=bus)
+
+    assert controller._chain_root(forged, bus) == forged.id
+
+
+def test_chain_root_breaks_cycle_f_cap_5(bus: JsonlEventBus) -> None:
+    """F-CAP-5: two controller events with resubmit_origin pointing
+    at each other → visited_set returns on the second visit."""
+    placeholder = bus.append(
+        Event(
+            type="file_change",
+            source="controller",
+            data={
+                "path": "x.py",
+                "controller_resubmit": True,
+                "resubmit_origin": "tbd",
+                "controller_chain_depth": 1,
+            },
+        )
+    )
+    cycle_partner = bus.append(
+        Event(
+            type="file_change",
+            source="controller",
+            data={
+                "path": "x.py",
+                "controller_resubmit": True,
+                "resubmit_origin": placeholder.id,
+                "controller_chain_depth": 2,
+            },
+        )
+    )
+    # Patch placeholder.data to point back at cycle_partner.
+    placeholder.data["resubmit_origin"] = cycle_partner.id
+    # Fake bus.read by replacing the relevant event in-place. The
+    # JsonlEventBus is append-only; for this test we patch the
+    # controller's _find_file_change to return our two-event ring.
+    controller = LoopController(lambda e: None, bus=bus)
+    ring = {placeholder.id: placeholder, cycle_partner.id: cycle_partner}
+    controller._find_file_change = (  # type: ignore[assignment]
+        staticmethod(lambda _bus, eid: ring.get(eid))
+    )
+
+    # Walk must terminate; result is one of the two ids.
+    root = controller._chain_root(cycle_partner, bus)
+    assert root in {placeholder.id, cycle_partner.id}
+
+
+def test_chain_root_breaks_pathologically_deep_acyclic_lineage_f_cap_5(
+    bus: JsonlEventBus,
+) -> None:
+    """F-CAP-5: an acyclic chain longer than MAX_CHAIN_WALK_DEPTH
+    must terminate via the ceiling, not via cycle detection."""
+    cap = LoopController.MAX_CHAIN_WALK_DEPTH
+    root, _ = _seed_chain(bus)
+    deepest = root
+    chain = [root]
+    for depth in range(1, cap + 5):  # 5 past the ceiling
+        deepest = _controller_resubmit_event(
+            bus, parent_id=deepest.id, depth=depth
+        )
+        chain.append(deepest)
+
+    controller = LoopController(lambda e: None, bus=bus)
+
+    # Walking from the deepest cursor should NOT spin forever and
+    # should NOT reach the actual root — it should stop at the
+    # ceiling.
+    result = controller._chain_root(deepest, bus)
+    assert result != root.id
+    # The result is the cursor reached after MAX_CHAIN_WALK_DEPTH
+    # parent hops from `deepest`.
+    assert result == chain[-1 - cap].id
+
+
+def test_resubmit_persists_chain_depth_on_bus(bus: JsonlEventBus) -> None:
+    """The resubmit emits ``controller_chain_depth`` on the bus so
+    analyze can audit chain depth post-hoc."""
+    file_change, agent_response = _seed_chain(bus)
+    seen: list[Event] = []
+    controller = LoopController(seen.append, bus=bus)
+
+    decision = Event(
+        type="human_decision",
+        source="interface",
+        data={
+            "user": 1,
+            "text": f"/correct {agent_response.id[:8]} priority=high",
+        },
+    )
+    controller.on_bus_event(decision, bus)
+
+    assert len(seen) == 1
+    resubmit = seen[0]
+    assert resubmit.data["controller_chain_depth"] == 1
+    # Persisted on the bus, not just on the in-flight event.
+    bus_events = [e for e in bus.read() if e.type == "file_change"]
+    assert any(
+        e.data.get("controller_chain_depth") == 1 for e in bus_events
+    )
+
+
+def test_resubmit_depth_resets_to_one_when_parent_is_non_controller_f_cap_2(
+    bus: JsonlEventBus,
+) -> None:
+    """F-CAP-2: even if a forged github_webhook event carries
+    controller_chain_depth=99, the resubmit emitted from a /correct
+    that picks it up MUST start at depth=1 (this is the first hop
+    on a chain rooted at that forged event)."""
+    forged_path_event = bus.append(
+        Event(
+            type="file_change",
+            source="github_webhook",
+            data={
+                "path": "x.py",
+                "change_type": "review_comment",
+                "controller_chain_depth": 99,
+            },
+        )
+    )
+    response = bus.append(
+        Event(
+            type="agent_response",
+            source="adapter",
+            data={"correlates": forged_path_event.id, "path": "x.py"},
+            dispatch={"agent": "claude_code", "status": "completed"},
+            response={"content": "ok", "requires_human": False},
+        )
+    )
+    seen: list[Event] = []
+    controller = LoopController(seen.append, bus=bus)
+
+    decision = Event(
+        type="human_decision",
+        source="interface",
+        data={"user": 1, "text": f"/correct {response.id[:8]} priority=h"},
+    )
+    controller.on_bus_event(decision, bus)
+
+    assert len(seen) == 1
+    assert seen[0].data["controller_chain_depth"] == 1
+
+
+def test_independent_chains_do_not_share_a_cap(bus: JsonlEventBus) -> None:
+    """chain[A] at cap must not block chain[B]. Each genuine
+    correction starts a fresh chain rooted at a distinct
+    file_change."""
+    file_a, response_a = _seed_chain(bus, path="a.py")
+    file_b, response_b = _seed_chain(bus, path="b.py")
+    seen: list[Event] = []
+    controller = LoopController(seen.append, bus=bus)
+
+    decision_a = Event(
+        type="human_decision",
+        source="interface",
+        data={"user": 1, "text": f"/correct {response_a.id[:8]} p=h"},
+    )
+    decision_b = Event(
+        type="human_decision",
+        source="interface",
+        data={"user": 1, "text": f"/correct {response_b.id[:8]} p=h"},
+    )
+    # Cap chain[a].
+    for _ in range(LoopController.CHAIN_CAP + 1):
+        controller.on_bus_event(decision_a, bus)
+    # chain[b] is independent and must still admit a resubmit.
+    controller.on_bus_event(decision_b, bus)
+
+    chain_a = [e for e in seen if e.data["resubmit_origin"] == file_a.id]
+    chain_b = [e for e in seen if e.data["resubmit_origin"] == file_b.id]
+    assert len(chain_a) == LoopController.CHAIN_CAP
+    assert len(chain_b) == 1
+
+
+def test_chain_counts_evicts_oldest_when_ceiling_reached_f_cap_3(
+    bus: JsonlEventBus,
+) -> None:
+    """F-CAP-3: when _chain_counts exceeds the ceiling, the
+    insertion-order oldest entry is evicted."""
+    controller = LoopController(lambda e: None, bus=bus)
+    # Tighten the ceiling for the test so we don't have to fill 1024.
+    controller.CHAIN_COUNTS_MAX_SIZE = 3
+    # Drive the dict directly through _chain_counts to keep the
+    # test focused on the eviction policy. This mirrors what
+    # _resubmit_for does after the cap check.
+    seeds = [
+        _seed_chain(bus, path=f"f{i}.py")[0] for i in range(4)
+    ]
+    seen: list[Event] = []
+    controller.callback = seen.append
+
+    for idx, seed in enumerate(seeds):
+        # Fabricate an agent_response → /correct path for each seed
+        # so _resubmit_for runs end-to-end.
+        response = bus.append(
+            Event(
+                type="agent_response",
+                source="adapter",
+                data={"correlates": seed.id, "path": f"f{idx}.py"},
+                dispatch={"agent": "claude_code", "status": "completed"},
+                response={"content": "ok", "requires_human": False},
+            )
+        )
+        decision = Event(
+            type="human_decision",
+            source="interface",
+            data={"user": 1, "text": f"/correct {response.id[:8]} p=h"},
+        )
+        controller.on_bus_event(decision, bus)
+
+    # Four distinct chains were touched but the ceiling is 3 → the
+    # first chain (seeds[0]) must have been evicted.
+    assert seeds[0].id not in controller._chain_counts
+    assert len(controller._chain_counts) == 3
+    # The other three are present.
+    for seed in seeds[1:]:
+        assert seed.id in controller._chain_counts
+
+
+def test_restart_resets_in_memory_chain_counts(bus: JsonlEventBus) -> None:
+    """Restart semantics: _chain_counts is in-memory and per-process.
+    A fresh LoopController instance starts with empty counts, so a
+    chain that was at cap pre-restart admits one more resubmit
+    post-restart. The persisted controller_chain_depth on bus
+    events is unaffected (still auditable by analyze)."""
+    file_change, agent_response = _seed_chain(bus)
+    seen_pre: list[Event] = []
+    controller_pre = LoopController(seen_pre.append, bus=bus)
+
+    decision = Event(
+        type="human_decision",
+        source="interface",
+        data={"user": 1, "text": f"/correct {agent_response.id[:8]} p=h"},
+    )
+    # Drive chain[file_change] all the way to cap.
+    for _ in range(LoopController.CHAIN_CAP + 1):
+        controller_pre.on_bus_event(decision, bus)
+    assert len(seen_pre) == LoopController.CHAIN_CAP
+
+    # Simulate a restart: discard the controller and build a new one.
+    seen_post: list[Event] = []
+    controller_post = LoopController(seen_post.append, bus=bus)
+    assert controller_post._chain_counts == {}
+
+    # The post-restart controller admits a fresh resubmit on the
+    # same chain (live counter reset). Persisted depth on bus is
+    # what analyze uses across restarts.
+    controller_post.on_bus_event(decision, bus)
+    assert len(seen_post) == 1
+    assert seen_post[0].data["resubmit_origin"] == file_change.id

@@ -175,6 +175,3 @@ Para agent_response:
 - El usuario entiende el sistema en <10s
 - El usuario identifica decisiones pendientes
 - El usuario puede actuar sin leer logs
-
----
-UI design v2 draft

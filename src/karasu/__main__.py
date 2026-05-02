@@ -47,12 +47,18 @@ from karasu.watcher import FilesystemWatcher
 DEFAULT_CONFIG = Path("karasu.yaml")
 DEFAULT_BUS = Path(".karasu/events.jsonl")
 DEFAULT_SCARS = Path(".karasu/scars/")
-# F6 — anything Karasu writes inside the watched root, plus the two
+# F6 / F11 — anything Karasu writes inside the watched root, plus the
 # transient file types editors leave behind, must stay off the bus by
 # default. Without this the JSONL bus and operator-side ``tee``
 # captures (e.g. ``karasu watch | tee watch.log``) feed back into the
 # watcher and inflate event volume — observed live during the
 # Phase 1C dogfood (issue #25).
+#
+# ``*.tmp.*`` covers Notepad's atomic-write artifacts on Windows:
+# ``<original>.tmp.<PID>.<TS>`` (e.g. ``sample.py.tmp.5296.1777729004615``).
+# The plain ``*.tmp`` pattern does NOT match those because they end
+# in numeric digits, not ``.tmp``. Surfaced live during the Phase 3
+# dogfood (issue #39).
 DEFAULT_IGNORE = (
     ".git",
     "__pycache__",
@@ -61,6 +67,7 @@ DEFAULT_IGNORE = (
     "events.jsonl",
     "*.log",
     "*.tmp",
+    "*.tmp.*",
 )
 
 

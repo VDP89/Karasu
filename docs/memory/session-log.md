@@ -282,6 +282,8 @@ Next step:
 
 ## 2026-05-02 — Phase 3 dogfood validated, F9/F10/F11 filed
 
+> Full bitácora: [`sessions/2026-05-02-phase-3-dogfood.md`](sessions/2026-05-02-phase-3-dogfood.md). The deep dive covers the setup walkthrough, the real-time F9 debugging, the loop-closure moment with Claude's verbatim quote on the priority rewrite, and the lessons learned.
+
 What changed:
 - Dogfood ejecutado en sandbox local Windows (Python 3.13.5, Claude Code 2.1.123, python-telegram-bot 22.7). Sandbox `C:\karasu-phase3-sandbox\` con `karasu.yaml` + bot `@Karasu_dogfood_bot` + `allowed_users: [7509793010]`.
 - Loop chunk 3b validado end-to-end: `/scar priority=high` en Telegram → surface graba Scar + `human_decision` → controller (94 ms después) detecta y emite `file_change` con `controller_resubmit=true` → pipeline aplica `_apply_scar_override` → claude responde con priority=high.

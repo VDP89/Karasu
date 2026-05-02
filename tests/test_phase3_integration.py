@@ -254,8 +254,12 @@ def test_scar_resubmit_uses_latest_agent_response(tmp_path: Path) -> None:
 
 def test_resubmit_cap_holds_under_spammed_corrections(tmp_path: Path) -> None:
     """A spam-/correct script must not drive the dispatcher in an
-    unbounded loop. The cap (``RESUBMIT_CAP=3``) bounds resubmits
-    per originating ``file_change.id``.
+    unbounded loop. The chain cap (``CHAIN_CAP=3``, issue #47)
+    bounds the total resubmits in the chain rooted at the
+    originating ``file_change.id``. Spam at depth 1 (same
+    agent_response /scar'd N times) increments the same counter
+    as a progressing chain, preserving the pre-issue-#47 dogfood
+    behaviour.
     """
     controller, bus, scars, classifier, adapter, _ = _build_stack(tmp_path)
     controller.start()
@@ -273,8 +277,8 @@ def test_resubmit_cap_holds_under_spammed_corrections(tmp_path: Path) -> None:
         responses = [e for e in bus.read() if e.type == "agent_response"]
         original_response = responses[0]
 
-        # Fire RESUBMIT_CAP + 2 corrections.
-        for _ in range(LoopController.RESUBMIT_CAP + 2):
+        # Fire CHAIN_CAP + 2 corrections.
+        for _ in range(LoopController.CHAIN_CAP + 2):
             _record_correction(
                 bus,
                 scars,
@@ -284,8 +288,8 @@ def test_resubmit_cap_holds_under_spammed_corrections(tmp_path: Path) -> None:
             )
 
         # Wait for the cap to be reached. Total dispatches = 1 original
-        # + RESUBMIT_CAP resubmits.
-        expected = 1 + LoopController.RESUBMIT_CAP
+        # + CHAIN_CAP resubmits.
+        expected = 1 + LoopController.CHAIN_CAP
         assert _wait_for(
             lambda: len(adapter.dispatched) >= expected, timeout=5.0
         )
@@ -295,18 +299,21 @@ def test_resubmit_cap_holds_under_spammed_corrections(tmp_path: Path) -> None:
         time.sleep(0.4)
 
         assert len(adapter.dispatched) == expected, (
-            f"expected {expected} dispatches (1 original + cap={LoopController.RESUBMIT_CAP}), "
+            f"expected {expected} dispatches (1 original + cap={LoopController.CHAIN_CAP}), "
             f"got {len(adapter.dispatched)}"
         )
 
-        # The bus shows exactly RESUBMIT_CAP resubmits.
+        # The bus shows exactly CHAIN_CAP resubmits, all at depth 1
+        # of the same chain (spam against the same response).
         resubmits = [
             e
             for e in bus.read()
             if e.type == "file_change"
             and e.data.get("controller_resubmit") is True
         ]
-        assert len(resubmits) == LoopController.RESUBMIT_CAP
+        assert len(resubmits) == LoopController.CHAIN_CAP
+        for r in resubmits:
+            assert r.data["controller_chain_depth"] == 1
     finally:
         controller.stop()
 

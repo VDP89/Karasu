@@ -528,3 +528,38 @@ Impact:
 
 Next step:
 - Audit the hardening PR. If APROBADO, merge. After that, the natural next piece of work is the issue #47 implementation PR (Option B chain cap, design already on main as docs/phase-3-cap-design.md). Phase 3+ archive (issue #5) is essentially closed; remaining items are open-ended follow-ups.
+
+---
+
+## 2026-05-02 (Phase 3+ post-archive) — issue #47 implementation
+
+What changed:
+- Implementation of the chain-cap shape designed in PR #53 (`docs/phase-3-cap-design.md`). Closes issue #47 — the last code-shaped item open from the Phase 3+ archive.
+- `src/karasu/controller/loop.py`:
+  - `RESUBMIT_CAP = 3` → `CHAIN_CAP = 3`. Same magnitude so the Phase 3 dogfood-validated behaviour stays continuous; the new key shape is "chain root" instead of "originating id".
+  - New `MAX_CHAIN_WALK_DEPTH = 64` (~21x the cap) and `CHAIN_COUNTS_MAX_SIZE = 1024` (matches the F-WH-2 dedup ring magnitude).
+  - `_resubmit_counts` / `_resubmit_lock` renamed to `_chain_counts` / `_chain_lock`.
+  - New `_chain_root(file_change, bus)` walks `resubmit_origin` transitively with three layered defences: F-CAP-1 (missing parent → treat current as root), F-CAP-2 (only follow lineage on `source="controller"` events; external sources are roots regardless of which controller_* fields they carry), F-CAP-5 (visited_set + MAX_CHAIN_WALK_DEPTH ceiling, both independent).
+  - `_resubmit_for` walks to the chain root, increments the per-root counter under the lock, and persists `controller_chain_depth` on the new bus event. The new event's depth is `parent_depth + 1` ONLY when the parent is itself a controller event with a valid integer depth; otherwise depth resets to 1 (F-CAP-2 alignment with pseudo-code).
+  - F-CAP-3 eviction: when `_chain_counts` exceeds `CHAIN_COUNTS_MAX_SIZE`, the insertion-order oldest entry is evicted. Logged at INFO. Worst case is one extra shot at a chain whose counter was evicted — same trade-off as F-WH-10 dedup ring overflow.
+- `tests/test_controller.py`:
+  - Existing `test_resubmit_cap_enforced` updated to assert `CHAIN_CAP` and to verify `controller_chain_depth=1` is persisted on each spam-at-depth-1 resubmit (preserves Phase 3 dogfood behaviour).
+  - 11 new tests covering: chain-root walks (self for watcher event; multi-hop controller lineage), F-CAP-1 missing parent, F-CAP-2 ignores lineage on non-controller source, F-CAP-2 depth resets to 1 when parent is non-controller, F-CAP-5 cycle break (via visited_set), F-CAP-5 pathologically-deep acyclic break (via MAX_CHAIN_WALK_DEPTH ceiling), persisted `controller_chain_depth` on bus, independent chains do not share a cap, F-CAP-3 eviction at tightened ceiling=3, restart semantics (`_chain_counts` empty on a fresh controller; chain-at-cap pre-restart admits one more resubmit post-restart).
+- `tests/test_phase3_integration.py`:
+  - `test_resubmit_cap_holds_under_spammed_corrections` updated to assert `CHAIN_CAP` and to verify all spam resubmits carry `controller_chain_depth=1`.
+- 305/305 pass locally (294 prior + 11 new).
+
+Decisions:
+- `CHAIN_CAP = 3` kept the same magnitude as the previous `RESUBMIT_CAP`. The dogfood evidence at 3-of-6 enforcement is still valid because spam-at-depth-1 (the dogfood scenario) increments the same per-chain counter as a progressing chain.
+- Eviction policy: insertion-order oldest. Picked one policy (not "oldest or last-touched" as the design doc listed alternatives) per the PR #53 round-2 NICE-TO-HAVE: "elegir una sola policy de eviction: oldest o last-touched, no ambas alternativas". Insertion-order is simpler than last-touched (no per-access bookkeeping) and matches the F-WH-10 ring's shape.
+- `CHAIN_COUNTS_MAX_SIZE = 1024` matches the dedup ring magnitude and is well above any plausible operator workload.
+- `MAX_CHAIN_WALK_DEPTH = 64` keeps a wide margin over the cap (3) without making forged-deep walk costs measurable in normal cases.
+- The cycle-break test patches `_find_file_change` on the controller instance because `JsonlEventBus` is append-only and we need two events whose `resubmit_origin` fields point at each other (impossible to construct purely through `bus.append` because event ids are not known until after append). The patch only swaps the lookup function — the cycle detection itself is the real code path.
+
+Impact:
+- Issue #47 closes: chunk 4c's auto-handoff is no longer single-hop-only by external policy; it's bounded by construction at CHAIN_CAP=3 hops per chain. F-HANDOFF-4 (cap distributed-loop amplification) is now bounded.
+- Phase 3+ archive (issue #5) is fully closed in terms of code work. Remaining items are all open-ended follow-ups (fetch_card / karasu peers CLI, F-HANDOFF-6 path-existence fallback, persist effective priority on agent_response).
+- Frozen contracts untouched. AgentResponse / F3 / F7 / F8 / surface=sink / single-worker / scar=stored-correction-only / I-001..I-006 / TriggerSource Protocol all preserved. The new `controller_chain_depth` field on file_change.data is the additive schema bump described in the design doc.
+
+Next step:
+- Audit the PR. After accepted + merged, the only items left are the audit-deferred follow-ups; none are blocking.

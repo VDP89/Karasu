@@ -11,7 +11,15 @@ subscription thread that polls the bus and resubmits the originating
 ``/scar`` text. The pipeline still does NOT consume ``human_decision``
 directly — only the controller does — and the resubmit fires through
 the same single worker as the watcher's regular events. No
-parallelism, no retries beyond the bounded resubmit cap.
+parallelism, no retries beyond the bounded chain cap.
+
+Issue #47 — chain cap with origin-aware tracking. Resubmits are
+bounded per chain (walking ``resubmit_origin`` transitively to
+the root), not per single originating id, so that distributed
+chains where each ``/scar`` produces a fresh ``agent_response``
+correlated to a new ``file_change.id`` cannot extend without
+limit. See ``docs/phase-3-cap-design.md`` for the design and the
+F-CAP-1..F-CAP-5 failure modes.
 
 See ``docs/phase-3-loop-controller.md`` for the contract.
 """
@@ -52,12 +60,31 @@ class LoopController:
     DEFAULT_QUEUE_SIZE = 1024
     _WORKER_POLL_INTERVAL = 0.1
     _BUS_POLL_INTERVAL = 0.5
-    # Cap resubmits per originating file_change id. Phase 1 had no
-    # retry semantics; chunk 3b introduces one bounded reaction so a
-    # human spamming /scar (or a misbehaving surface) cannot drive
-    # the dispatcher in an unbounded loop. Phase 3+ may extend the
-    # key shape (e.g. (id, scar_id)) once we have escalation events.
-    RESUBMIT_CAP = 3
+    # Chain cap with origin-aware tracking (issue #47, design in
+    # docs/phase-3-cap-design.md).
+    #
+    # CHAIN_CAP bounds the TOTAL number of resubmits that can occur
+    # in a chain rooted at a single originating file_change. Spam at
+    # depth 1 (same agent_response /scar'd N times) and progressing
+    # chains both increment the SAME counter, both bounded here.
+    # That preserves the Phase 3 dogfood behaviour
+    # (RESUBMIT_CAP=3 was per-originating-id and bounded the same
+    # spam case at the same magnitude).
+    #
+    # MAX_CHAIN_WALK_DEPTH bounds the walk cost (F-CAP-5). A forged
+    # or cyclic resubmit_origin lineage cannot otherwise spin
+    # _chain_root forever or burn CPU on every dispatch. 64 hops is
+    # ~21x the cap — wide margin for legitimate use, narrow enough
+    # to fail fast on adversarial input.
+    #
+    # CHAIN_COUNTS_MAX_SIZE bounds the in-memory dict growth
+    # (F-CAP-3). When the dict exceeds the ceiling the oldest entry
+    # (insertion-order) is evicted; the operator gets one fresh shot
+    # at a chain whose counter was evicted — same trade-off as the
+    # F-WH-2 dedup ring.
+    CHAIN_CAP = 3
+    MAX_CHAIN_WALK_DEPTH = 64
+    CHAIN_COUNTS_MAX_SIZE = 1024
 
     def __init__(
         self,
@@ -76,8 +103,13 @@ class LoopController:
         self._bus_thread: threading.Thread | None = None
         self._bus_stopping: threading.Event | None = None
         self._bus_reader: JsonlTailReader | None = None
-        self._resubmit_counts: dict[str, int] = {}
-        self._resubmit_lock = threading.Lock()
+        # Chain root id → resubmit count for that chain. Bounded
+        # by CHAIN_COUNTS_MAX_SIZE with insertion-order eviction
+        # when full. In-memory and per-process — does NOT survive
+        # restart by design (live counter; persisted depth on bus
+        # events lets analyze audit chain depth across restarts).
+        self._chain_counts: dict[str, int] = {}
+        self._chain_lock = threading.Lock()
         # Trigger sources (chunk 3c). Each source's start() runs after
         # the worker + bus subscription are up; stop() runs first on
         # shutdown so producers stop emitting before the worker drains.
@@ -359,10 +391,17 @@ class LoopController:
     def _resubmit_for(self, agent_response: Event, bus: JsonlEventBus) -> None:
         """Resubmit the file_change correlated with ``agent_response``.
 
-        Cap is per-originating-id. Past the cap, log and skip — the
-        surface already wrote the human_decision audit record on the
-        bus, so the operator's correction is preserved even when the
-        controller refuses to fire it again.
+        Cap is per-chain (issue #47, Option B). Walks the resubmit
+        lineage back to the chain root; the counter on that root
+        bounds the total resubmits in the entire chain. Past the
+        cap, log and skip — the surface already wrote the
+        human_decision audit record on the bus, so the operator's
+        correction is preserved even when the controller refuses
+        to fire it again.
+
+        New resubmit events persist ``controller_chain_depth`` on
+        ``data`` so analyze can audit chain depth across restarts
+        even though the live counter is in-memory only.
         """
         correlates_id = agent_response.data.get("correlates")
         if not correlates_id:
@@ -379,17 +418,47 @@ class LoopController:
                 correlates_id,
             )
             return
-        with self._resubmit_lock:
-            count = self._resubmit_counts.get(original.id, 0)
-            if count >= self.RESUBMIT_CAP:
+        root_id = self._chain_root(original, bus)
+        with self._chain_lock:
+            count = self._chain_counts.get(root_id, 0)
+            if count >= self.CHAIN_CAP:
                 _log.warning(
-                    "controller resubmit: cap (%d) reached for "
-                    "file_change %s; skipping",
-                    self.RESUBMIT_CAP,
-                    original.id,
+                    "controller resubmit: chain cap (%d) reached for "
+                    "chain root %s; skipping",
+                    self.CHAIN_CAP,
+                    root_id,
                 )
                 return
-            self._resubmit_counts[original.id] = count + 1
+            # F-CAP-3: bounded eviction. When the dict exceeds the
+            # ceiling, evict the oldest entry (insertion order).
+            # Worst case post-eviction: a /scar lands on the evicted
+            # chain root and the operator gets one fresh shot —
+            # same trade-off as the F-WH-10 dedup ring overflow.
+            if (
+                root_id not in self._chain_counts
+                and len(self._chain_counts) >= self.CHAIN_COUNTS_MAX_SIZE
+            ):
+                evicted = next(iter(self._chain_counts))
+                del self._chain_counts[evicted]
+                _log.info(
+                    "controller chain counts: evicted oldest entry %s "
+                    "(ceiling=%d)",
+                    evicted,
+                    self.CHAIN_COUNTS_MAX_SIZE,
+                )
+            self._chain_counts[root_id] = count + 1
+
+        # F-CAP-2: only trust controller_chain_depth on events the
+        # controller itself emitted. For any other source the field
+        # is untrusted input and depth resets to 1 (this resubmit is
+        # the first hop on a chain rooted at ``original``).
+        if (
+            original.source == "controller"
+            and isinstance(original.data.get("controller_chain_depth"), int)
+        ):
+            new_depth = original.data["controller_chain_depth"] + 1
+        else:
+            new_depth = 1
 
         new_event = bus.append(
             Event(
@@ -399,10 +468,49 @@ class LoopController:
                     **original.data,
                     "controller_resubmit": True,
                     "resubmit_origin": original.id,
+                    "controller_chain_depth": new_depth,
                 },
             )
         )
         self.submit(new_event)
+
+    def _chain_root(self, file_change: Event, bus: JsonlEventBus) -> str:
+        """Walk ``resubmit_origin`` back to the chain root id.
+
+        Defences:
+
+        - F-CAP-1: missing parent (log-rotated away or partial
+          replay) → treat the current cursor as root and stop.
+        - F-CAP-2: only follow lineage on ``source="controller"``
+          events with ``controller_resubmit=True``. External
+          sources can carry ``controller_resubmit`` /
+          ``resubmit_origin`` / ``controller_chain_depth`` as
+          untrusted strings and we MUST NOT walk through them.
+        - F-CAP-5: bounded walk via ``visited`` (cycle break)
+          AND ``MAX_CHAIN_WALK_DEPTH`` (forged-deep-lineage
+          break). On either trip, treat the current cursor as
+          root.
+        """
+        cursor = file_change
+        visited: set[str] = set()
+        for _ in range(self.MAX_CHAIN_WALK_DEPTH):
+            if cursor.id in visited:
+                return cursor.id  # F-CAP-5: cycle detected
+            visited.add(cursor.id)
+            if cursor.source != "controller":
+                return cursor.id  # F-CAP-2
+            if not cursor.data.get("controller_resubmit"):
+                return cursor.id
+            parent_id = cursor.data.get("resubmit_origin")
+            if not isinstance(parent_id, str) or not parent_id:
+                return cursor.id
+            parent = self._find_file_change(bus, parent_id)
+            if parent is None:
+                return cursor.id  # F-CAP-1: parent log-rotated away
+            cursor = parent
+        # F-CAP-5: walk depth ceiling reached. Treat the deepest
+        # reached cursor as root rather than continuing forever.
+        return cursor.id
 
     @staticmethod
     def _find_file_change(

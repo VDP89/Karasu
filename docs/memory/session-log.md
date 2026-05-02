@@ -625,3 +625,27 @@ Impact:
 
 Next step:
 - Audit the PR. After merge, one follow-up remains: persist effective priority on agent_response.data (Phase 3 audit, non-blocking).
+
+---
+
+## 2026-05-02 (Phase 3+ post-archive) — persist effective priority on agent_response
+
+What changed:
+- Audit-deferred follow-up from the Phase 3 audit. The agent_response event now carries the EFFECTIVE priority (post any scar / classifier override) on `data.priority` so an operator inspecting `events.jsonl` post-hoc can audit "what priority did this dispatch run at?" without cross-referencing the originating file_change.
+- `src/karasu/router/dispatcher.py`:
+  - `Dispatcher.dispatch` now sets `data["priority"] = request.priority` on the emitted agent_response. Additive schema bump; old consumers that ignore the field continue to work.
+- `tests/test_router.py` — 3 new tests: priority="high" persisted; priority defaults to "normal" when absent on the file_change; post-scar-override priority is what reaches both the adapter AND the agent_response (no audit-trail divergence).
+- 335/335 pass locally (332 prior + 3 new).
+
+Decisions:
+- Persist the EFFECTIVE priority (post-override), not the original classifier-assigned value. The whole point of the audit follow-up is to know what the adapter actually saw; the pre-override value lives on the originating file_change already.
+- Additive schema bump on agent_response.data, not on the dispatch / response sub-dicts. Priority is a request-side attribute (what the dispatcher sent the adapter), so it lives next to `correlates` and `path` in `data`. Keeps the dispatch dict purely about adapter outcome (agent / status / trust_level) and the response dict about content.
+- No default value populated when the field is absent on consumer reads — operators reading agent_response.data["priority"] of an old (pre-this-PR) event will get a KeyError, which is the right signal that the field is missing and the audit trail is incomplete for that event. A silent default would mask the gap.
+
+Impact:
+- Phase 3 audit's last queued NICE-TO-HAVE is closed.
+- Combined with the controller_chain_depth field landed in #57, agent_response and resubmitted file_change events now carry enough metadata for analyze to reconstruct the full dispatch story (priority + chain depth + correlation) post-hoc, even across restarts.
+- Frozen contracts untouched.
+
+Next step:
+- Audit the PR. After merge, the only items left are operational (controlled dogfood of chunk 4c) or speculative future enhancements (git-tree-aware probe, fetch_card retry). No code work blocking.

@@ -17,6 +17,7 @@ Phase 3: COMPLETED + DOGFOOD-VALIDATED + AUDIT-ACCEPTED — chunks 3a + 3b + 3c 
 - Cross-platform ignore matching (forward-slash normalization) ✔
 - Debounce per `(path, change_type)` with 250 ms default ✔
 - Dispatcher suppresses `agent_response` when no adapter handles ✔
+- Dispatcher persists effective priority on `agent_response.data` ✔ — additive schema bump (Phase 3 audit follow-up). The post-scar-override priority that actually reached the adapter is recorded so `analyze` can audit dispatch priority post-hoc without cross-referencing the originating `file_change`.
 - Real `ClaudeCodeAdapter` end-to-end via `claude -p` ✔
 - Cross-platform CLI shim resolution via `shutil.which` ✔
 - `dispatch_on` per classifier rule + `code_change` excludes `deleted` by default ✔
@@ -99,8 +100,6 @@ follow-up (#58) merged; chunk 4c F-HANDOFF-6 path fallback
 
 Remaining items are open-ended, non-blocking follow-ups:
 
-- Persist effective priority on agent_response.data
-  (deferred from Phase 3 audit).
 - Dogfood controlado de chunk 4c con un PR real a
   trust_level=1 — operativo, no código (requiere computadora
   para correr karasu serve + GitHub webhook + monitoreo bus).

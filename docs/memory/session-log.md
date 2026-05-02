@@ -415,3 +415,32 @@ Impact:
 
 Next step:
 - Audit chunk 4b PR. If accepted, merge. Then chunk 4c (review-comment auto-handoff) becomes the next candidate, gated on issue #47 outline AND NICE-TO-HAVE #3 (startup warning) implementation.
+
+---
+
+## 2026-05-02 (Phase 3+ chunk 4c gates) — issue #47 cap-design outline + NICE-TO-HAVE #3 startup warning
+
+What changed:
+- Both chunk 4c hard pre-reqs opened in parallel branches.
+- Gate 1 — `docs/issue-47-cap-shape` branch: new `docs/phase-3-cap-design.md` (~310 LOC) picks Option B (chain cap with origin-aware tracking via `controller_chain_depth` field on `file_change.data`). `_chain_root()` walks `resubmit_origin` transitively; `_chain_counts[root_id]` is keyed by chain root, not by per-file id. Documents F-CAP-1..F-CAP-4 + test sketch + frozen-contract additivity. PR #53 open, awaiting audit.
+- Gate 2 — `feat/trust-startup-warning` branch:
+  - `src/karasu/adapters/base.py` — module-level `AUTONOMOUS_TRUST_LEVEL = 2` constant + `_log = logging.getLogger(__name__)`. `AgentAdapter.__init__` emits a structured `logging.WARNING` whenever `trust_level >= AUTONOMOUS_TRUST_LEVEL`. Message names the adapter, the trust level, and points at `docs/local-dogfood.md "Trust gradient — what trust_level actually does in production"`.
+  - `src/karasu/__main__.py` — new `_announce_autonomous_adapters(adapters)` helper. Filters adapters by trust >= AUTONOMOUS_TRUST_LEVEL; if any, prints a loud `⚠ trust gradient: adapter(s) [name(trust=N), ...] will mutate operator state without per-call approval.` banner to stderr once per startup. Wired into both `cmd_watch` and `cmd_serve`. Returns silently on empty / sub-threshold adapter lists.
+  - `tests/test_trust_startup_warning.py` — 11 new tests:
+    - Layer 1 (logging warning): trust=2 / trust=3 emit a WARNING on `karasu.adapters.base`; trust=0 / trust=1 stay silent; message references `local-dogfood.md` + "Trust gradient" anchor; `AUTONOMOUS_TRUST_LEVEL == 2` pinned.
+    - Layer 2 (stderr banner): silent when no autonomous adapter present, loud listing autonomous-only by `name(trust=N)` (sub-threshold adapters omitted), every autonomous adapter listed, runbook anchor present, empty list silent.
+- Full suite: 267/267 pass locally (256 prior + 11 new).
+
+Decisions:
+- NICE-TO-HAVE #3 promoted from doc-only mitigation to hard chunk-4c pre-req per the Phase 3+ pre-mortem audit. The chunk-4c combination is the trigger: auto-handoff at trust >= 2 turns prompt injection from PR comments into autonomous code edits, so operator MUST get visible feedback at startup, not buried in a runbook.
+- Two layers (init log + startup banner) on purpose. Init log is for structured collectors / audit trails; banner is for the human running `karasu watch` interactively. They are tested independently so a future refactor can't silently drop either.
+- Banner lives in `__main__` (CLI entry point), not in the library, because adapters constructed by tests / SDK consumers should not pollute their stderr. Libraries get the WARNING via the standard `logging` module; CLI users get the banner on top.
+- `_FakeAdapter(AgentAdapter)` for test isolation — concrete `dispatch` raises `NotImplementedError`; only `__init__` runs in the trust-warning tests. Keeps the test file independent of `ClaudeCodeAdapter` config requirements.
+
+Impact:
+- Both chunk-4c hard pre-reqs are now in flight. PR #53 (cap-design) and the trust-warning PR are independent and can land in any order.
+- No change to AgentResponse, F3, F7, F8, surface contract, single-worker invariant. The init warning is observability-only; the banner is a stderr-only side-effect of CLI startup.
+- Trust gradient is now pinned at the type level (`AUTONOMOUS_TRUST_LEVEL`), at the runtime level (`logging.WARNING`), at the operator level (stderr banner), and at the doc level (`docs/local-dogfood.md`). A future contributor moving the bar surfaces the change as a visible diff in the dedicated test.
+
+Next step:
+- Audit both gate PRs. After both merge, open `feat/review-comment-handoff` (chunk 4c). Phase 3+ archive (issue #5) is essentially closed after 4c.

@@ -15,6 +15,8 @@ Failure-mode coverage per ``docs/phase-3-plus-pre-mortem.md`` § 4c:
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from karasu.adapters.base import AgentRequest
@@ -155,21 +157,24 @@ def test_body_over_cap_is_truncated_with_marker() -> None:
     builder = PromptBuilder(body_cap_bytes=64)
     body = "a" * 1000
     prompt = builder.build(_request(metadata={"github_body": body}))
-    assert "[truncated, original was 1000 bytes]" in prompt
+    assert "[truncated, original was 1000 bytes / 1000 chars]" in prompt
     # Cap sliced 64 bytes; the rest never reached the prompt.
+    # No backticks in the body, so the fence stays at the 3-backtick
+    # minimum.
     inside_fence = prompt.split("```")[1]
     assert len(inside_fence.encode("utf-8").split(b"[truncated")[0]) <= 70
 
 
-def test_truncation_marker_quotes_original_byte_count_not_char_count() -> None:
-    """For a multi-byte UTF-8 input we want the BYTE count in the
+def test_truncation_marker_uses_bytes_as_canonical_metric() -> None:
+    """For a multi-byte UTF-8 input the BYTE count must be in the
     marker so an operator can audit truncation against the cap they
-    configured (which is also in bytes)."""
+    configured (which is also in bytes). Hardening NICE-TO-HAVE
+    from PR #55 audit: also include chars for human readability."""
     builder = PromptBuilder(body_cap_bytes=8)
     # 10 chars × 3 bytes per char (CJK) = 30 bytes.
     body = "中" * 10
     prompt = builder.build(_request(metadata={"github_body": body}))
-    assert "original was 30 bytes" in prompt
+    assert "original was 30 bytes / 10 chars" in prompt
 
 
 def test_default_cap_is_4096_bytes() -> None:
@@ -191,7 +196,64 @@ def test_author_over_cap_is_truncated_with_marker() -> None:
             metadata={"github_body": "x", "github_author": "a" * 100}
         )
     )
-    assert "[truncated, original was 100 bytes]" in prompt
+    assert "[truncated, original was 100 bytes / 100 chars]" in prompt
+
+
+# ---------------------------------------------------------------------------
+# F-HANDOFF-1 hardening — dynamic fence length (PR #55 audit follow-up)
+# ---------------------------------------------------------------------------
+
+
+def test_fence_is_three_backticks_when_body_has_none() -> None:
+    """The CommonMark / GitHub Markdown minimum for a fenced block."""
+    builder = PromptBuilder()
+    prompt = builder.build(
+        _request(metadata={"github_body": "no backticks here"})
+    )
+    assert "```\nno backticks here\n```" in prompt
+
+
+def test_fence_grows_when_body_contains_triple_backticks() -> None:
+    """Reviewers commonly paste their own code blocks with ``` in PR
+    comments. A naive triple-backtick fence is closed prematurely
+    by the inner block. The outer fence must be one longer than
+    the longest backtick run inside the body, so the inner ``` are
+    unambiguously body content."""
+    builder = PromptBuilder()
+    body = "look:\n```python\nprint('x')\n```\n"
+    prompt = builder.build(_request(metadata={"github_body": body}))
+    # The body is preserved verbatim (the inner ``` survive as
+    # body, not as fence delimiters).
+    assert body in prompt
+    # The outer fence is 4 backticks. Find its runs in the prompt.
+    runs_of_4 = re.findall(r"(?<!`)`{4}(?!`)", prompt)
+    assert len(runs_of_4) == 2  # opening and closing, exactly
+
+
+def test_fence_grows_to_cover_longest_run_in_body() -> None:
+    """Body with a 4-backtick run → 5-backtick fence."""
+    builder = PromptBuilder()
+    body = "edge case: ````nested```` block"
+    prompt = builder.build(_request(metadata={"github_body": body}))
+    assert "`````\n" in prompt
+
+
+def test_fence_handles_pathological_long_run() -> None:
+    """Body with 9 contiguous backticks → 10-backtick fence."""
+    builder = PromptBuilder()
+    body = "wild: " + "`" * 9
+    prompt = builder.build(_request(metadata={"github_body": body}))
+    assert "`" * 10 + "\n" in prompt
+
+
+def test_fence_appears_exactly_twice() -> None:
+    """One opening fence, one closing fence. A regression that adds
+    an extra fence (or drops the closing one) would let the body
+    leak past the fence boundary."""
+    builder = PromptBuilder()
+    body = "trivial body"
+    prompt = builder.build(_request(metadata={"github_body": body}))
+    assert prompt.count("```") == 2
 
 
 # ---------------------------------------------------------------------------

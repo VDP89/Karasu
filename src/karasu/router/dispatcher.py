@@ -52,6 +52,12 @@ class Dispatcher:
         # widen the AgentRequest schema for every new source. The
         # named fields (classification, path, priority) stay on the
         # request for back-compat; metadata is the new escape hatch.
+        #
+        # SHALLOW COPY BY DESIGN. event.data values today are JSON
+        # scalars / collections; a top-level mutation by an adapter
+        # cannot reach the bus event. If a future source carries
+        # nested mutable state inside data, this needs revisiting
+        # (likely with a deep copy or an immutable view).
         request = AgentRequest(
             classification=classification,
             path=path,

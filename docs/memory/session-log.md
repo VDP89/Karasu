@@ -500,3 +500,31 @@ Impact:
 
 Next step:
 - Audit chunk 4c PR. After accepted + merged, the Phase 3+ archive (issue #5) is essentially closed; remaining items (auto-installation of git hooks, additional GitHub event types, A2A negotiation) are open-ended follow-ups.
+
+---
+
+## 2026-05-02 (Phase 3+ chunk 4c hardening) — three NICE-TO-HAVE absorbed
+
+What changed:
+- Audit on PR #55 returned APROBADO with no REQUERIDOS but three NICE-TO-HAVE follow-ups. All three landed as a single ~30-LOC hardening PR before any new chunk opened.
+- `src/karasu/adapters/prompt_builder.py`:
+  - `_fence_for(body)` — dynamic fence length per CommonMark / GitHub Markdown nested-fence rule. Scans the body for the longest run of backticks; opens with one more (minimum 3). A reviewer's inner ``` blocks survive as body content instead of prematurely closing the outer fence. Hardens F-HANDOFF-1 in the realistic case where the comment body itself contains code blocks.
+  - `_truncate_with_marker` now emits `[truncated, original was N bytes / M chars]`. Bytes remain the canonical metric (the cap is in bytes); chars are added for human readability.
+- `src/karasu/router/dispatcher.py` — inline comment on the `dict(event.data)` line documenting "SHALLOW COPY BY DESIGN" with the rationale and the trigger that would force a revisit (nested mutable state on a future source).
+- `tests/test_claude_prompt_builder.py`:
+  - Two existing tests updated to assert the new marker format.
+  - One renamed (`test_truncation_marker_quotes_original_byte_count_not_char_count` → `test_truncation_marker_uses_bytes_as_canonical_metric`) since both metrics now appear; the intent is still to pin "bytes is the canonical unit".
+  - Five new fence tests: 3-backtick fence when body has no backticks; fence grows to 4 when body contains a 3-backtick run with the inner block surviving verbatim; fence grows to 5 with a 4-run; pathological 9-run → 10-backtick fence; fence appears exactly twice.
+- 294/294 pass locally (289 prior + 5 new fence tests; 3 truncation-marker tests updated, no net count change there).
+
+Decisions:
+- The fence-length scaling is the canonical Markdown approach (not backslash-escape). Operators reading the prompt see the body verbatim; inner ``` blocks stay legible. Escaping would mangle code in comments, which is the worst trade for this surface.
+- Bytes-and-chars in the marker, not chars-only or bytes-only. Bytes is the canonical metric (matches the cap configuration); chars is human-friendly. Keeping both keeps everyone's audit story honest.
+- The shallow-copy comment in dispatcher.py is scoped narrowly: today's `event.data` values are JSON-shaped scalars / collections, so `dict(event.data)` is sufficient to prevent adapter mutation reaching the bus. The comment names the trigger that would force a deeper copy (nested mutable state on a future source).
+
+Impact:
+- Chunk 4c is now hardened against the realistic case where a reviewer pastes their own code block. PR comments containing ``` are no longer a silent prompt-injection vector.
+- Frozen contracts untouched.
+
+Next step:
+- Audit the hardening PR. If APROBADO, merge. After that, the natural next piece of work is the issue #47 implementation PR (Option B chain cap, design already on main as docs/phase-3-cap-design.md). Phase 3+ archive (issue #5) is essentially closed; remaining items are open-ended follow-ups.

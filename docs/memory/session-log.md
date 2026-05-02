@@ -563,3 +563,38 @@ Impact:
 
 Next step:
 - Audit the PR. After accepted + merged, the only items left are the audit-deferred follow-ups; none are blocking.
+
+---
+
+## 2026-05-02 (Phase 3+ post-archive) — A2A outbound discovery (fetch_card + karasu peers)
+
+What changed:
+- Audit-deferred follow-up from chunk 4b. Symmetric counterpart to the inbound `/.well-known/agent-card.json` endpoint: an operator can now read a peer agent's card without a third-party HTTP client.
+- New `src/karasu/a2a/fetch.py`:
+  - `fetch_card(base_url, *, timeout=DEFAULT_FETCH_TIMEOUT)` — stdlib-only (`urllib.request`). Returns the raw decoded JSON dict; the caller decides whether to reconstruct an `AgentCard`.
+  - `_resolve_card_url` appends `/.well-known/agent-card.json` if absent; preserves an explicit suffix; strips a trailing slash before appending.
+  - `AgentCardFetchError` covers all surfaced failures (HTTP non-2xx, network error, invalid JSON, non-object top-level). One exception class instead of three urllib classes for the caller.
+  - `DEFAULT_FETCH_TIMEOUT = 5.0`. Zero / negative timeout → `ValueError`.
+  - `AGENT_CARD_PATH = "/.well-known/agent-card.json"` re-exported.
+- `src/karasu/a2a/__init__.py` re-exports `fetch_card`, `AgentCardFetchError`, `DEFAULT_FETCH_TIMEOUT`, `AGENT_CARD_PATH`.
+- `src/karasu/__main__.py`:
+  - New `cmd_peers(args)` — formats the card by default; `--json` prints raw JSON; `--timeout` configures the HTTP timeout. Read-only (no bus access, no side effects).
+  - Wired into `build_parser` as `karasu peers <url> [--timeout N] [--json]`.
+  - Module docstring updated to list `karasu peers`.
+- `tests/test_a2a_fetch.py` (NEW) — 17 tests: URL resolution (3); end-to-end against the real chunk-4b webhook source with a card configured (3, including explicit-suffix and 404-without-card paths); error paths via mocked `urlopen` (5); timeout default pin + zero/negative guard (2); CLI tests (4 — formatted output, --json, fetch failure → exit 2, --timeout passed through).
+- 322/322 pass locally (305 prior + 17 new).
+
+Decisions:
+- Stdlib-only on purpose. Adding `requests` for one HTTP GET would be a dependency footprint mismatch with the receiver (which also uses stdlib). `urllib.request` is enough and gives per-call timeout + structured exceptions.
+- Return the raw JSON dict, not a reconstructed `AgentCard` dataclass. The CLI's job is to render; programmatic consumers can call `from_dict` later if needed. The wire format uses camelCase (e.g. `pushNotifications`); the dataclass uses snake_case. Reconstructing here would force a second snake/camel mapping that nothing today consumes.
+- One exception class (`AgentCardFetchError`) wrapping all failure modes. Operators (and tests) catch one type instead of `URLError` / `HTTPError` / `JSONDecodeError` / custom validation errors. Each wrapped exception preserves `__cause__` for postmortem.
+- Zero / negative timeout raises `ValueError` rather than relying on urllib's "treat as no timeout" behaviour. Operators typing `--timeout 0` thinking it means "no timeout" would otherwise get a silently-hanging fetch; fail-fast is safer for an outbound HTTP call.
+- `cmd_peers` exits 2 (not 1) on fetch failure — same convention as `cmd_serve` / other CLI fail-fast paths in this repo.
+
+Impact:
+- Karasu can now both publish (chunk 4b) AND consume A2A AgentCards. The discovery loop is symmetric end-to-end.
+- No new runtime dependency. No bus mutation. No surface change.
+- Frozen contracts untouched: AgentResponse, F3, F7, F8, surface=sink, single-worker, scar-stored-only, I-001..I-006, TriggerSource Protocol all preserved.
+
+Next step:
+- Audit the PR. After merge, two follow-ups remain (F-HANDOFF-6 path-existence fallback, persist effective priority on agent_response.data); none blocking.

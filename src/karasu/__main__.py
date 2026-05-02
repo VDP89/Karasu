@@ -9,6 +9,7 @@ Subcommands:
 * ``karasu chat``    — start the Telegram interface.
 * ``karasu hook``    — run as a git-hook trigger source (one-shot).
 * ``karasu serve``   — run the GitHub webhook receiver (Phase 3+ chunk 4a).
+* ``karasu peers``   — fetch a peer agent's A2A AgentCard (outbound discovery).
 """
 
 from __future__ import annotations
@@ -602,6 +603,56 @@ def cmd_chat(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_peers(args: argparse.Namespace) -> int:
+    """Fetch and print a peer agent's A2A AgentCard.
+
+    Outbound discovery counterpart to ``karasu serve``'s inbound
+    ``/.well-known/agent-card.json``. No bus access, no side
+    effects — read-only HTTP GET against the peer.
+    """
+    from karasu.a2a import AgentCardFetchError, fetch_card
+
+    try:
+        card = fetch_card(args.url, timeout=args.timeout)
+    except AgentCardFetchError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    if args.json:
+        print(json.dumps(card, indent=2))
+        return 0
+
+    name = card.get("name", "<unknown>")
+    version = card.get("version", "<unknown>")
+    print(f"name:        {name}")
+    print(f"version:     {version}")
+    description = card.get("description")
+    if description:
+        print(f"description: {description}")
+    url = card.get("url")
+    if url:
+        print(f"url:         {url}")
+
+    capabilities = card.get("capabilities") or {}
+    print("capabilities:")
+    print(f"  streaming:         {capabilities.get('streaming', False)}")
+    print(
+        f"  pushNotifications: "
+        f"{capabilities.get('pushNotifications', False)}"
+    )
+
+    skills = card.get("skills") or []
+    print(f"skills ({len(skills)}):")
+    for skill in skills:
+        skill_id = skill.get("id", "?")
+        skill_name = skill.get("name", "")
+        print(f"  - {skill_id}: {skill_name}")
+        skill_desc = (skill.get("description") or "").strip()
+        if skill_desc:
+            print(f"      {skill_desc}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="karasu", description=__doc__)
     parser.add_argument("--version", action="version", version=f"karasu {__version__}")
@@ -647,6 +698,38 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1", help="HTTP bind host")
     serve.add_argument("--port", type=int, default=8080, help="HTTP bind port")
     serve.set_defaults(func=cmd_serve)
+
+    from karasu.a2a import DEFAULT_FETCH_TIMEOUT
+
+    peers = sub.add_parser(
+        "peers",
+        help=(
+            "fetch and print a peer agent's A2A AgentCard "
+            "(outbound discovery)"
+        ),
+    )
+    peers.add_argument(
+        "url",
+        help=(
+            "base URL of the peer agent (e.g. http://127.0.0.1:8080); "
+            "/.well-known/agent-card.json is appended automatically "
+            "if absent"
+        ),
+    )
+    peers.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_FETCH_TIMEOUT,
+        help=(
+            f"HTTP timeout in seconds (default: {DEFAULT_FETCH_TIMEOUT})"
+        ),
+    )
+    peers.add_argument(
+        "--json",
+        action="store_true",
+        help="print the raw card JSON instead of formatted text",
+    )
+    peers.set_defaults(func=cmd_peers)
 
     return parser
 

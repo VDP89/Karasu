@@ -13,9 +13,14 @@ adapter prompt builder.
 ## HARD pre-reqs (BOTH must land before this chunk opens)
 
 ```text
-1. Issue #47 (cap-local-per-origin) — at least an outline plan
-   on a Phase 3+ design extension to the cap shape. Without it,
-   F-HANDOFF-4 (cap distributed-loop amplification) is unbounded.
+1. Issue #47 (cap-local-per-origin) — DESIGN OUTLINE LANDED.
+   See docs/phase-3-cap-design.md for the chosen shape (chain
+   cap with origin-aware tracking, CHAIN_CAP=3 default). Issue
+   #47 stays open as the implementation tracker; closes when
+   the focused PR implementing the design lands.
+   STATUS: design merged; implementation can ship in parallel
+   with chunk 4c or before — chunk 4c only requires the design
+   to be in place so it knows the cap shape it must respect.
 
 2. NICE-TO-HAVE #3 (startup warning when adapter trust_level >= 2)
    — implementation, not just docs. Must land on main BEFORE
@@ -24,10 +29,11 @@ adapter prompt builder.
    code edits; operator MUST get visible feedback at startup.
    Promoted from "recommendation" to hard pre-req in the Phase 3+
    pre-mortem audit.
+   STATUS: pending. ~50 LOC + tests, ~1h work.
 ```
 
-If both pre-reqs are not yet met, do them first. They are small
-focused PRs; either can land in any order relative to the other.
+If pre-req 2 has not yet landed, do it first. Pre-req 1 is now
+satisfied as design; the implementation PR is independent of 4c.
 
 ## Scope (chunk 4c)
 

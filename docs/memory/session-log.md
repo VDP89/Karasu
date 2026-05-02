@@ -469,3 +469,34 @@ Impact:
 
 Next step:
 - Re-audit on PR #54. If APROBADO, merge. PR #53 audit awaited in parallel. Once both land on main, open `feat/review-comment-handoff` (chunk 4c).
+
+---
+
+## 2026-05-02 (Phase 3+ chunk 4c) — review-comment auto-handoff
+
+What changed:
+- Both chunk-4c gates merged to main: PR #54 (e43808a, gate 2 trust-warning) and PR #53 (6de0c84, gate 1 cap-design outline). Cap-design audit absorbed 3 REQUERIDOS in round 2 (F-CAP-5 cycle/forged-deep lineage, F-CAP-2 source=controller alignment, restart semantics) + 1 NICE-TO-HAVE (eviction sketch).
+- New branch `feat/review-comment-handoff` opened off main with both gates landed.
+- `src/karasu/router/dispatcher.py` — `Dispatcher.dispatch` now copies `event.data` into `AgentRequest.metadata` so adapters see source-specific fields (`github_body`, `github_author`, `github_pr`, `github_repo`) without widening the named schema. The metadata dict is a copy, not a reference, so adapters cannot mutate the bus event mid-dispatch.
+- `src/karasu/adapters/prompt_builder.py` (NEW) — `PromptBuilder` with two branches: default (legacy one-line dispatch summary, identical to pre-chunk-4c) and github (fenced + USER-DATA-labelled + capped). Detection by presence of `metadata["github_body"]`. Constants `DEFAULT_BODY_CAP_BYTES=4096`, `DEFAULT_AUTHOR_CAP_BYTES=256`. `_truncate_with_marker` slices on UTF-8 bytes (not code points) and appends `[truncated, original was N bytes]` on overflow.
+- `src/karasu/adapters/claude_code.py` — `ClaudeCodeAdapter` now accepts an optional `prompt_builder` kwarg, defaults to `PromptBuilder()`. `_build_argv` delegates to the builder. The change is back-compat: existing callers without the kwarg get the default one-line prompt.
+- `tests/test_router.py` — 3 new tests: metadata round-trip with github_* fields, copy-not-reference (adapters cannot mutate event.data through metadata), watcher events get a metadata dict but no github fields.
+- `tests/test_claude_prompt_builder.py` (NEW) — 18 tests covering: default branch matches pre-chunk-4c format, default branch when metadata has no github_body / explicit None, F-HANDOFF-1 USER DATA prefix + triple-backtick fence + author-untrusted label + pr+repo header + missing author/repo defaults, F-HANDOFF-5 cap held + truncation marker + byte-count-not-char-count + DEFAULT_BODY_CAP_BYTES==4096 + DEFAULT_AUTHOR_CAP_BYTES==256 + author cap, construction guards (zero/negative caps rejected), F-HANDOFF-3 ClaudeCodeAdapter wires the injected builder by name + falls back to default when none injected.
+- `docs/local-dogfood.md` — new "Phase 3+ chunk 4c" section. Explicit warning on `trust_level >= 2` + auto-handoff combination. What does NOT ship in 4c (multi-rule routing, token-based replies, non-comment sources, A2A negotiation, edited/deleted comments, path-existence fallback, chaining).
+- 289/289 pass locally (268 prior + 21 new chunk-4c tests).
+
+Decisions:
+- PromptBuilder is a single class with overrideable `build(request)` method, not a registry of named builders. Per the open question in the next-session pre-mortem, the registry waits until LoopController owns the rule table; today one class with two branches is enough.
+- Detection of the github branch is metadata-driven (`metadata["github_body"] is not None`), not source-driven (`event.source == "github_webhook"`). The metadata signal is more local; an adapter doesn't need to know which TriggerSource produced the event.
+- The metadata dict on `AgentRequest` is `dict(event.data)` — a shallow copy. Sufficient because event.data values are JSON-serialisable scalars / collections; mutation by an adapter on the dict's top level can't reach the bus event. If a future field carries nested mutable state, this needs revisiting.
+- author cap = 256 bytes (smaller than body cap because GitHub itself bounds usernames at 39 chars; 256 is defence in depth against forged payloads).
+- F-HANDOFF-6 (path-existence fallback to metadata-only prompt for force-push aftermath) is explicitly out of scope. Chunk 4c assumes the path is valid at comment-creation time. Filed as a follow-up.
+- `_truncate_with_marker` slices on raw UTF-8 bytes (not code points) so the cap is effective against pathological inputs that pack many bytes into few characters (e.g. CJK or pathological emoji sequences). The decode uses `errors="ignore"` to drop a partial trailing UTF-8 sequence the byte slice may have left.
+
+Impact:
+- A `pull_request_review_comment.created` event now flows end-to-end: webhook receiver → bus → dispatcher → ClaudeCodeAdapter → PromptBuilder.build() → claude -p → agent_response. Body is fenced + capped before Claude ever sees it.
+- Frozen contracts untouched: AgentResponse, F3, F7, F8, surface=sink, single-worker invariant, scar=stored-correction-only, I-001..I-006, TriggerSource Protocol. The new `AgentRequest.metadata` field already existed in `base.py` (added in a prior chunk, unused); chunk 4c just wires it through.
+- Operator's repo is the trust boundary. The library-side mitigations (fence + cap + USER DATA prefix + trust-warning banner) make the risk visible but do not eliminate it. Operators running at `trust_level >= 2` with auto-handoff are giving every PR commenter the ability to drive Claude prompts.
+
+Next step:
+- Audit chunk 4c PR. After accepted + merged, the Phase 3+ archive (issue #5) is essentially closed; remaining items (auto-installation of git hooks, additional GitHub event types, A2A negotiation) are open-ended follow-ups.

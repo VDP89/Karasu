@@ -301,6 +301,7 @@ def _announce_autonomous_adapters(adapters: list[AgentAdapter]) -> None:
         "approval. See docs/local-dogfood.md \"Trust gradient — what "
         "trust_level actually does in production\".",
         file=sys.stderr,
+        flush=True,
     )
 
 
@@ -445,7 +446,13 @@ def cmd_hook(args: argparse.Namespace) -> int:
     bus = JsonlEventBus(_bus_path(config))
     classifier = _classifier(config)
     adapters = _adapters(config)
-    _announce_autonomous_adapters(adapters)
+    # NICE-TO-HAVE #3 banner is intentionally NOT emitted here.
+    # cmd_hook is a one-shot git-hook flow; the operator already
+    # opted into the trust gradient when they launched cmd_watch /
+    # cmd_serve in their long-running session. Polluting hook stderr
+    # on every commit would be noisy and out of contract. The
+    # structured logging.WARNING from AgentAdapter.__init__ still
+    # fires for headless collectors.
     dispatcher = Dispatcher(bus=bus, adapters=adapters)
     reporter = HumanReporter(_trust(config))
     scars = ScarEngine(_scars_path(config))

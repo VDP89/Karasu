@@ -148,3 +148,31 @@ def test_announce_silent_with_empty_adapter_list(capsys) -> None:
     _announce_autonomous_adapters([])
     captured = capsys.readouterr()
     assert captured.err == ""
+
+
+# ---------------------------------------------------------------------------
+# Layer 2 — wiring contract: banner is wired into cmd_watch / cmd_serve
+# but NOT into cmd_hook. The hook flow is one-shot (per commit); polluting
+# its stderr would be noisy and out of scope. Pinned here so a future
+# refactor that drops cmd_watch/cmd_serve, or adds the helper to other
+# entry points, surfaces as a visible test failure.
+# ---------------------------------------------------------------------------
+
+
+def test_banner_is_wired_into_cmd_watch_and_cmd_serve_only() -> None:
+    """The banner helper must be called by cmd_watch and cmd_serve.
+
+    Pinning the wiring (not just the helper) surfaces the
+    REQUERIDO finding from the chunk-4c gate audit: a future
+    contributor adding ``_announce_autonomous_adapters`` to
+    cmd_hook (or any other one-shot entry point) trips this test.
+    """
+    import inspect
+
+    from karasu.__main__ import cmd_hook, cmd_serve, cmd_watch
+
+    helper = "_announce_autonomous_adapters"
+    assert helper in inspect.getsource(cmd_watch)
+    assert helper in inspect.getsource(cmd_serve)
+    # cmd_hook is a one-shot git-hook flow — explicit non-wiring.
+    assert helper not in inspect.getsource(cmd_hook)

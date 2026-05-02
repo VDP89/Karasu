@@ -276,11 +276,42 @@ def _print_analysis(analysis: dict) -> None:
     )
 
 
+def _announce_autonomous_adapters(adapters: list[AgentAdapter]) -> None:
+    """NICE-TO-HAVE #3 — loud stderr banner for adapters at trust>=2.
+
+    The base-class constructor logs a structured warning per adapter,
+    but operators running ``karasu watch`` / ``karasu serve``
+    interactively don't always see Python logs. This banner prints
+    once at startup, on stderr, in plain text so it shows up in the
+    terminal regardless of logging config.
+
+    Stays silent when no adapter is at the autonomous trust level.
+    """
+    from karasu.adapters.base import AUTONOMOUS_TRUST_LEVEL
+
+    autonomous = [a for a in adapters if a.trust_level >= AUTONOMOUS_TRUST_LEVEL]
+    if not autonomous:
+        return
+    names = ", ".join(
+        f"{a.name}(trust={a.trust_level})" for a in autonomous
+    )
+    print(
+        "⚠ trust gradient: adapter(s) "
+        f"[{names}] will mutate operator state without per-call "
+        "approval. See docs/local-dogfood.md \"Trust gradient — what "
+        "trust_level actually does in production\".",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def cmd_watch(args: argparse.Namespace) -> int:
     config = _load_config(args.config)
     bus = JsonlEventBus(_bus_path(config))
     classifier = _classifier(config)
-    dispatcher = Dispatcher(bus=bus, adapters=_adapters(config))
+    adapters = _adapters(config)
+    _announce_autonomous_adapters(adapters)
+    dispatcher = Dispatcher(bus=bus, adapters=adapters)
     reporter = HumanReporter(_trust(config))
     scars = ScarEngine(_scars_path(config))
 
@@ -346,7 +377,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
     config = _load_config(args.config)
     bus = JsonlEventBus(_bus_path(config))
     classifier = _classifier(config)
-    dispatcher = Dispatcher(bus=bus, adapters=_adapters(config))
+    adapters = _adapters(config)
+    _announce_autonomous_adapters(adapters)
+    dispatcher = Dispatcher(bus=bus, adapters=adapters)
     reporter = HumanReporter(_trust(config))
     scars = ScarEngine(_scars_path(config))
 
@@ -412,7 +445,15 @@ def cmd_hook(args: argparse.Namespace) -> int:
     config = _load_config(args.config)
     bus = JsonlEventBus(_bus_path(config))
     classifier = _classifier(config)
-    dispatcher = Dispatcher(bus=bus, adapters=_adapters(config))
+    adapters = _adapters(config)
+    # NICE-TO-HAVE #3 banner is intentionally NOT emitted here.
+    # cmd_hook is a one-shot git-hook flow; the operator already
+    # opted into the trust gradient when they launched cmd_watch /
+    # cmd_serve in their long-running session. Polluting hook stderr
+    # on every commit would be noisy and out of contract. The
+    # structured logging.WARNING from AgentAdapter.__init__ still
+    # fires for headless collectors.
+    dispatcher = Dispatcher(bus=bus, adapters=adapters)
     reporter = HumanReporter(_trust(config))
     scars = ScarEngine(_scars_path(config))
 

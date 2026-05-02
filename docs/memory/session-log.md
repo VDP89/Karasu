@@ -415,3 +415,57 @@ Impact:
 
 Next step:
 - Audit chunk 4b PR. If accepted, merge. Then chunk 4c (review-comment auto-handoff) becomes the next candidate, gated on issue #47 outline AND NICE-TO-HAVE #3 (startup warning) implementation.
+
+---
+
+## 2026-05-02 (Phase 3+ chunk 4c gates) — issue #47 cap-design outline + NICE-TO-HAVE #3 startup warning
+
+What changed:
+- Both chunk 4c hard pre-reqs opened in parallel branches.
+- Gate 1 — `docs/issue-47-cap-shape` branch: new `docs/phase-3-cap-design.md` (~310 LOC) picks Option B (chain cap with origin-aware tracking via `controller_chain_depth` field on `file_change.data`). `_chain_root()` walks `resubmit_origin` transitively; `_chain_counts[root_id]` is keyed by chain root, not by per-file id. Documents F-CAP-1..F-CAP-4 + test sketch + frozen-contract additivity. PR #53 open, awaiting audit.
+- Gate 2 — `feat/trust-startup-warning` branch:
+  - `src/karasu/adapters/base.py` — module-level `AUTONOMOUS_TRUST_LEVEL = 2` constant + `_log = logging.getLogger(__name__)`. `AgentAdapter.__init__` emits a structured `logging.WARNING` whenever `trust_level >= AUTONOMOUS_TRUST_LEVEL`. Message names the adapter, the trust level, and points at `docs/local-dogfood.md "Trust gradient — what trust_level actually does in production"`.
+  - `src/karasu/__main__.py` — new `_announce_autonomous_adapters(adapters)` helper. Filters adapters by trust >= AUTONOMOUS_TRUST_LEVEL; if any, prints a loud `⚠ trust gradient: adapter(s) [name(trust=N), ...] will mutate operator state without per-call approval.` banner to stderr once per startup. Wired into both `cmd_watch` and `cmd_serve`. Returns silently on empty / sub-threshold adapter lists.
+  - `tests/test_trust_startup_warning.py` — 11 new tests:
+    - Layer 1 (logging warning): trust=2 / trust=3 emit a WARNING on `karasu.adapters.base`; trust=0 / trust=1 stay silent; message references `local-dogfood.md` + "Trust gradient" anchor; `AUTONOMOUS_TRUST_LEVEL == 2` pinned.
+    - Layer 2 (stderr banner): silent when no autonomous adapter present, loud listing autonomous-only by `name(trust=N)` (sub-threshold adapters omitted), every autonomous adapter listed, runbook anchor present, empty list silent.
+- Full suite: 267/267 pass locally (256 prior + 11 new).
+
+Decisions:
+- NICE-TO-HAVE #3 promoted from doc-only mitigation to hard chunk-4c pre-req per the Phase 3+ pre-mortem audit. The chunk-4c combination is the trigger: auto-handoff at trust >= 2 turns prompt injection from PR comments into autonomous code edits, so operator MUST get visible feedback at startup, not buried in a runbook.
+- Two layers (init log + startup banner) on purpose. Init log is for structured collectors / audit trails; banner is for the human running `karasu watch` interactively. They are tested independently so a future refactor can't silently drop either.
+- Banner lives in `__main__` (CLI entry point), not in the library, because adapters constructed by tests / SDK consumers should not pollute their stderr. Libraries get the WARNING via the standard `logging` module; CLI users get the banner on top.
+- `_FakeAdapter(AgentAdapter)` for test isolation — concrete `dispatch` raises `NotImplementedError`; only `__init__` runs in the trust-warning tests. Keeps the test file independent of `ClaudeCodeAdapter` config requirements.
+
+Impact:
+- Both chunk-4c hard pre-reqs are now in flight. PR #53 (cap-design) and the trust-warning PR are independent and can land in any order.
+- No change to AgentResponse, F3, F7, F8, surface contract, single-worker invariant. The init warning is observability-only; the banner is a stderr-only side-effect of CLI startup.
+- Trust gradient is now pinned at the type level (`AUTONOMOUS_TRUST_LEVEL`), at the runtime level (`logging.WARNING`), at the operator level (stderr banner), and at the doc level (`docs/local-dogfood.md`). A future contributor moving the bar surfaces the change as a visible diff in the dedicated test.
+
+Next step:
+- Audit both gate PRs. After both merge, open `feat/review-comment-handoff` (chunk 4c). Phase 3+ archive (issue #5) is essentially closed after 4c.
+
+---
+
+## 2026-05-02 (Phase 3+ chunk 4c gate-2 audit round 1) — REQUERIDO absorbed
+
+What changed:
+- Gate 2 (NICE-TO-HAVE #3 startup warning) opened as PR #54. First audit returned NO APROBADO with 1 REQUERIDO + 2 NICE-TO-HAVE.
+- REQUERIDO: `_announce_autonomous_adapters(adapters)` had been wired into `cmd_hook` in addition to the contracted `cmd_watch` / `cmd_serve`. Out-of-scope diff that contaminated stderr on every commit.
+- Fix (commit ba3994e):
+  - Removed the call from `cmd_hook`. Inline doc comment explains why: hook flow is one-shot per commit, operator already opted into the trust gradient when launching the long-running `cmd_watch` / `cmd_serve` session, structured `logging.WARNING` from `AgentAdapter.__init__` still fires for headless collectors.
+  - Added `test_banner_is_wired_into_cmd_watch_and_cmd_serve_only` using `inspect.getsource` to pin the wiring boundary: helper string MUST appear in `cmd_watch` and `cmd_serve`, MUST NOT appear in `cmd_hook`. A future contributor adding the helper to a one-shot entry point trips this test.
+- NICE-TO-HAVE 2 absorbed: `flush=True` on the banner `print` so the warning is visible immediately even when stderr is line- or block-buffered.
+- NICE-TO-HAVE 1 (real integration test of `cmd_watch` / `cmd_serve` through `main([...])`) deferred this round — contract-pin via `inspect.getsource` covers the same regression surface at lower cost; re-flag if auditor escalates to REQUERIDO.
+- 268/268 pass locally (267 prior + 1 contract test).
+
+Decisions:
+- The cmd_hook silence is a positive contract, not an oversight. Pinning it with a test (not just a comment) is the durable mitigation.
+- `inspect.getsource` based contract pins are an acceptable substitute for full integration tests when the alternative requires stubbing process-blocking entry points (`cmd_watch`'s watcher loop, `cmd_serve`'s socket bind). They do not replace integration tests for behaviour, but they cover the wiring-boundary regression class.
+
+Impact:
+- PR #54 awaits re-audit. Both chunk-4c gates remain in flight (PR #53 cap-design + PR #54 trust-warning); both still required before chunk 4c opens.
+- No frozen-contract changes. AgentResponse, F3, F7, F8, surface=sink, single-worker invariant, scar=stored-correction-only, I-001..I-006, TriggerSource Protocol all untouched.
+
+Next step:
+- Re-audit on PR #54. If APROBADO, merge. PR #53 audit awaited in parallel. Once both land on main, open `feat/review-comment-handoff` (chunk 4c).

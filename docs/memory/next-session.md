@@ -13,21 +13,35 @@ adapter prompt builder.
 ## HARD pre-reqs (BOTH must land before this chunk opens)
 
 ```text
-1. Issue #47 (cap-local-per-origin) — at least an outline plan
-   on a Phase 3+ design extension to the cap shape. Without it,
-   F-HANDOFF-4 (cap distributed-loop amplification) is unbounded.
+1. Issue #47 (cap-local-per-origin) — outline plan landed on
+   docs/issue-47-cap-shape (PR #53), awaiting first audit.
+   Without this, F-HANDOFF-4 (cap distributed-loop
+   amplification) is unbounded.
 
-2. NICE-TO-HAVE #3 (startup warning when adapter trust_level >= 2)
-   — implementation, not just docs. Must land on main BEFORE
-   chunk 4c opens. Auto-handoff at trust>=2 is the combination
-   where prompt injection from PR comments becomes autonomous
-   code edits; operator MUST get visible feedback at startup.
-   Promoted from "recommendation" to hard pre-req in the Phase 3+
-   pre-mortem audit.
+2. NICE-TO-HAVE #3 (startup warning when adapter
+   trust_level >= 2) — implementation landed on
+   feat/trust-startup-warning (PR #54). First audit returned
+   NO APROBADO with 1 REQUERIDO (banner leaked into cmd_hook;
+   removed in commit ba3994e + contract-pin test added) +
+   2 NICE-TO-HAVE (flush=True applied; full main([...])
+   integration test deferred). Awaiting re-audit.
+
+   Two layers shipped: structured logging.WARNING in
+   AgentAdapter.__init__ + loud stderr banner in cmd_watch/
+   cmd_serve. Promoted from "recommendation" to hard pre-req
+   in the Phase 3+ pre-mortem audit.
 ```
 
-If both pre-reqs are not yet met, do them first. They are small
-focused PRs; either can land in any order relative to the other.
+Both gate PRs are open and independent; they can merge in any
+order. Chunk 4c does NOT open until both are on main.
+
+When picking up next session:
+- Check status of PR #53 audit (gate 1).
+- Check status of PR #54 re-audit (gate 2 round 2).
+- If both APROBADO, merge both, then open
+  `feat/review-comment-handoff` (chunk 4c).
+- If audit on either gate returns more REQUERIDOS, absorb
+  them on the existing branch (do NOT open chunk 4c yet).
 
 ## Scope (chunk 4c)
 

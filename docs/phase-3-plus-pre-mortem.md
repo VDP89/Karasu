@@ -46,16 +46,31 @@ the implementation is wrong. Re-read `docs/architecture.md`
 - TriggerSource Protocol (docs/phase-3-loop-controller.md chunk 3c)
 ```
 
-Two open follow-ups from the Phase 3 audit also constrain the
-first chunks:
+**Imperative statement (per Phase 3+ pre-mortem audit):**
+
+> Any implementation that requires changing one of these contracts
+> is OUT OF SCOPE for Phase 3+ and MUST open a separate design PR.
+> A reviewer who sees a Phase 3+ chunk PR touch any of the items
+> above should reject it on contract drift grounds and ask for the
+> design PR first. There is no "small exception" path.
+
+Three open follow-ups from the Phase 3 audit constrain the first
+chunks:
 
 - **Issue #47** — `RESUBMIT_CAP` is local-per-origin. Phase 3+
   chunks that add new producers (webhook → file_change) make
   distributed-loop cases more reachable. Either resolve #47 first
-  or document explicitly why each chunk doesn't worsen it.
+  or document explicitly why each chunk doesn't worsen it. **Hard
+  pre-req for chunk 4c**.
 - **NICE-TO-HAVE #1** — persist effective priority on
   `agent_response.data`. Useful for any chunk that wants to
   observe priority rewrites in operation. Optional but encouraged.
+- **NICE-TO-HAVE #3** (promoted by Phase 3+ pre-mortem audit) —
+  startup warning when adapter `trust_level >= 2`. Promoted from
+  "recommendation" to **hard pre-req for chunk 4c**: the
+  combination of auto-handoff + trust>=2 turns a PR comment into
+  an autonomous code edit, and operators need visible feedback
+  before that combination ships.
 
 ## 4a — GitHub webhook receiver
 
@@ -141,6 +156,39 @@ F-WH-7  Authentication scope creep.
                operations (commenting back, mutating PR) are
                OUT OF SCOPE for this chunk.
         Test: nothing — the constraint is documented absence.
+
+F-WH-8  Payload / body DoS (audit).
+        Wrong: receiver reads the request body unconditionally;
+               an attacker (or a misconfigured webhook with a
+               huge payload) drains memory or stalls the worker.
+        Right: enforce a max Content-Length (configurable, default
+               1 MiB). Reject larger requests with 413 Payload
+               Too Large before reading the body. Reject
+               malformed JSON with 422 Unprocessable Entity.
+               Both happen BEFORE HMAC verify so the rejection
+               doesn't leak signing-key timing.
+        Test: 2 MiB body → 413; malformed JSON → 422; both
+              before any HMAC computation.
+
+F-WH-9  Missing or misconfigured secret (audit).
+        Wrong: receiver starts when KARASU_WEBHOOK_SECRET is unset
+               or empty; HMAC verify silently passes anything
+               (or fails everything in a confusing way).
+        Right: ``karasu serve`` fails CLOSED at startup if the
+               secret env var is unset, empty, or shorter than
+               16 bytes. Exit code 2 with a clear error. NEVER
+               start the HTTP listener insecure.
+        Test: missing env var → exit 2 with the right message
+              before any port is bound.
+
+F-WH-10 Dedup does not survive restart (audit).
+        Documentation-only: the X-GitHub-Delivery dedup ring is
+        in-memory. After ``karasu serve`` restarts, the same
+        delivery id can re-process. GitHub retries on 5xx but
+        does NOT retry on 200, so post-restart re-delivery is
+        a rare narrow window. Not a blocker; declared so an
+        operator who relies on idempotency knows the boundary.
+        Test: documented; no code change.
 ```
 
 ### First PR plan (chunk 4a)
@@ -231,6 +279,21 @@ F-A2A-4  Cosmetic-only without orchestration.
                 comes when an actual peer requirement exists.
          Test: fetch_card against a fake A2A server returns the
                expected AgentCard.
+
+F-A2A-5  Route boundary blur (audit, nice-to-have).
+         The webhook receiver and the A2A card endpoint share
+         the same HTTP server. Declare the boundary explicitly:
+           POST /webhook              → HMAC-verified, rate-limited,
+                                        body-size-limited.
+           GET  /.well-known/agent-card.json → unauthenticated, no
+                                        body, no rate limit beyond
+                                        the receiver's global one.
+         No path overlap. The card endpoint MUST NOT verify HMAC
+         (it's a discovery surface; auth would defeat the point).
+         The webhook endpoint MUST always verify HMAC, regardless
+         of method or content type.
+         Test: GET on the webhook path returns 405; POST on the
+               card path returns 405.
 ```
 
 ### First PR plan (chunk 4b)
@@ -322,6 +385,42 @@ F-HANDOFF-4  Cap distributed-loop amplification.
                     Either the cap is global by then, or the
                     chunk explicitly declares it does not chain
                     (single hop only).
+
+F-HANDOFF-5  Prompt bloat from oversized github_body (audit).
+             Wrong: the prompt builder copies github_body
+                    verbatim; a 50 KB review comment
+                    (or a malicious one stuffed with junk)
+                    blows the adapter's context budget or
+                    triggers truncation by the model with no
+                    visibility for the operator.
+             Right: hard cap on github_body BEFORE the prompt
+                    is built (default 4 KB, configurable). On
+                    overflow: truncate with an explicit
+                    "[truncated, original was N bytes]" suffix
+                    so neither the operator nor the model is
+                    silently misled. Same applies to other
+                    metadata fields (github_author, etc.).
+             Test: prompt builder cap holds; overflow marker
+                   present; prompt size bounded.
+
+F-HANDOFF-6  Stale or missing referent (audit, nice-to-have).
+             Wrong: an edited or deleted PR comment, or a
+                    comment on a path that no longer exists
+                    after a force-push, lands as a normal
+                    handoff dispatch. Claude sees a
+                    file_change for a nonexistent path or
+                    operates on stale body text.
+             Right: at prompt-build time, validate that the
+                    path exists in the workspace; if not,
+                    fall back to a "metadata-only" prompt
+                    that names the PR + body without claiming
+                    the file is editable. For
+                    edited/deleted comments, GitHub sends
+                    distinct event types (.edited, .deleted)
+                    — handle both as no-op for chunk 4c (file
+                    a follow-up if operators want them).
+             Test: missing path → metadata-only prompt;
+                   .edited / .deleted → no dispatch.
 ```
 
 ### First PR plan (chunk 4c)
@@ -329,7 +428,14 @@ F-HANDOFF-4  Cap distributed-loop amplification.
 ```text
 Branch:  feat/review-comment-handoff
 Scope:   ≤400 LOC including tests.
-Pre-req: issue #47 has at least an outline plan (cap shape decided).
+Pre-reqs (BOTH must be satisfied before this branch opens):
+  1. Issue #47 has at least an outline plan (cap shape decided).
+  2. NICE-TO-HAVE #3 — startup warning when adapter trust_level >= 2 —
+     is implemented and on main. Promoted from "recommendation"
+     to a hard pre-req per the Phase 3+ pre-mortem audit (PR #48):
+     auto-handoff at trust>=2 is the combination where prompt
+     injection from PR comments becomes autonomous code edits,
+     and the operator needs visible feedback at startup.
 
 Files touched:
 - src/karasu/router/dispatcher.py           (copy data into
@@ -361,11 +467,18 @@ Out of this PR:
         produces something observable.
 
 3. 4c — Review-comment auto-handoff. Highest risk (prompt
-        injection, trust gradient amplification, cap chaining).
-        Pre-req: issue #47 has an outline plan. Recommend
-        landing AFTER NICE-TO-HAVE #3 (startup warning for
-        trust>=2) so the operator gets visible feedback when the
-        risky combination is configured.
+        injection, trust gradient amplification, cap chaining,
+        prompt bloat from oversized github_body, stale referent
+        on edited/deleted comments).
+        Pre-reqs (BOTH):
+          a. Issue #47 has at least an outline plan (cap shape).
+          b. NICE-TO-HAVE #3 — startup warning when adapter
+             trust_level >= 2 — landed on main. Promoted from
+             "recommendation" to a hard pre-req per the
+             Phase 3+ pre-mortem audit: this is the
+             combination where prompt injection from PR
+             comments becomes autonomous code edits, and the
+             operator must get visible feedback at startup.
 ```
 
 ## Do NOT do in Phase 3+

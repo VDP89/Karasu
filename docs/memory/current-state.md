@@ -31,7 +31,8 @@ Phase 3: COMPLETED + DOGFOOD-VALIDATED + AUDIT-ACCEPTED — chunks 3a + 3b + 3c 
 - `karasu hook <pre-commit|post-commit|post-merge>` ✔ — git-hook source as a one-shot CLI. Submits `file_change` events with `source="git_hook"` and `data.git_hook=<name>`.
 - `karasu serve --host --port` ✔ (Phase 3+ chunk 4a) — GitHub webhook receiver. HMAC-verified, body-size-capped (1 MiB), dedup ring (1024 deliveries), maps `pull_request_review_comment.created` → `file_change` with `source="github_webhook"` + `github_*` metadata. Per-source-IP rate limit (60/min default, 429 over). Fails CLOSED on missing/short secret (F-WH-9). Implements `TriggerSource`.
 - A2A Agent Card endpoint ✔ (Phase 3+ chunk 4b) — `karasu serve` also serves `GET /.well-known/agent-card.json` with the static `AgentCard` JSON describing 4 baseline skills (watch-filesystem, route-events, receive-github-webhooks, record-corrections). Discovery only; capability negotiation deferred. POST on the card path → 405 (F-A2A-5 boundary held).
-- Review-comment auto-handoff: DEFERRED (chunk 4c — pre-reqs: issue #47 outline + NICE-TO-HAVE #3 startup warning)
+- Trust-gradient startup warning ✔ (NICE-TO-HAVE #3, hard pre-req for chunk 4c) — `AgentAdapter.__init__` emits a structured `logging.WARNING` on `karasu.adapters.base` whenever `trust_level >= AUTONOMOUS_TRUST_LEVEL` (=2). `cmd_watch` / `cmd_serve` additionally print a loud stderr banner once at startup listing every autonomous adapter by `name(trust=N)`. Both layers reference `docs/local-dogfood.md` "Trust gradient — what trust_level actually does in production".
+- Review-comment auto-handoff: DEFERRED (chunk 4c — pre-reqs: issue #47 outline ✔ landing + NICE-TO-HAVE #3 startup warning ✔ landing)
 - Pipeline still does NOT consume `human_decision` directly — only the controller reads them and resubmits a `file_change` so `Pipeline._apply_scar_override` picks up the chat-recorded scar on the next dispatch
 
 ## Verified behavior (Phase 1C closed)
@@ -89,10 +90,19 @@ Cap enforcement: 6 `/scar` rapid-fire → exactly 3 resubmits, 3 cap warnings, 0
 
 ```text
 Phase 3+ chunk 4c — review-comment auto-handoff.
-HARD pre-reqs (BOTH must land before this chunk opens):
-  1. Issue #47 (cap-local-per-origin) outline plan.
+HARD pre-reqs (status):
+  1. Issue #47 (cap-local-per-origin) outline plan — PR #53
+     open, awaiting first audit.
   2. NICE-TO-HAVE #3 — startup warning when adapter
-     trust_level >= 2 (implementation, not just docs).
+     trust_level >= 2 — PR #54 open on
+     feat/trust-startup-warning. First audit NO APROBADO
+     (1 REQUERIDO + 2 NICE-TO-HAVE). Round-1 fix shipped
+     (commit ba3994e): banner leaked into cmd_hook removed,
+     contract-pin test added via inspect.getsource,
+     flush=True on the banner. Full main([...]) integration
+     test deferred to round 2 if escalated. Awaiting
+     re-audit. 268/268 green locally.
+Both must merge before chunk 4c opens.
 6 failure modes filed (F-HANDOFF-1..6) including prompt
 injection, trust=2 amplification, prompt bloat. See
 docs/phase-3-plus-pre-mortem.md § 4c and

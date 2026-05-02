@@ -10,38 +10,32 @@ tests). Chunk 4c is the highest-risk chunk in the archive: it
 turns a GitHub PR comment into a directed Claude dispatch via the
 adapter prompt builder.
 
-## HARD pre-reqs (BOTH must land before this chunk opens)
+## HARD pre-reqs — BOTH LANDED ✔
 
 ```text
-1. Issue #47 (cap-local-per-origin) — DESIGN OUTLINE LANDED.
-   See docs/phase-3-cap-design.md for the chosen shape (chain
-   cap with origin-aware tracking, CHAIN_CAP=3 default). Issue
-   #47 stays open as the implementation tracker; closes when
-   the focused PR implementing the design lands.
-   STATUS: design merged; implementation can ship in parallel
-   with chunk 4c or before — chunk 4c only requires the design
-   to be in place so it knows the cap shape it must respect.
+1. Issue #47 (cap-local-per-origin) — DESIGN OUTLINE LANDED
+   on main as PR #53 (squash merge). See
+   docs/phase-3-cap-design.md for the chosen shape (chain
+   cap with origin-aware tracking, CHAIN_CAP=3 default,
+   F-CAP-1..F-CAP-5 enumerated). Issue #47 stays open as
+   the implementation tracker; closes when the focused PR
+   implementing the design lands. The implementation PR is
+   independent of chunk 4c — chunk 4c only needs the design
+   in place so it knows the cap shape it must respect.
 
-2. NICE-TO-HAVE #3 (startup warning when adapter trust_level >= 2)
-   — implementation, not just docs. Must land on main BEFORE
-   chunk 4c opens. Auto-handoff at trust>=2 is the combination
-   where prompt injection from PR comments becomes autonomous
-   code edits; operator MUST get visible feedback at startup.
-   Promoted from "recommendation" to hard pre-req in the Phase 3+
-   pre-mortem audit.
-   STATUS: LANDED on main as PR #54 (squash merge e43808a).
-   AgentAdapter.__init__ emits a structured logging.WARNING on
-   karasu.adapters.base when trust_level >= AUTONOMOUS_TRUST_LEVEL
-   (=2). cmd_watch / cmd_serve print a loud stderr banner once
-   per startup; cmd_hook stays silent (one-shot per commit).
-   12 tests including a contract-pin via inspect.getsource that
-   asserts the banner helper is wired into cmd_watch and
-   cmd_serve only.
+2. NICE-TO-HAVE #3 (startup warning when adapter
+   trust_level >= 2) — LANDED on main as PR #54 (squash
+   merge e43808a). AgentAdapter.__init__ emits a structured
+   logging.WARNING on karasu.adapters.base when trust_level
+   >= AUTONOMOUS_TRUST_LEVEL (=2). cmd_watch / cmd_serve
+   print a loud stderr banner once per startup; cmd_hook
+   stays silent (one-shot per commit). 12 tests including a
+   contract-pin via inspect.getsource that asserts the
+   banner helper is wired into cmd_watch and cmd_serve only.
 ```
 
-If pre-req 1 doc-only outline has not yet merged (PR #53 still
-in audit), wait for it before opening chunk 4c. Pre-req 2 is
-done.
+Both gates are now on main. Chunk 4c (`feat/review-comment-handoff`)
+is unblocked.
 
 ## Scope (chunk 4c)
 

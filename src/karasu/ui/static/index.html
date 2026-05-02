@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Karasu UI</title>
+<style>
+body { font-family: monospace; background:#111; color:#ddd; margin:0 }
+.header { padding:10px; background:#222; display:flex; justify-content:space-between }
+.panel { padding:10px; border:1px solid #333 }
+.main { display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 200px; height:90vh }
+.timeline { grid-column:span 2; overflow:auto }
+.event { padding:4px; border-bottom:1px solid #333; cursor:pointer }
+.event:hover { background:#333 }
+</style>
+</head>
+<body>
+<div class="header">
+<div>Karasu UI</div>
+<div id="crow">Crow: idle</div>
+</div>
+<div class="main">
+<div class="panel" id="map">Live Map</div>
+<div class="panel" id="detail">Select event</div>
+<div class="panel timeline" id="timeline"></div>
+</div>
+<script>
+async function load(){
+const r=await fetch('/api/events');
+const d=await r.json();
+const t=document.getElementById('timeline');
+t.innerHTML='';
+let crow='idle';
+d.events.forEach(e=>{
+const div=document.createElement('div');
+div.className='event';
+div.innerText=e.timestamp+' | '+e.type;
+if(e.requires_human){crow='waiting';}
+if(e.success===false){crow='error';}
+div.onclick=()=>{document.getElementById('detail').innerText=JSON.stringify(e,null,2)};
+t.appendChild(div);
+});
+document.getElementById('crow').innerText='Crow: '+crow;
+}
+setInterval(load,3000);
+load();
+</script>
+</body>
+</html>

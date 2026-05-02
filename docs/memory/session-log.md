@@ -376,3 +376,42 @@ Impact:
 
 Next step:
 - Re-audit chunk 4a PR #49. If accepted, merge and arranque chunk 4b (A2A Agent Card) which fills the reserved GET handler.
+
+---
+
+## 2026-05-02 (Phase 3+ chunk 4b) — A2A AgentCard endpoint
+
+What changed:
+- Audit on chunk 4a (PR #49) returned APPROVED after the F-WH-6 follow-up commit. Merged. Audit recommendation for 4b: "Arrancá con GET /.well-known/agent-card.json → JSON mínimo válido. Nada más." — minimum viable endpoint, defer fetch_card + karasu peers CLI to a later chunk.
+- New `src/karasu/a2a/` package:
+  - `card.py` — `AgentCapabilities`, `Skill`, `AgentCard` dataclasses + `build_karasu_card(base_url=None)`. Static skill list (4 baseline: watch-filesystem, route-events, receive-github-webhooks, record-corrections) — adapter-conditional filtering deferred per audit decision (chunk 4b describes baseline capability, not runtime state).
+  - `__init__.py` — re-exports.
+- `src/karasu/controller/sources/webhook.py`:
+  - `WebhookHandler.__init__` accepts optional `agent_card_json: bytes | None`. When set, `GET /.well-known/agent-card.json` returns 200 with that body; when None, returns 404 "agent-card not configured" (chunk 4a placeholder retained as opt-out).
+  - HTTP transport sends `Content-Type: application/json` for the card response specifically; other responses stay `text/plain`.
+  - `build_webhook_source` accepts `agent_card: AgentCard | None`, serialises it with `json.dumps(..., indent=2)` once at startup (per F-A2A-1 static-snapshot rule), and passes the bytes to the handler.
+- `src/karasu/__main__.py` — `cmd_serve` now builds `build_karasu_card(base_url=f"http://{args.host}:{args.port}")` and passes it to `build_webhook_source`. Operators get a published card by default; opting out requires a code change.
+- `tests/test_a2a_card.py` — 12 new tests covering capability defaults, camelCase wire keys (F-A2A-2), card field round-trip, JSON encodability, baseline-skill list pin (F-A2A-3), and information-disclosure containment (F-A2A-1: card MUST carry only name/description/version/url/capabilities/skills + skills carry only id/name/description).
+- `tests/test_webhook_source.py` — 5 new chunk-4b tests:
+  - GET serves card JSON when configured (200 + verbatim body).
+  - POST on the card path remains 405 even when card is configured.
+  - Rate limit bucket spans paths (per F-WH-6 design).
+  - `build_webhook_source` round-trips the card to bytes.
+  - End-to-end: GET on a live ephemeral-port server returns 200 + Content-Type: application/json + valid JSON with 4 skills.
+- One existing chunk-4a placeholder test (`test_handler_get_on_agent_card_path_returns_404_in_chunk_4a`) renamed and rewritten to assert the new "not configured" 404 body.
+- 256/256 pass locally (239 prior + 17 new).
+
+Decisions:
+- Static skill list (audit's call): describes baseline capability, not runtime process state. A `karasu serve` instance and a `karasu chat` instance run as separate processes; the card describes Karasu's capabilities across deployments.
+- Card published by default (operator must edit code to opt out). Aligns with the audit's "infra sólida de entrada" framing.
+- Card pre-serialised at startup (F-A2A-1 static snapshot). No per-request build, no chance of leaking runtime config because the snapshot is taken before any request lands.
+- `application/json` Content-Type for the card response only; other responses stay `text/plain` to avoid confusing peers about non-card paths.
+- `fetch_card` helper + `karasu peers <url>` CLI deferred to a follow-up. Audit recommendation: "no abras todo de golpe" — outbound discovery isn't needed for the inbound endpoint to be useful.
+
+Impact:
+- Karasu now publishes a discoverable A2A AgentCard whenever `karasu serve` is running. Peer agents can read it without authentication.
+- F-A2A-5 boundary (POST card → 405) is enforced by the same guard as 4a; chunk 4b only filled in the GET branch.
+- No change to AgentResponse, F3, F7, F8, surface contract.
+
+Next step:
+- Audit chunk 4b PR. If accepted, merge. Then chunk 4c (review-comment auto-handoff) becomes the next candidate, gated on issue #47 outline AND NICE-TO-HAVE #3 (startup warning) implementation.

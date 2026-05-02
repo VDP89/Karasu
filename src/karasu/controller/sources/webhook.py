@@ -29,9 +29,12 @@ import time
 from collections import deque
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Callable, Iterable
+from typing import TYPE_CHECKING, Callable, Iterable
 
 from karasu.eventbus import Event, JsonlEventBus
+
+if TYPE_CHECKING:
+    from karasu.a2a import AgentCard
 
 _log = logging.getLogger(__name__)
 
@@ -153,6 +156,7 @@ class WebhookHandler:
         max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
         dedup_ring_size: int = DEFAULT_DEDUP_RING_SIZE,
         rate_limit_per_minute: int | None = DEFAULT_RATE_LIMIT_PER_MINUTE,
+        agent_card_json: bytes | None = None,
     ) -> None:
         if not secret or len(secret) < MIN_SECRET_LENGTH:
             raise WebhookConfigError(
@@ -164,6 +168,12 @@ class WebhookHandler:
         self._delivered: deque[str] = deque(maxlen=dedup_ring_size)
         self._delivered_set: set[str] = set()
         self._lock = threading.Lock()
+        # Chunk 4b: optional pre-serialised AgentCard JSON. When set,
+        # GET /.well-known/agent-card.json returns 200 with this body.
+        # When None, we keep the chunk-4a placeholder (404 "not
+        # implemented yet") so the route boundary is still pinned but
+        # operators who don't want to publish a card can opt out.
+        self._agent_card_json = agent_card_json
         # F-WH-6: rate limiter. ``None`` disables (used by tests that
         # need to make many requests; production always sets a limit).
         self._rate_limiter: _RateLimiter | None = (
@@ -208,9 +218,12 @@ class WebhookHandler:
         elif path == self._AGENT_CARD_PATH:
             if method != "GET":
                 return 405, b"method not allowed\n", None
-            # Chunk 4a does not implement GET; chunk 4b will replace
-            # this with the static AgentCard JSON.
-            return 404, b"agent-card not implemented yet\n", None
+            # Chunk 4b: serve the pre-serialised AgentCard JSON when
+            # configured; fall back to the chunk-4a placeholder when
+            # the operator opts out of publishing a card.
+            if self._agent_card_json is not None:
+                return 200, self._agent_card_json, None
+            return 404, b"agent-card not configured\n", None
         else:
             return 404, b"not found\n", None
 
@@ -427,9 +440,21 @@ def _make_request_handler_class(
             status, response_body, event = handler.handle(
                 self.path, method, request_headers, body, source_ip=source_ip
             )
+            # Chunk 4b: serve the AgentCard JSON with the right
+            # Content-Type so peers parse it without sniffing.
+            # Other responses stay text/plain.
+            content_type = (
+                "application/json"
+                if (
+                    self.path == handler._AGENT_CARD_PATH
+                    and method == "GET"
+                    and status == 200
+                )
+                else "text/plain; charset=utf-8"
+            )
             self.send_response(status)
             self.send_header("Content-Length", str(len(response_body)))
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Type", content_type)
             self.end_headers()
             self.wfile.write(response_body)
             if event is not None:
@@ -454,17 +479,28 @@ def build_webhook_source(
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
     dedup_ring_size: int = DEFAULT_DEDUP_RING_SIZE,
     rate_limit_per_minute: int | None = DEFAULT_RATE_LIMIT_PER_MINUTE,
+    agent_card: "AgentCard | None" = None,
 ) -> WebhookSource:
     """Construct a :class:`WebhookSource` end-to-end.
 
     Raises :class:`WebhookConfigError` if the secret is unsafe.
     Used by ``cmd_serve``; tests usually build the pieces by hand.
+
+    Chunk 4b: when ``agent_card`` is supplied the handler serves it
+    on ``GET /.well-known/agent-card.json``. The card is serialised
+    once at startup (per F-A2A-1: static snapshot, no runtime drift).
     """
+    card_json: bytes | None = None
+    if agent_card is not None:
+        import json as _json
+
+        card_json = _json.dumps(agent_card.to_dict(), indent=2).encode("utf-8")
     handler = WebhookHandler(
         secret=secret.encode("utf-8") if isinstance(secret, str) else secret,
         max_body_bytes=max_body_bytes,
         dedup_ring_size=dedup_ring_size,
         rate_limit_per_minute=rate_limit_per_minute,
+        agent_card_json=card_json,
     )
     return WebhookSource(
         handler=handler,

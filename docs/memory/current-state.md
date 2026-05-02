@@ -29,8 +29,9 @@ Phase 3: COMPLETED + DOGFOOD-VALIDATED + AUDIT-ACCEPTED — chunks 3a + 3b + 3c 
 - Controller bus subscription + reaction (`/correct`, `/scar` resubmit) ✔ — chunk 3b. Cap: 3 resubmits per originating `file_change`. Resubmits emit a fresh `file_change` with `controller_resubmit=True`.
 - `TriggerSource` Protocol + watcher as registered source ✔ — chunk 3c. Controller manages source lifecycle in `start`/`stop`.
 - `karasu hook <pre-commit|post-commit|post-merge>` ✔ — git-hook source as a one-shot CLI. Submits `file_change` events with `source="git_hook"` and `data.git_hook=<name>`.
-- `karasu serve --host --port` ✔ (Phase 3+ chunk 4a) — GitHub webhook receiver. HMAC-verified, body-size-capped (1 MiB), dedup ring (1024 deliveries), maps `pull_request_review_comment.created` → `file_change` with `source="github_webhook"` + `github_*` metadata. Fails CLOSED on missing/short secret (F-WH-9). Implements `TriggerSource`.
-- A2A Agent Cards / review-comment auto-handoff: DEFERRED (chunks 4b, 4c)
+- `karasu serve --host --port` ✔ (Phase 3+ chunk 4a) — GitHub webhook receiver. HMAC-verified, body-size-capped (1 MiB), dedup ring (1024 deliveries), maps `pull_request_review_comment.created` → `file_change` with `source="github_webhook"` + `github_*` metadata. Per-source-IP rate limit (60/min default, 429 over). Fails CLOSED on missing/short secret (F-WH-9). Implements `TriggerSource`.
+- A2A Agent Card endpoint ✔ (Phase 3+ chunk 4b) — `karasu serve` also serves `GET /.well-known/agent-card.json` with the static `AgentCard` JSON describing 4 baseline skills (watch-filesystem, route-events, receive-github-webhooks, record-corrections). Discovery only; capability negotiation deferred. POST on the card path → 405 (F-A2A-5 boundary held).
+- Review-comment auto-handoff: DEFERRED (chunk 4c — pre-reqs: issue #47 outline + NICE-TO-HAVE #3 startup warning)
 - Pipeline still does NOT consume `human_decision` directly — only the controller reads them and resubmits a `file_change` so `Pipeline._apply_scar_override` picks up the chat-recorded scar on the next dispatch
 
 ## Verified behavior (Phase 1C closed)
@@ -87,15 +88,21 @@ Cap enforcement: 6 `/scar` rapid-fire → exactly 3 resubmits, 3 cap warnings, 0
 ## Next step (entry point)
 
 ```text
-Phase 3+ chunk 4b — A2A Agent Cards. Mounts
-GET /.well-known/agent-card.json on the existing webhook server
-(F-A2A-5 route boundary). Discovery only, NOT capability negotiation.
-≤300 LOC. See docs/phase-3-plus-pre-mortem.md § 4b and
+Phase 3+ chunk 4c — review-comment auto-handoff.
+HARD pre-reqs (BOTH must land before this chunk opens):
+  1. Issue #47 (cap-local-per-origin) outline plan.
+  2. NICE-TO-HAVE #3 — startup warning when adapter
+     trust_level >= 2 (implementation, not just docs).
+6 failure modes filed (F-HANDOFF-1..6) including prompt
+injection, trust=2 amplification, prompt bloat. See
+docs/phase-3-plus-pre-mortem.md § 4c and
 docs/memory/next-session.md.
 
-Queued hardening tasks (NICE-TO-HAVE from audit, may go in parallel):
-- Persist effective priority on agent_response.data
-- Startup log when adapter trust_level >= 2 (HARD pre-req for chunk 4c)
+Optional follow-ups for chunk 4b (NICE-TO-HAVE, not blocking 4c):
+- fetch_card helper + karasu peers <url> CLI for outbound discovery.
+
+Queued hardening tasks (NICE-TO-HAVE from Phase 3 audit):
+- Persist effective priority on agent_response.data.
 ```
 
 ## Do NOT do yet

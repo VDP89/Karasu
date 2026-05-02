@@ -356,6 +356,14 @@ def cmd_serve(args: argparse.Namespace) -> int:
     pipeline = Pipeline(classifier, dispatcher, reporter, sink, scars=scars)
     controller = LoopController(pipeline, bus=bus)
 
+    # Chunk 4b: build the static A2A AgentCard so the webhook
+    # receiver can serve GET /.well-known/agent-card.json. The card
+    # advertises Karasu's baseline capabilities; ``base_url`` is the
+    # host:port the operator bound the receiver to.
+    from karasu.a2a import build_karasu_card
+
+    card = build_karasu_card(base_url=f"http://{args.host}:{args.port}")
+
     try:
         source = build_webhook_source(
             secret=secret,
@@ -363,6 +371,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
             submit=controller.submit,
             host=args.host,
             port=args.port,
+            agent_card=card,
         )
     except WebhookConfigError as exc:
         # Should already have been caught above, but defence in

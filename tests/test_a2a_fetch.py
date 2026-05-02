@@ -64,6 +64,25 @@ def test_resolve_card_url_preserves_explicit_suffix() -> None:
     assert _resolve_card_url(explicit) == explicit
 
 
+def test_resolve_card_url_preserves_query_string() -> None:
+    """A naive rstrip+concat would land the suffix after the query
+    string, producing an invalid URL. urlparse-based rewrite keeps
+    the query attached to the canonical card path."""
+    assert (
+        _resolve_card_url("http://host/api?x=1")
+        == f"http://host/api{AGENT_CARD_PATH}?x=1"
+    )
+
+
+def test_resolve_card_url_preserves_fragment() -> None:
+    """Same defence for fragments — they belong to the URL, not to the
+    path the suffix is attached to."""
+    assert (
+        _resolve_card_url("http://host#section")
+        == f"http://host{AGENT_CARD_PATH}#section"
+    )
+
+
 # ---------------------------------------------------------------------------
 # fetch_card — end-to-end against the real chunk-4b card server
 # ---------------------------------------------------------------------------

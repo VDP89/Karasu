@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse, urlunparse
 from urllib.request import Request, urlopen
 
 
@@ -78,7 +79,15 @@ def fetch_card(
 def _resolve_card_url(base_url: str) -> str:
     """Append the well-known card path if ``base_url`` does not already
     end with it. Preserves the operator's exact URL when they
-    explicitly wrote the full path."""
-    if base_url.endswith(AGENT_CARD_PATH):
+    explicitly wrote the full path.
+
+    Uses urllib.parse so query / fragment / userinfo / port survive
+    the rewrite. A bare-string ``rstrip + concat`` would break for
+    inputs like ``https://host/api?x=1`` (the suffix would land
+    after the query string, producing an invalid URL).
+    """
+    parsed = urlparse(base_url)
+    if parsed.path.endswith(AGENT_CARD_PATH):
         return base_url
-    return base_url.rstrip("/") + AGENT_CARD_PATH
+    new_path = parsed.path.rstrip("/") + AGENT_CARD_PATH
+    return urlunparse(parsed._replace(path=new_path))

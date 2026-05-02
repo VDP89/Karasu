@@ -20,10 +20,20 @@ from karasu.a2a.card import (
     Skill,
     build_karasu_card,
 )
+from karasu.a2a.fetch import (
+    AGENT_CARD_PATH,
+    DEFAULT_FETCH_TIMEOUT,
+    AgentCardFetchError,
+    fetch_card,
+)
 
 __all__ = [
+    "AGENT_CARD_PATH",
+    "DEFAULT_FETCH_TIMEOUT",
     "AgentCapabilities",
     "AgentCard",
+    "AgentCardFetchError",
     "Skill",
     "build_karasu_card",
+    "fetch_card",
 ]

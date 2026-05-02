@@ -46,10 +46,17 @@ class Dispatcher:
             # the file_change presence + the absence of a correlated
             # agent_response.
             return None
+        # Phase 3+ chunk 4c: copy event.data into AgentRequest.metadata
+        # so adapters see source-specific fields (github_body,
+        # github_author, github_pr_number, etc.) without having to
+        # widen the AgentRequest schema for every new source. The
+        # named fields (classification, path, priority) stay on the
+        # request for back-compat; metadata is the new escape hatch.
         request = AgentRequest(
             classification=classification,
             path=path,
             priority=event.data.get("priority", "normal"),
+            metadata=dict(event.data),
         )
         response = adapter.dispatch(request)
         return self.bus.append(

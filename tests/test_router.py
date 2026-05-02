@@ -67,3 +67,81 @@ def test_dispatch_returns_none_does_not_corrupt_bus_when_no_adapter(
         dispatcher.dispatch(_classified("a.py", "code_change"))
 
     assert list(bus.read()) == []
+
+
+# ---------------------------------------------------------------------------
+# Phase 3+ chunk 4c — AgentRequest.metadata round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_copies_event_data_into_request_metadata(
+    bus: JsonlEventBus,
+) -> None:
+    """Adapters need source-specific fields (github_body, github_author,
+    etc.) without widening AgentRequest's named schema for every new
+    source. The dispatcher copies event.data into request.metadata so
+    the adapter (or its prompt builder) can read them.
+    """
+    stub = _StubAdapter()
+    dispatcher = Dispatcher(bus=bus, adapters=[stub])
+    event = Event(
+        type="file_change",
+        source="github_webhook",
+        data={
+            "path": "a.py",
+            "classification": "code_change",
+            "priority": "high",
+            "github_pr": 42,
+            "github_author": "reviewer1",
+            "github_body": "please rename foo to bar",
+        },
+    )
+    dispatcher.dispatch(event)
+    assert len(stub.calls) == 1
+    request = stub.calls[0]
+    assert request.metadata["github_pr"] == 42
+    assert request.metadata["github_author"] == "reviewer1"
+    assert request.metadata["github_body"] == "please rename foo to bar"
+    # Named fields stay populated for back-compat.
+    assert request.path == "a.py"
+    assert request.classification == "code_change"
+    assert request.priority == "high"
+
+
+def test_dispatch_metadata_is_a_copy_not_a_reference(
+    bus: JsonlEventBus,
+) -> None:
+    """The adapter must not be able to mutate event.data through the
+    metadata dict. This guards F3 (the bus is the canonical record):
+    if an adapter rewrites metadata mid-dispatch, the file_change on
+    disk must stay untouched."""
+    stub = _StubAdapter()
+    dispatcher = Dispatcher(bus=bus, adapters=[stub])
+    event = Event(
+        type="file_change",
+        source="github_webhook",
+        data={
+            "path": "a.py",
+            "classification": "code_change",
+            "priority": "normal",
+            "github_body": "hello",
+        },
+    )
+    dispatcher.dispatch(event)
+    request = stub.calls[0]
+    request.metadata["github_body"] = "REWRITTEN"
+    assert event.data["github_body"] == "hello"
+
+
+def test_dispatch_metadata_is_empty_for_watcher_events(
+    bus: JsonlEventBus,
+) -> None:
+    """No github fields on a normal watcher event — the metadata dict
+    just mirrors event.data (path/classification/priority)."""
+    stub = _StubAdapter()
+    dispatcher = Dispatcher(bus=bus, adapters=[stub])
+    dispatcher.dispatch(_classified("a.py", "code_change"))
+    request = stub.calls[0]
+    assert "github_body" not in request.metadata
+    assert request.metadata["path"] == "a.py"
+    assert request.metadata["classification"] == "code_change"

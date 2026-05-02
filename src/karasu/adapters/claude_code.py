@@ -9,6 +9,7 @@ import subprocess
 from typing import Iterable
 
 from karasu.adapters.base import AgentAdapter, AgentRequest, AgentResponse
+from karasu.adapters.prompt_builder import PromptBuilder
 
 
 _PRINT_FLAGS = ("-p", "--print")
@@ -25,16 +26,20 @@ class ClaudeCodeAdapter(AgentAdapter):
         handles: Iterable[str] = ("code_change", "bug_fix", "implementation"),
         trust_level: int = 1,
         timeout: float = 120.0,
+        prompt_builder: PromptBuilder | None = None,
     ) -> None:
         super().__init__(handles=handles, trust_level=trust_level)
         self.command = command
         self.timeout = timeout
+        # Phase 3+ chunk 4c: prompt build is now an injectable
+        # collaborator (F-HANDOFF-3). The default builder preserves
+        # the pre-chunk-4c prompt for non-github dispatches and adds
+        # a fenced/capped/USER-DATA-labelled branch for github
+        # review-comment handoffs.
+        self.prompt_builder = prompt_builder or PromptBuilder()
 
     def _build_argv(self, request: AgentRequest) -> list[str]:
-        prompt = (
-            f"Karasu dispatch: {request.classification} on {request.path} "
-            f"(priority={request.priority})"
-        )
+        prompt = self.prompt_builder.build(request)
         # shlex.split's POSIX mode (default) treats backslashes as
         # escape characters. Windows paths embedded in ``command``
         # (e.g. ``C:\\Users\\me\\claude.CMD``) get corrupted unless the

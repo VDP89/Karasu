@@ -32,7 +32,7 @@ Phase 3: COMPLETED + DOGFOOD-VALIDATED + AUDIT-ACCEPTED — chunks 3a + 3b + 3c 
 - `karasu serve --host --port` ✔ (Phase 3+ chunk 4a) — GitHub webhook receiver. HMAC-verified, body-size-capped (1 MiB), dedup ring (1024 deliveries), maps `pull_request_review_comment.created` → `file_change` with `source="github_webhook"` + `github_*` metadata. Per-source-IP rate limit (60/min default, 429 over). Fails CLOSED on missing/short secret (F-WH-9). Implements `TriggerSource`.
 - A2A Agent Card endpoint ✔ (Phase 3+ chunk 4b) — `karasu serve` also serves `GET /.well-known/agent-card.json` with the static `AgentCard` JSON describing 4 baseline skills (watch-filesystem, route-events, receive-github-webhooks, record-corrections). Discovery only; capability negotiation deferred. POST on the card path → 405 (F-A2A-5 boundary held).
 - Trust-gradient startup warning ✔ (NICE-TO-HAVE #3, hard pre-req for chunk 4c) — `AgentAdapter.__init__` emits a structured `logging.WARNING` on `karasu.adapters.base` whenever `trust_level >= AUTONOMOUS_TRUST_LEVEL` (=2). `cmd_watch` / `cmd_serve` additionally print a loud stderr banner once at startup listing every autonomous adapter by `name(trust=N)`. Both layers reference `docs/local-dogfood.md` "Trust gradient — what trust_level actually does in production".
-- Review-comment auto-handoff: DEFERRED (chunk 4c — pre-reqs: issue #47 outline ✔ landing + NICE-TO-HAVE #3 startup warning ✔ landing)
+- Review-comment auto-handoff ✔ (Phase 3+ chunk 4c) — `Dispatcher` copies `event.data` into `AgentRequest.metadata`; `PromptBuilder` (`src/karasu/adapters/prompt_builder.py`) detects the github branch by presence of `metadata["github_body"]` and produces a fenced (triple-backtick), USER-DATA-labelled, capped (4 KiB body / 256 B author) prompt with explicit `[truncated, original was N bytes]` marker on overflow. `ClaudeCodeAdapter` accepts an optional `prompt_builder` kwarg and delegates prompt construction. F-HANDOFF-1 (injection fence), F-HANDOFF-3 (builder abstraction), F-HANDOFF-5 (body cap) all addressed. Single-hop only; chaining bounded by issue #47 cap shape when implementation lands.
 - Pipeline still does NOT consume `human_decision` directly — only the controller reads them and resubmits a `file_change` so `Pipeline._apply_scar_override` picks up the chat-recorded scar on the next dispatch
 
 ## Verified behavior (Phase 1C closed)
@@ -89,30 +89,29 @@ Cap enforcement: 6 `/scar` rapid-fire → exactly 3 resubmits, 3 cap warnings, 0
 ## Next step (entry point)
 
 ```text
-Phase 3+ chunk 4c — review-comment auto-handoff.
-HARD pre-reqs (status):
-  1. Issue #47 (cap-local-per-origin) outline plan — PR #53
-     open, awaiting first audit.
-  2. NICE-TO-HAVE #3 — startup warning when adapter
-     trust_level >= 2 — PR #54 open on
-     feat/trust-startup-warning. First audit NO APROBADO
-     (1 REQUERIDO + 2 NICE-TO-HAVE). Round-1 fix shipped
-     (commit ba3994e): banner leaked into cmd_hook removed,
-     contract-pin test added via inspect.getsource,
-     flush=True on the banner. Full main([...]) integration
-     test deferred to round 2 if escalated. Awaiting
-     re-audit. 268/268 green locally.
-Both must merge before chunk 4c opens.
-6 failure modes filed (F-HANDOFF-1..6) including prompt
-injection, trust=2 amplification, prompt bloat. See
-docs/phase-3-plus-pre-mortem.md § 4c and
-docs/memory/next-session.md.
+Phase 3+ chunk 4c — review-comment auto-handoff: SHIPPED.
+PR open on feat/review-comment-handoff awaiting audit.
+Implementation: Dispatcher copies event.data into
+AgentRequest.metadata; PromptBuilder isolates the github
+branch with F-HANDOFF-1 fence + USER DATA prefix and
+F-HANDOFF-5 body cap (4 KiB) + truncation marker;
+ClaudeCodeAdapter delegates prompt construction to the
+builder. 289/289 pass locally.
 
-Optional follow-ups for chunk 4b (NICE-TO-HAVE, not blocking 4c):
-- fetch_card helper + karasu peers <url> CLI for outbound discovery.
+Phase 3+ archive (issue #5) is essentially closed once
+chunk 4c lands. Remaining items are open-ended follow-ups:
 
-Queued hardening tasks (NICE-TO-HAVE from Phase 3 audit):
-- Persist effective priority on agent_response.data.
+Optional follow-ups (NICE-TO-HAVE, not blocking):
+- Issue #47 implementation PR (cap shape from PR #53
+  design; Option B chain cap with origin-aware tracking,
+  CHAIN_CAP=3, F-CAP-1..F-CAP-5).
+- fetch_card helper + karasu peers <url> CLI for outbound
+  A2A discovery (deferred from chunk 4b).
+- Persist effective priority on agent_response.data
+  (deferred from Phase 3 audit).
+- F-HANDOFF-6 path-existence fallback to "metadata-only"
+  prompt for force-pushed-away paths (deferred from
+  chunk 4c scope).
 ```
 
 ## Do NOT do yet

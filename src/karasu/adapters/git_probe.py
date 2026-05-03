@@ -116,9 +116,22 @@ def git_tree_path_exists(
     if not path:
         return False
     cwd_str = str(cwd) if cwd is not None else None
-    rc = runner(
-        ["git", "cat-file", "-e", f"{ref}:{path}"],
-        cwd_str,
-        timeout,
-    )
+    try:
+        rc = runner(
+            ["git", "cat-file", "-e", f"{ref}:{path}"],
+            cwd_str,
+            timeout,
+        )
+    except Exception as exc:  # noqa: BLE001 — see docstring contract
+        # An injected ``runner`` may raise on bad argv / unexpected
+        # cwd / library-internal failure. The "never raises"
+        # contract is wider than ``_default_runner``'s own
+        # try/except — this catch keeps the contract honest for
+        # any runner the operator plugs in.
+        _log.debug(
+            "git probe runner: injected runner raised %s; treating "
+            "as missing",
+            exc,
+        )
+        return False
     return rc == 0

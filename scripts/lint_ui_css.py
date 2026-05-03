@@ -30,6 +30,24 @@ Usage:
 
 Also exposed via ``pytest tests/test_lint_ui_css.py`` so CI
 catches regressions automatically.
+
+Known limits (regex v1):
+
+- The block-matcher uses ``[^{}]`` for top-level rule blocks.
+  CSS strings or comments that contain a literal ``{`` or
+  ``}`` (e.g. ``content: "{"`` or ``/* { */``) can confuse the
+  match. Not a concern at the current surface size (~5
+  stylesheets through UI-9) but a real CSS parser would be the
+  correct upgrade if the surface grows.
+- ``--focus-ring`` and ``outline: none`` matches are textual.
+  An ``outline: none`` inside a CSS comment registers as a
+  violation; a ``--focus-ring`` reference inside a comment
+  satisfies the replacement check. The lint does NOT strip
+  comments before scanning.
+- Both limits trade fidelity for simplicity. If a future
+  stylesheet legitimately needs a literal ``{`` in a
+  ``content`` value, the right move is to switch to a CSS
+  tokenizer, not to harden the regex.
 """
 
 from __future__ import annotations

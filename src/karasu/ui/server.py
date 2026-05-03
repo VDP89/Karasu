@@ -87,10 +87,18 @@ def _read_events(limit: int = DEFAULT_EVENT_LIMIT) -> list[dict[str, Any]]:
     append-only JSONL; partial / corrupt lines from a crash mid-
     write are real, and the UI must keep rendering whatever is
     valid.
+
+    Captures the module global ``EVENT_LOG`` into a local at
+    function entry so a concurrent ``configure(...)`` cannot
+    flip the path between the ``exists`` and ``read_text`` calls
+    on this read. Today there is no caller that hot-reconfigures
+    mid-request, but the local pin is cheap defence against a
+    future one.
     """
-    if not EVENT_LOG.exists():
+    event_log = EVENT_LOG
+    if not event_log.exists():
         return []
-    lines = EVENT_LOG.read_text(encoding="utf-8").splitlines()[-limit:]
+    lines = event_log.read_text(encoding="utf-8").splitlines()[-limit:]
     out: list[dict[str, Any]] = []
     for line in lines:
         try:

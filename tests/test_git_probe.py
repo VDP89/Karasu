@@ -103,6 +103,21 @@ def test_git_tree_path_exists_passes_string_cwd_through_unchanged() -> None:
     assert captured["cwd"] == "/srv/repo"
 
 
+def test_git_tree_path_exists_swallows_injected_runner_exceptions() -> None:
+    """ChatGPT audit P3 #1: the ``never raises`` contract must hold
+    for ANY ``runner`` the operator plugs in, not only for the
+    default subprocess wrapper. Verifies that an injected runner
+    raising ValueError / TypeError / RuntimeError still resolves
+    to False instead of bubbling into the dispatch path."""
+    for exc_cls in (ValueError, TypeError, RuntimeError, OSError):
+        def fake_runner(argv, cwd, timeout, exc=exc_cls):
+            raise exc("injected runner failure")
+
+        assert (
+            git_tree_path_exists("foo.py", runner=fake_runner) is False
+        )
+
+
 def test_git_tree_path_exists_default_cwd_is_none() -> None:
     """Default cwd=None lets git default to its own resolution
     (current process cwd). Pinned so a future change to "guess via

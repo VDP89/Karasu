@@ -832,3 +832,37 @@ Impact:
 Next step:
 - Operator audits the multi-chunk PR offline (ChatGPT review out-of-band, per session preference).
 - Local items (UI-2 design system + tokens page) still parked until the operator has a computer with browser. Controlled chunk-4c dogfood likewise.
+
+---
+
+## 2026-05-03 (queue close + ChatGPT audit hardening) — PR #65 audit applied
+
+What changed:
+- ChatGPT audit on PR #65 returned **APPROVED FOR MERGE** with no P1 / no blocker. Three P3 forward-look caveats applied as a single hardening commit on the same branch; one P2 (HTTP-status-aware retry in `fetch_card`) deferred to a separate issue.
+- `src/karasu/adapters/git_probe.py` (P3 #1):
+  - The `never raises` docstring contract was only fully honoured by `_default_runner`; an injected `runner` could raise `ValueError` / `TypeError` / `RuntimeError` and break the dispatch path. Wrapped the `runner(...)` call in a broad `except Exception` that returns False on any raise. Logs at DEBUG so operators tracing a "why is this metadata-only?" question still see the cause.
+- `src/karasu/ui/server.py` (P3 #2):
+  - `_read_events` now captures `EVENT_LOG` into a local at function entry. Today no caller hot-reconfigures mid-request, but the local pin is cheap defence against a future `configure(...)` racing with an in-flight read between `exists()` and `read_text()`.
+- `scripts/lint_ui_css.py` (P3 #3):
+  - Added a "Known limits (regex v1)" section to the module docstring documenting the two known fidelity gaps: top-level `[^{}]` block matcher confused by literal `{` / `}` in CSS strings or comments; textual `outline:none` / `--focus-ring` matches that don't strip comments. Explicit guidance: if the surface grows beyond a tokenizer's complexity break-even, switch to a real CSS parser rather than hardening the regex.
+- `tests/test_git_probe.py` — 1 new test (`test_git_tree_path_exists_swallows_injected_runner_exceptions`) pinning the broader try/except behaviour against `ValueError`, `TypeError`, `RuntimeError`, `OSError`.
+- 394/394 pass locally (393 prior + 1 new for the pin).
+
+Decisions:
+- P3 #1's `except Exception` is intentionally broad. The contract is "probe never raises into dispatch"; narrowing the catch would mean enumerating every runner failure mode forever. `BLE001` suppressed with a noqa comment that points to the docstring contract.
+- P3 #2 is a 2-line change (`event_log = EVENT_LOG` then read through `event_log`). No test added because today there is no concurrent reconfigure path; pinning a behaviour that no caller exercises would be churn.
+- P3 #3 is docs-only. The audit explicitly said "no hace falta parser ahora; solo dejar explícito que comentarios/strings con llaves no son objetivo del lint v1".
+- P2 (HTTP-status-aware retry on 502/503/504 in `fetch_card`) NOT applied here. It is a feature, not hardening — adds a new opt-in parameter, changes the surface area. Belongs in a separate small PR / issue rather than piggy-backing on the audit-applied commit. Logged as a follow-up below.
+
+Impact:
+- The `never raises` contract on `git_tree_path_exists` is now enforced for any runner, not just the default.
+- The `EVENT_LOG` global is robust against a hypothetical future hot-reconfigure path.
+- The lint script's regex limits are explicit, so the next contributor who hits the edge knows the upgrade path.
+- All 5 chunks in PR #65 now ship under audit-applied state. No P1, no blocker, frozen contracts untouched.
+
+Future:
+- (P2) `fetch_card(retry_http_statuses=...)` opt-in retry on 502/503/504. Default empty set (preserves current "do not retry on HTTP errors" behaviour). Not blocking; open as separate issue when revisited.
+
+Next step:
+- Operator decides whether to merge PR #65 (manual squash / rebase merge per repo convention).
+- Local items (UI-2 design system + tokens page) still parked until the operator has a computer with browser. Controlled chunk-4c dogfood likewise.

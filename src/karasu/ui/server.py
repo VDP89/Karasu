@@ -23,6 +23,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
 
+# Default bus path. Mutable so ``configure(event_log=...)`` can
+# point the UI server at a non-default ``karasu.yaml`` bus
+# location (UI-9 deferred follow-up). Tests and ``cmd_ui``
+# override this; the default keeps the dogfood path working
+# for an operator running ``karasu ui`` from a fresh checkout
+# without a config file.
 EVENT_LOG = Path(".karasu/events.jsonl")
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -81,10 +87,18 @@ def _read_events(limit: int = DEFAULT_EVENT_LIMIT) -> list[dict[str, Any]]:
     append-only JSONL; partial / corrupt lines from a crash mid-
     write are real, and the UI must keep rendering whatever is
     valid.
+
+    Captures the module global ``EVENT_LOG`` into a local at
+    function entry so a concurrent ``configure(...)`` cannot
+    flip the path between the ``exists`` and ``read_text`` calls
+    on this read. Today there is no caller that hot-reconfigures
+    mid-request, but the local pin is cheap defence against a
+    future one.
     """
-    if not EVENT_LOG.exists():
+    event_log = EVENT_LOG
+    if not event_log.exists():
         return []
-    lines = EVENT_LOG.read_text(encoding="utf-8").splitlines()[-limit:]
+    lines = event_log.read_text(encoding="utf-8").splitlines()[-limit:]
     out: list[dict[str, Any]] = []
     for line in lines:
         try:
@@ -214,8 +228,34 @@ def _content_type_for(path: Path) -> str:
     }.get(suffix, "application/octet-stream")
 
 
-def run_ui_server(host: str = "127.0.0.1", port: int = 8787) -> None:
-    """Start the UI HTTP server. Blocks until interrupted."""
+def configure(event_log: Path) -> None:
+    """Override the bus path read by ``/api/events`` and
+    ``/api/health``.
+
+    Called by ``cmd_ui`` (so ``karasu ui`` honours
+    ``event_bus.path`` in ``karasu.yaml``) and by tests. Pure
+    mutation of the module global; subsequent requests see the
+    new value on the next read because ``_read_events`` reads
+    ``EVENT_LOG`` at call time.
+    """
+    global EVENT_LOG
+    EVENT_LOG = event_log
+
+
+def run_ui_server(
+    host: str = "127.0.0.1",
+    port: int = 8787,
+    event_log: Path | None = None,
+) -> None:
+    """Start the UI HTTP server. Blocks until interrupted.
+
+    ``event_log`` overrides the default ``.karasu/events.jsonl``
+    bus path. ``cmd_ui`` passes the resolved value from
+    ``karasu.yaml``; callers that omit the kwarg get the
+    pre-existing default.
+    """
+    if event_log is not None:
+        configure(event_log)
     server = ThreadingHTTPServer((host, port), UIHandler)
     print(f"karasu ui → http://{host}:{port}")
     try:

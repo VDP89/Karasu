@@ -649,3 +649,220 @@ Impact:
 
 Next step:
 - Audit the PR. After merge, the only items left are operational (controlled dogfood of chunk 4c) or speculative future enhancements (git-tree-aware probe, fetch_card retry). No code work blocking.
+
+---
+
+## 2026-05-03 — effective_priority helper (PR #60 follow-up)
+
+What changed:
+- Audit-deferred follow-up from PR #60. Public read-side accessor `karasu.eventbus.effective_priority(event)` returns `event.data["priority"]` (or `None` when absent) so the bus-audit tooling does not duplicate the "None-vs-default" decision at every call site.
+- `src/karasu/eventbus/queries.py` (NEW) — owns the helper. Future read-side helpers over `Event` records (chain-depth, correlate-walks, etc.) belong here so `jsonl_bus.py` stays focused on persistence.
+- `src/karasu/eventbus/__init__.py` — re-exports `effective_priority` so callers can `from karasu.eventbus import effective_priority`.
+- `tests/test_eventbus_queries.py` (NEW) — 5 tests covering: agent_response present, agent_response absent (returns `None`), explicit `None` value, controller-resubmit `file_change` (chunk 3b inherits priority), non-string coercion.
+- `docs/event-schema.md` — new "Priority semantics" section explaining that `data.priority` on agent_response is the EFFECTIVE priority and pointing tooling at the helper. Notes that `None` surfaces a real audit-trail gap rather than substituting a default.
+- 340/340 pass locally (335 prior + 5 new).
+
+Decisions:
+- Helper returns `None`, not a default. PR #60 deliberately avoided populating a default so pre-PR #60 `agent_response` events stay observable as gaps. The helper preserves that semantic contract; callers decide whether `None` is acceptable for their use case (e.g. analyze can show "—", a future analytics pass can flag it).
+- Helper coerces to `str`. Bus events round-trip through JSON, so today every priority value is already a string; coercing defensively keeps callers from getting bitten if a future source writes an int / enum / number.
+- Did NOT add the optional dual `priority_original` / `priority_effective` fields on `agent_response.data`. The audit listed them as conditional on "analytics surface a need". No analytics consumer exists today, so the additive schema bump is deferred.
+- New module under `eventbus/queries.py` rather than free functions inside `jsonl_bus.py`. Persistence and read-side queries are different concerns; splitting them now avoids a future refactor when the second helper lands.
+
+Impact:
+- Frozen contracts untouched (additive helper, additive docs section, no schema change).
+- The remaining `Future:` entry under `current-state.md` shrinks to "optional dual priority fields if analytics surface a need" — a smaller, conditional follow-up.
+
+Next step:
+- Audit the PR. After merge, continue down the remote-friendly queue: optional retry on network error in `fetch_card` (PR #58 follow-up), then git-tree-aware path probe in `PromptBuilder` (PR #59 follow-up). UI-2 still parked until operator has computer + browser.
+
+---
+
+## 2026-05-03 (later) — fetch_card retry on transient network errors (PR #58 follow-up)
+
+What changed:
+- Audit-deferred follow-up from PR #58. `fetch_card` now accepts an optional `retries` kwarg (default 0); `karasu peers --retries N` exposes it on the CLI. Designed for the operator who runs `karasu peers` over a flaky link or against a peer that just restarted.
+- `src/karasu/a2a/fetch.py`:
+  - New constant `DEFAULT_FETCH_RETRIES = 0` — preserves byte-for-byte the previous single-shot semantics for every existing caller. Operators opt in via the kwarg / flag.
+  - `fetch_card(base_url, *, timeout=..., retries=0)` loops attempts on `URLError` only. `HTTPError` and downstream JSON / shape errors short-circuit immediately — those are real answers from the peer, not transient network failures, and retrying them would amplify a server outage.
+  - Backoff schedule: `0.5 s, 1.0 s, 2.0 s, 4.0 s, 4.0 s, ...` (exponential up to a 4 s cap). Total wall-clock is bounded by `(timeout + backoff) * (retries + 1)`.
+  - `_sleep_backoff(attempt)` extracted as a module-level function so tests patch it surgically rather than `time.sleep`. Avoids accidentally swallowing pytest-internal sleeps.
+  - `retries < 0` raises `ValueError` (same fail-fast convention as the `timeout <= 0` guard). An operator typing `--retries -1` should not silently degrade to "no retries".
+- `src/karasu/a2a/__init__.py` re-exports `DEFAULT_FETCH_RETRIES`.
+- `src/karasu/__main__.py`:
+  - `cmd_peers` passes `retries` through to `fetch_card`.
+  - `--retries` CLI flag added with `default=DEFAULT_FETCH_RETRIES` so the help-text default tracks the constant.
+- `tests/test_a2a_fetch.py` — 9 new tests:
+  - Default `DEFAULT_FETCH_RETRIES == 0` pinned.
+  - `retries=0` (default) → 1 urlopen call, 0 backoff sleeps.
+  - 2 URLErrors then 200 with `retries=2` → 3 calls, 2 sleeps, success returned.
+  - All URLErrors with `retries=3` → 4 calls, 3 sleeps, final error wrapped.
+  - HTTPError with `retries=5` → 1 call, 0 sleeps (no retry on real server answer).
+  - Invalid JSON with `retries=3` → 1 call, 0 sleeps (no retry on parse error).
+  - `retries=-1` → ValueError.
+  - `_sleep_backoff` schedule matches `[0.5, 1.0, 2.0, 4.0, 4.0]` for attempts 0..4.
+  - CLI: `--retries 2` propagates to `urlopen.call_count == 3` on URLError.
+- 349/349 pass locally (340 prior + 9 new).
+
+Decisions:
+- Default `retries=0`. Every existing caller keeps single-shot semantics; opt-in via the kwarg / flag. Avoids retroactively changing the cost / latency profile of a function that 4 places already call.
+- Retry only on `URLError`, not on `HTTPError` or JSON / shape errors. The motivating use case is "DNS / TCP hiccup that resolves in <1 s", not "peer is genuinely down" — the latter benefits from the operator seeing the failure quickly. Per F-WH-style fail-fast conventions in this repo.
+- Exponential backoff with a 4 s cap. Caps the wall-clock surprise: operator can compute "worst case ~ (timeout + 4) × (retries + 1)" without reading the implementation. Initial 0.5 s is small enough that a single retry on a transient hiccup feels instant.
+- Extracted `_sleep_backoff` module-level. Tests patching `time.sleep` directly would swallow sleeps from any other code path that happened to enter via the same call (pytest-asyncio internals, threading shutdown, etc.). Patching the named helper isolates the assertion.
+- `--retries` (not `--max-retries` or `--retry-count`). Matches `--timeout` cadence for the same CLI; one flag = one operator concern.
+
+Impact:
+- `karasu peers` is more forgiving on flaky networks without changing default behaviour for anyone.
+- One more entry strikes off the `Future:` list in `current-state.md`.
+- Frozen contracts untouched (additive parameter with backwards-compatible default, additive constant, no schema change).
+
+Next step:
+- Continue the remote-friendly queue. Next: git-tree-aware path probe in `PromptBuilder` (PR #59 follow-up), then the UI-0 lint script for bare `outline:none`, then UI-9 deferred items (path-traversal test + EVENT_LOG config-aware).
+
+---
+
+## 2026-05-03 (later still) — git-tree-aware path probe (PR #59 follow-up)
+
+What changed:
+- Audit-deferred follow-up from chunk 4c (PR #59). The default `PromptBuilder` probe is `Path.exists` — i.e. "is this file on disk in the working tree?". This change ships a sibling probe that consults the COMMITTED tree at a given ref, so deployments where the repo state is the source of truth (bare repo, divergent workspace) can opt in.
+- `src/karasu/adapters/git_probe.py` (NEW):
+  - `git_tree_path_exists(path, *, ref="HEAD", cwd=None, timeout=5.0, runner=_default_runner)` — runs `git cat-file -e <ref>:<path>`; returns True on rc=0, False on rc!=0 / empty path / runner error.
+  - `_default_runner(argv, cwd, timeout) -> int` — wraps `subprocess.run`, swallows `FileNotFoundError` / `TimeoutExpired` / `OSError` and returns a sentinel non-zero rc. Never raises into the dispatch path.
+  - `runner` is injected in the same shape as `karasu.controller.sources.git_hook.GitRunner` — module-level callable type alias, fake `runner` for unit tests, real `_default_runner` in production.
+  - `_DEFAULT_GIT_PROBE_TIMEOUT_S = 5.0` — generous enough for cold-cache cat-file on a large repo, short enough that an operator's dispatch never hangs on a wedged git process.
+- `src/karasu/adapters/__init__.py` re-exports `git_tree_path_exists` and `PromptBuilder`. The `from karasu.adapters import PromptBuilder, git_tree_path_exists` pattern in the module docstring example now resolves.
+- `tests/test_git_probe.py` (NEW) — 17 tests across three layers:
+  - Unit (mocked runner): rc=0 → True; rc!=0 → False; empty path skips runner entirely; ref / cwd pass-through; default cwd=None pinned.
+  - `_default_runner` error fallthrough: FileNotFoundError, TimeoutExpired, OSError each return a non-zero rc.
+  - End-to-end against a real `git init` repo in `tmp_path`: committed file → True; untracked file → False; missing path → False; unknown ref → False; not-a-repo cwd → False. All gated by `pytest.mark.skipif(not _git_available())`.
+  - PromptBuilder integration: `path_exists=lambda _: False` → metadata-only branch with "Do NOT attempt edits"; `path_exists=lambda _: True` → full handoff branch.
+- 366/366 pass locally (349 prior + 17 new).
+
+Decisions:
+- `runner` injected via callable, mirroring the `git_hook` source pattern. Lets tests verify argv shape without spawning real processes; production wiring stays the simple default.
+- Probe never raises. The dispatch path is on the hot loop for review-comment handoff; an exception in the probe would break dispatch entirely, which is much worse than a missed "this file is editable" optimization. Failure modes (no git, not a repo, unknown ref, timeout) all collapse to False — the prompt falls through to metadata-only, which is the safer default.
+- Default `cwd=None` lets `git` use its own resolution (the calling process's cwd). Pinning this avoids a future "guess via Path.cwd()" change becoming an accidental behavioural shift.
+- Empty path short-circuits without invoking the runner. `git cat-file -e <ref>:` is a directory-tree query that could return rc=0 unexpectedly; the existing `_default_path_exists` already returns False on empty, so the git-tree probe matches.
+- Probe lives in `karasu.adapters` (not `karasu.eventbus.queries`). It is read-side over the workspace, not over the bus; coupling it to PromptBuilder via the same package is the right neighbourhood.
+- `PromptBuilder` itself is unchanged. The injection point landed in PR #59 already; this chunk only supplies the optional implementation.
+
+Impact:
+- Three of the original five queued "Future:" entries now closed (priority helper, fetch_card retry, git-tree probe).
+- No bus mutation, no schema change, no new runtime dependency. Frozen contracts untouched.
+
+Next step:
+- Continue the queue: UI-0 lint script for bare `outline:none` (UI-2 deferred), then UI-9 deferred items (URL-encoded path-traversal test for `/assets/*` + config-aware `EVENT_LOG`).
+
+---
+
+## 2026-05-03 (later still ×2) — UI-0 lint script for bare outline:none
+
+What changed:
+- UI-0 round-2 NICE-TO-HAVE — UI-2 deferred lint script catches bare `outline: none` rules that strip the focus ring without the canonical `--focus-ring` replacement. Shipped ahead of UI-2 since it is pure Python tooling (no browser, no design tokens needed yet) and lets every subsequent UI-N PR start from a CI-enforced baseline.
+- `scripts/lint_ui_css.py` (NEW):
+  - Walks each provided root for `*.css` files and the inline `<style>` block of every `*.html`.
+  - For each rule block (`{ ... }`) that contains `outline: none` / `outline: 0` / no-space variants, requires a matching `--focus-ring` reference in the same block. Otherwise flagged as a violation.
+  - Reports `path:line: bare 'outline: none' — UI-0 brief §6 requires --focus-ring replacement in the same rule block.`
+  - Default scan root: `src/karasu/ui/static`. CLI accepts additional roots: `python scripts/lint_ui_css.py docs/ui/explorations`.
+  - Exit 0 = clean, exit 1 = at least one violation.
+  - Missing roots are treated as "nothing to scan" (exit 0) so composed CI invocations stay simple.
+- `tests/test_lint_ui_css.py` (NEW) — 15 tests across three layers:
+  - Unit (`lint_css_text`): bare none / 0 / no-space variants flagged; `outline: none + box-shadow: var(--focus-ring)` allowed; non-bare values (`outline: 2px solid var(--accent)`) allowed; `outline-color: none` NOT matched (different property); multi-block files yield one violation per offending block; at-rule-nested compliant blocks do not mask sibling violations.
+  - File-level: CSS suffix routes via `lint_css_text`; HTML inline `<style>` parsed with correct line offsets including the lines BEFORE `<style>`; non-CSS / non-HTML suffixes ignored.
+  - End-to-end `main()`: clean tree → exit 0; violation → exit 1 with file:line on stdout; missing root → exit 0.
+  - CI pin: `test_live_ui_static_tree_is_clean` runs the lint against `src/karasu/ui/static` and asserts rc=0. Trips automatically when a future UI-N PR introduces a bare `outline: none`.
+- 381/381 pass locally (366 prior + 15 new).
+
+Decisions:
+- Regex-based, not full CSS parser. The rule is local (a single block) and the scope is small (one stylesheet today, ~5 expected by UI-9). A real parser would be over-engineered for the surface; the regex with `[^{}]` for top-level block matching avoids most of the false-positive surface.
+- The `--focus-ring` token is the SOLE accepted replacement signal. UI-0 brief explicitly names it as the canonical mechanism; an operator who wants a different replacement should justify it in the brief first, then update the lint. Avoids the lint becoming permissive over time.
+- Missing roots are silent (exit 0), not warnings. CI invocations like `lint_ui_css.py src/karasu/ui/static custom/exploration` should not fail just because the optional second root does not exist on this branch.
+- Lives in `scripts/` next to `ui_screenshots.py`, not in `src/karasu/`. It is dev tooling, not runtime code; shipping it inside the package would imply operators can `karasu lint`, which is not the design.
+- CI integration via pytest, not a separate GitHub workflow. The repo already runs `pytest -q` on every PR; piggy-backing keeps the lint visible to the same review cadence.
+- The script also supports `<style>` blocks in HTML so the current `src/karasu/ui/static/index.html` (inline-styled stub) is covered. Once UI-2 lifts styles into `tokens.css` / `base.css`, the `.html` branch becomes mostly dormant — but it stays as a defence against future inline-style regressions.
+
+Impact:
+- UI-2 onward starts from a CI-enforced focus-ring baseline.
+- The Phase 3 audit's last UI-0 round-2 NICE-TO-HAVE closes.
+- No runtime change. No bus mutation. No new dependency. Frozen contracts untouched.
+
+Next step:
+- Last item in the remote-friendly queue: UI-9 deferred (URL-encoded path-traversal test for `/assets/*` + config-aware `EVENT_LOG` constant).
+
+---
+
+## 2026-05-03 (queue close) — UI-9 deferred items shipped
+
+What changed:
+- Final entry in the remote-friendly queue: the two UI-9 audit-noted items land now (well before UI-9 itself) so neither becomes deadline pressure later.
+- `src/karasu/ui/server.py`:
+  - `EVENT_LOG` is still the module-level default but now mutable via `configure(event_log)`.
+  - `run_ui_server(host, port, event_log: Path | None = None)` accepts the override; `event_log=None` keeps the pre-existing default for callers that don't supply a config.
+  - `_read_events` reads `EVENT_LOG` at call time, so `configure` flips the path even mid-server (useful for tests, transparent to operators).
+- `src/karasu/__main__.py`:
+  - `cmd_ui` now loads `karasu.yaml` via `_load_config(args.config)` and passes `event_log=_bus_path(config)` through to `run_ui_server`. `karasu watch` and `karasu ui` now read the SAME log when `event_bus.path` is set.
+- `tests/test_ui_server.py` (NEW) — 12 tests across two layers:
+  - **Path-traversal coverage** (UI-9 audit-noted item):
+    - Literal `..` traversal → 403.
+    - Inner-segment `..` traversal (`foo/../bar/../..`) → 403.
+    - Percent-encoded `%2E%2E` → 403/404 (literal filename, not decoded by `BaseHTTPRequestHandler`).
+    - Percent-encoded `%2E%2E%2F` → 403/404.
+    - Double-encoded `%252E%252E` → 403/404 (defence against a hypothetical future middleware that decodes once).
+    - Real file outside `STATIC_DIR` (a peer of it) is unreachable via `/assets/../`. Pinned because a future refactor that sets `STATIC_DIR` off the import-time location could otherwise widen the reachable set silently.
+    - Sanity: a real file under `static/` IS served; index.html responds with `<title>Karasu UI</title>`.
+  - **Config-aware EVENT_LOG** (UI-9 audit-noted item):
+    - `configure(path)` sets the global; calling it twice leaves the second value in place (idempotent).
+    - End-to-end: write a synthetic event to the configured path → `/api/events` returns it through the projection.
+    - Missing log → empty projection, not 500.
+    - `run_ui_server(event_log=PATH)` calls `configure` (verified via patched `ThreadingHTTPServer`).
+- 393/393 pass locally (381 prior + 12 new).
+
+Decisions:
+- `configure` mutates a module global rather than threading the path through every function. The handler is a stdlib `BaseHTTPRequestHandler` whose `__init__` signature is fixed; passing per-request state via a global is the documented stdlib pattern. The cost is "tests must save / restore"; the `ui_http` fixture handles that.
+- Tests assert `status in (403, 404)` for the encoded-traversal cases. Both are SAFE — the test pins the boundary, not the specific code path. If a future refactor changes which branch fires, the test still asserts "no 200, no escape".
+- `cmd_ui` loads the config eagerly; if `karasu.yaml` is absent, the existing fall-through in `_load_config` returns `{}` and `_bus_path({})` returns the default. The UI keeps working from a fresh checkout without a config file.
+- Did NOT add a `--event-log` CLI flag. The bus path is a karasu-wide concern (every other CLI command reads `event_bus.path`); duplicating it on the UI command would diverge the contract. Operators set the path in `karasu.yaml` once.
+- Did NOT introduce an HTTP-layer URL decoder. The current behaviour ("encoded chars stay literal") is itself the safe default; tests pin it so an accidental decode in a future refactor surfaces as a regression.
+
+Impact:
+- `karasu ui` is now usable against any operator's bus path, not just the dogfood default.
+- Path-traversal boundary is now explicitly tested. The implementation already held; the test pins it against future refactors.
+- All 5 chunks in the remote-friendly queue closed.
+- No bus mutation, no schema change. Frozen contracts untouched.
+
+Next step:
+- Operator audits the multi-chunk PR offline (ChatGPT review out-of-band, per session preference).
+- Local items (UI-2 design system + tokens page) still parked until the operator has a computer with browser. Controlled chunk-4c dogfood likewise.
+
+---
+
+## 2026-05-03 (queue close + ChatGPT audit hardening) — PR #65 audit applied
+
+What changed:
+- ChatGPT audit on PR #65 returned **APPROVED FOR MERGE** with no P1 / no blocker. Three P3 forward-look caveats applied as a single hardening commit on the same branch; one P2 (HTTP-status-aware retry in `fetch_card`) deferred to a separate issue.
+- `src/karasu/adapters/git_probe.py` (P3 #1):
+  - The `never raises` docstring contract was only fully honoured by `_default_runner`; an injected `runner` could raise `ValueError` / `TypeError` / `RuntimeError` and break the dispatch path. Wrapped the `runner(...)` call in a broad `except Exception` that returns False on any raise. Logs at DEBUG so operators tracing a "why is this metadata-only?" question still see the cause.
+- `src/karasu/ui/server.py` (P3 #2):
+  - `_read_events` now captures `EVENT_LOG` into a local at function entry. Today no caller hot-reconfigures mid-request, but the local pin is cheap defence against a future `configure(...)` racing with an in-flight read between `exists()` and `read_text()`.
+- `scripts/lint_ui_css.py` (P3 #3):
+  - Added a "Known limits (regex v1)" section to the module docstring documenting the two known fidelity gaps: top-level `[^{}]` block matcher confused by literal `{` / `}` in CSS strings or comments; textual `outline:none` / `--focus-ring` matches that don't strip comments. Explicit guidance: if the surface grows beyond a tokenizer's complexity break-even, switch to a real CSS parser rather than hardening the regex.
+- `tests/test_git_probe.py` — 1 new test (`test_git_tree_path_exists_swallows_injected_runner_exceptions`) pinning the broader try/except behaviour against `ValueError`, `TypeError`, `RuntimeError`, `OSError`.
+- 394/394 pass locally (393 prior + 1 new for the pin).
+
+Decisions:
+- P3 #1's `except Exception` is intentionally broad. The contract is "probe never raises into dispatch"; narrowing the catch would mean enumerating every runner failure mode forever. `BLE001` suppressed with a noqa comment that points to the docstring contract.
+- P3 #2 is a 2-line change (`event_log = EVENT_LOG` then read through `event_log`). No test added because today there is no concurrent reconfigure path; pinning a behaviour that no caller exercises would be churn.
+- P3 #3 is docs-only. The audit explicitly said "no hace falta parser ahora; solo dejar explícito que comentarios/strings con llaves no son objetivo del lint v1".
+- P2 (HTTP-status-aware retry on 502/503/504 in `fetch_card`) NOT applied here. It is a feature, not hardening — adds a new opt-in parameter, changes the surface area. Belongs in a separate small PR / issue rather than piggy-backing on the audit-applied commit. Logged as a follow-up below.
+
+Impact:
+- The `never raises` contract on `git_tree_path_exists` is now enforced for any runner, not just the default.
+- The `EVENT_LOG` global is robust against a hypothetical future hot-reconfigure path.
+- The lint script's regex limits are explicit, so the next contributor who hits the edge knows the upgrade path.
+- All 5 chunks in PR #65 now ship under audit-applied state. No P1, no blocker, frozen contracts untouched.
+
+Future:
+- (P2) `fetch_card(retry_http_statuses=...)` opt-in retry on 502/503/504. Default empty set (preserves current "do not retry on HTTP errors" behaviour). Not blocking; open as separate issue when revisited.
+
+Next step:
+- Operator decides whether to merge PR #65 (manual squash / rebase merge per repo convention).
+- Local items (UI-2 design system + tokens page) still parked until the operator has a computer with browser. Controlled chunk-4c dogfood likewise.

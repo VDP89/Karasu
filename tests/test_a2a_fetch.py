@@ -23,6 +23,7 @@ import pytest
 
 from karasu.a2a import (
     AGENT_CARD_PATH,
+    DEFAULT_FETCH_RETRIES,
     DEFAULT_FETCH_TIMEOUT,
     AgentCardFetchError,
     build_karasu_card,
@@ -363,3 +364,148 @@ def test_cmd_peers_passes_timeout_through(capsys) -> None:
     # Timeout argument propagated to urlopen.
     _args, kwargs = mock_urlopen.call_args
     assert kwargs.get("timeout") == 1.5
+
+
+# ---------------------------------------------------------------------------
+# fetch_card — retry on network error (PR #58 follow-up)
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_card_default_retries_is_zero() -> None:
+    """Pin the default at 0 so adding retries cannot silently change
+    single-shot semantics for any existing caller."""
+    assert DEFAULT_FETCH_RETRIES == 0
+
+
+def test_fetch_card_no_retry_by_default_on_url_error() -> None:
+    """retries=0 (default) — one attempt, one URLError, one fetch error.
+    No silent retry behind the caller's back."""
+    with patch("karasu.a2a.fetch.urlopen") as mock_urlopen, patch(
+        "karasu.a2a.fetch._sleep_backoff"
+    ) as mock_sleep:
+        mock_urlopen.side_effect = URLError("connection refused")
+        with pytest.raises(AgentCardFetchError, match="network error"):
+            fetch_card("http://example.invalid")
+    assert mock_urlopen.call_count == 1
+    mock_sleep.assert_not_called()
+
+
+def test_fetch_card_retries_on_url_error_then_succeeds() -> None:
+    """Two URLErrors then a 200 — the third attempt's payload is
+    returned. Verifies retry covers transient DNS / TCP hiccups.
+
+    ``io.BytesIO`` is itself a context manager (``__enter__`` returns
+    self), which matches what ``with urlopen(...) as response`` needs
+    on the success branch."""
+    payload = b'{"name": "peer", "skills": []}'
+    with patch("karasu.a2a.fetch.urlopen") as mock_urlopen, patch(
+        "karasu.a2a.fetch._sleep_backoff"
+    ) as mock_sleep:
+        mock_urlopen.side_effect = [
+            URLError("dns hiccup"),
+            URLError("tcp reset"),
+            _mock_response(payload),
+        ]
+        result = fetch_card("http://example.invalid", retries=2)
+    assert result == {"name": "peer", "skills": []}
+    assert mock_urlopen.call_count == 3
+    # Backoff fires once per failed attempt before the next try,
+    # i.e. exactly ``retries`` times when the final attempt
+    # succeeds — never after the last attempt.
+    assert mock_sleep.call_count == 2
+
+
+def test_fetch_card_retries_exhausted_raises_last_error() -> None:
+    """All attempts raise URLError → AgentCardFetchError surfaces the
+    final reason. Total urlopen calls = retries + 1."""
+    with patch("karasu.a2a.fetch.urlopen") as mock_urlopen, patch(
+        "karasu.a2a.fetch._sleep_backoff"
+    ) as mock_sleep:
+        mock_urlopen.side_effect = URLError("still down")
+        with pytest.raises(AgentCardFetchError, match="still down"):
+            fetch_card("http://example.invalid", retries=3)
+    assert mock_urlopen.call_count == 4
+    # No sleep after the final (failing) attempt.
+    assert mock_sleep.call_count == 3
+
+
+def test_fetch_card_does_not_retry_on_http_error() -> None:
+    """A non-2xx is the server's real answer. Retrying it would be
+    wasteful and could amplify a server outage; surface the status
+    immediately even when retries > 0."""
+    with patch("karasu.a2a.fetch.urlopen") as mock_urlopen, patch(
+        "karasu.a2a.fetch._sleep_backoff"
+    ) as mock_sleep:
+        mock_urlopen.side_effect = HTTPError(
+            url="http://example.invalid",
+            code=503,
+            msg="Service Unavailable",
+            hdrs=None,  # type: ignore[arg-type]
+            fp=None,
+        )
+        with pytest.raises(AgentCardFetchError, match="HTTP 503"):
+            fetch_card("http://example.invalid", retries=5)
+    assert mock_urlopen.call_count == 1
+    mock_sleep.assert_not_called()
+
+
+def test_fetch_card_does_not_retry_on_invalid_json() -> None:
+    """Successful HTTP fetch + bad JSON body is not a network glitch.
+    Surface immediately; retrying would re-fetch the same garbage."""
+    with patch("karasu.a2a.fetch.urlopen") as mock_urlopen, patch(
+        "karasu.a2a.fetch._sleep_backoff"
+    ) as mock_sleep:
+        mock_urlopen.return_value.__enter__.return_value = _mock_response(
+            b"not really json"
+        )
+        with pytest.raises(AgentCardFetchError, match="invalid JSON"):
+            fetch_card("http://example.invalid", retries=3)
+    assert mock_urlopen.call_count == 1
+    mock_sleep.assert_not_called()
+
+
+def test_fetch_card_rejects_negative_retries() -> None:
+    """Defence against an operator passing ``--retries -1`` (e.g. via
+    a typo or env-var expansion). Fail-fast is safer than silently
+    treating it as zero."""
+    with pytest.raises(ValueError, match="retries"):
+        fetch_card("http://x", retries=-1)
+
+
+def test_fetch_card_backoff_is_exponential_and_capped() -> None:
+    """``_sleep_backoff(attempt)`` honours the documented schedule:
+    0.5, 1.0, 2.0, 4.0, 4.0 ... — exponential up to the cap."""
+    from karasu.a2a.fetch import (
+        _BACKOFF_INITIAL_SECONDS,
+        _BACKOFF_MAX_SECONDS,
+        _sleep_backoff,
+    )
+
+    assert _BACKOFF_INITIAL_SECONDS == 0.5
+    assert _BACKOFF_MAX_SECONDS == 4.0
+    with patch("karasu.a2a.fetch.time.sleep") as mock_sleep:
+        for attempt in range(5):
+            _sleep_backoff(attempt)
+    delays = [call.args[0] for call in mock_sleep.call_args_list]
+    assert delays == [0.5, 1.0, 2.0, 4.0, 4.0]
+
+
+def test_cmd_peers_passes_retries_through(capsys) -> None:
+    """--retries reaches fetch_card. With 2 retries and 3 URLErrors,
+    urlopen is called 3 times before exit 2 surfaces."""
+    from karasu.__main__ import main
+
+    with patch("karasu.a2a.fetch.urlopen") as mock_urlopen, patch(
+        "karasu.a2a.fetch._sleep_backoff"
+    ):
+        mock_urlopen.side_effect = URLError("nothing on that port")
+        rc = main(
+            [
+                "peers",
+                "--retries",
+                "2",
+                "http://127.0.0.1:1",
+            ]
+        )
+    assert rc == 2
+    assert mock_urlopen.call_count == 3

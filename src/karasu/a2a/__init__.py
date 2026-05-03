@@ -22,6 +22,7 @@ from karasu.a2a.card import (
 )
 from karasu.a2a.fetch import (
     AGENT_CARD_PATH,
+    DEFAULT_FETCH_RETRIES,
     DEFAULT_FETCH_TIMEOUT,
     AgentCardFetchError,
     fetch_card,
@@ -29,6 +30,7 @@ from karasu.a2a.fetch import (
 
 __all__ = [
     "AGENT_CARD_PATH",
+    "DEFAULT_FETCH_RETRIES",
     "DEFAULT_FETCH_TIMEOUT",
     "AgentCapabilities",
     "AgentCard",

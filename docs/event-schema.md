@@ -48,6 +48,22 @@ this log — there is no other shared state.
 - **`response`** — populated by adapters and consumed by the
   reporter. `requires_human` is set by the trust gradient.
 
+## Priority semantics
+
+`data.priority` on an `agent_response` is the **effective**
+priority — the value that actually reached the adapter for that
+dispatch, i.e. post any scar or classifier override. The
+pre-override value (when an override fired) lives only on the
+originating `file_change`; reconstruct it by following
+`data.correlates` back to the `file_change.id`. See PR #60.
+
+Tooling that audits the bus post-hoc should read this field via
+`karasu.eventbus.effective_priority(event)`. The helper returns
+`None` for events without the field rather than substituting a
+default, so a missing priority on a pre-PR #60 `agent_response`
+stays visible as a gap in the audit trail instead of silently
+becoming `"normal"`.
+
 ## Compaction
 
 Phase 1 keeps the log forever; Phase 2 will rotate when the file

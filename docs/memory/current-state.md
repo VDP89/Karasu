@@ -17,7 +17,7 @@ Phase 3: COMPLETED + DOGFOOD-VALIDATED + AUDIT-ACCEPTED — chunks 3a + 3b + 3c 
 - Cross-platform ignore matching (forward-slash normalization) ✔
 - Debounce per `(path, change_type)` with 250 ms default ✔
 - Dispatcher suppresses `agent_response` when no adapter handles ✔
-- Dispatcher persists effective priority on `agent_response.data` ✔ — additive schema bump (Phase 3 audit follow-up). The post-scar-override priority that actually reached the adapter is recorded so `analyze` can audit dispatch priority post-hoc without cross-referencing the originating `file_change`.
+- Dispatcher persists effective priority on `agent_response.data` ✔ — additive schema bump (Phase 3 audit follow-up). The post-scar-override priority that actually reached the adapter is recorded so `analyze` can audit dispatch priority post-hoc without cross-referencing the originating `file_change`. Public accessor: `karasu.eventbus.effective_priority(event)` — returns the priority string or `None` when the field is absent (pre-PR #60 events). Tooling that audits the bus reads through this helper instead of duplicating the None-vs-default decision per call site. See `docs/event-schema.md` "Priority semantics".
 - Real `ClaudeCodeAdapter` end-to-end via `claude -p` ✔
 - Cross-platform CLI shim resolution via `shutil.which` ✔
 - `dispatch_on` per classifier rule + `code_change` excludes `deleted` by default ✔
@@ -32,7 +32,7 @@ Phase 3: COMPLETED + DOGFOOD-VALIDATED + AUDIT-ACCEPTED — chunks 3a + 3b + 3c 
 - `karasu hook <pre-commit|post-commit|post-merge>` ✔ — git-hook source as a one-shot CLI. Submits `file_change` events with `source="git_hook"` and `data.git_hook=<name>`.
 - `karasu serve --host --port` ✔ (Phase 3+ chunk 4a) — GitHub webhook receiver. HMAC-verified, body-size-capped (1 MiB), dedup ring (1024 deliveries), maps `pull_request_review_comment.created` → `file_change` with `source="github_webhook"` + `github_*` metadata. Per-source-IP rate limit (60/min default, 429 over). Fails CLOSED on missing/short secret (F-WH-9). Implements `TriggerSource`.
 - A2A Agent Card endpoint ✔ (Phase 3+ chunk 4b) — `karasu serve` also serves `GET /.well-known/agent-card.json` with the static `AgentCard` JSON describing 4 baseline skills (watch-filesystem, route-events, receive-github-webhooks, record-corrections). Discovery only; capability negotiation deferred. POST on the card path → 405 (F-A2A-5 boundary held).
-- A2A outbound discovery ✔ (chunk 4b follow-up) — `fetch_card(base_url, *, timeout=5.0)` does a stdlib-only HTTP GET against a peer's `/.well-known/agent-card.json` and returns the parsed JSON dict. `karasu peers <url>` is the CLI wrapper: read-only, prints either formatted text (default) or raw JSON (`--json`). Configurable timeout (`--timeout`). All errors (network failure, non-2xx, bad JSON, non-object payload, zero/negative timeout) surface as `AgentCardFetchError` / `ValueError` so the caller has a small exception surface.
+- A2A outbound discovery ✔ (chunk 4b follow-up) — `fetch_card(base_url, *, timeout=5.0, retries=0)` does a stdlib-only HTTP GET against a peer's `/.well-known/agent-card.json` and returns the parsed JSON dict. `karasu peers <url>` is the CLI wrapper: read-only, prints either formatted text (default) or raw JSON (`--json`). Configurable timeout (`--timeout`) and retries (`--retries`). All errors (network failure, non-2xx, bad JSON, non-object payload, zero/negative timeout, negative retries) surface as `AgentCardFetchError` / `ValueError` so the caller has a small exception surface. Retry policy (PR #58 follow-up): only `URLError` (transient network failure) triggers a retry; `HTTPError` (server answered with a non-2xx) and JSON / shape errors are NOT retried — those are the peer's real answer, not a network glitch. Backoff is exponential (0.5 s → 1.0 s → 2.0 s → cap at 4.0 s).
 - Trust-gradient startup warning ✔ (NICE-TO-HAVE #3, hard pre-req for chunk 4c) — `AgentAdapter.__init__` emits a structured `logging.WARNING` on `karasu.adapters.base` whenever `trust_level >= AUTONOMOUS_TRUST_LEVEL` (=2). `cmd_watch` / `cmd_serve` additionally print a loud stderr banner once at startup listing every autonomous adapter by `name(trust=N)`. Both layers reference `docs/local-dogfood.md` "Trust gradient — what trust_level actually does in production".
 - Review-comment auto-handoff ✔ (Phase 3+ chunk 4c) — `Dispatcher` copies `event.data` into `AgentRequest.metadata` as a shallow copy; `PromptBuilder` (`src/karasu/adapters/prompt_builder.py`) detects the github branch by presence of `metadata["github_body"]` and produces a USER-DATA-labelled, capped (4 KiB body / 256 B author), fenced prompt. Fence length is dynamic: one longer than the longest backtick run in the body, so a reviewer's own ` ``` ` blocks survive as content rather than closing the fence prematurely (F-HANDOFF-1 hardening). Truncation marker quotes both bytes and chars. When the comment's path is absent from the workspace (force-pushed away, branch deleted, etc.), the builder falls back to a metadata-only variant whose header is suffixed `(metadata-only)`, includes a `Do NOT attempt edits` note, and still fences the body as USER DATA (F-HANDOFF-6). The path probe is injectable (`path_exists` callable) so tests / git-tree-aware deployments can swap it. `ClaudeCodeAdapter` accepts an optional `prompt_builder` kwarg and delegates prompt construction. F-HANDOFF-1, F-HANDOFF-3, F-HANDOFF-5, F-HANDOFF-6 all addressed.
 - Pipeline still does NOT consume `human_decision` directly — only the controller reads them and resubmits a `file_change` so `Pipeline._apply_scar_override` picks up the chat-recorded scar on the next dispatch
@@ -120,17 +120,48 @@ Remaining items beyond the UI MVP:
 - Dogfood controlado de chunk 4c con un PR real a
   trust_level=1 — operativo, no código (requiere
   computadora; operator targets Monday). NOT blocking UI.
-- UI-9 deferred items: URL-encoded path-traversal test
-  for /assets/*; config-aware EVENT_LOG.
-- UI-2 deferred item: lint script for bare outline:none
-  (UI-0 round-2 NICE-TO-HAVE).
-- Future: git-tree-aware path probe injectable in
-  PromptBuilder (audit-noted on PR #59).
-- Future: optional retry on network error in fetch_card
-  (audit-noted on PR #58).
-- Future: helper effective_priority(event) and optional
-  dual priority_original / priority_effective fields if
-  analytics surface a need (audit-noted on PR #60).
+- ~~UI-9 deferred items: URL-encoded path-traversal test
+  for /assets/*; config-aware EVENT_LOG~~ — both shipped
+  ahead of UI-9. `karasu.ui.server.configure(event_log)`
+  + `run_ui_server(..., event_log=)` honour
+  `event_bus.path` from `karasu.yaml`; `cmd_ui` wires it.
+  Path-traversal coverage in `tests/test_ui_server.py`
+  pins literal `..`, percent-encoded `%2E%2E`,
+  encoded-slash `%2F`, double-encoded `%252E`, and the
+  "real file outside STATIC_DIR cannot be reached via
+  traversal" boundary.
+- ~~UI-2 deferred item: lint script for bare
+  outline:none (UI-0 round-2 NICE-TO-HAVE)~~ — shipped
+  ahead of UI-2. `scripts/lint_ui_css.py` walks
+  `src/karasu/ui/static/**/*.{css,html}` and flags any
+  rule block that contains `outline: none|0` without a
+  matching `--focus-ring` replacement. Pinned in CI via
+  `tests/test_lint_ui_css.py::test_live_ui_static_tree_is_clean`
+  so a future regression trips automatically — no
+  separate workflow.
+- ~~Future: git-tree-aware path probe injectable in
+  PromptBuilder (audit-noted on PR #59)~~ — shipped as
+  a follow-up. `karasu.adapters.git_tree_path_exists`
+  probes ``git cat-file -e <ref>:<path>`` so the prompt
+  builder can consult committed state instead of working
+  tree state. Wire via
+  `PromptBuilder(path_exists=git_tree_path_exists)`.
+  Failures (no git, not a repo, unknown ref, timeout)
+  return False — falls through to metadata-only handoff,
+  the safer default.
+- ~~Future: optional retry on network error in
+  fetch_card (audit-noted on PR #58)~~ — shipped as a
+  follow-up. `fetch_card(..., retries=N)` and
+  `karasu peers --retries N`. Default retries=0 preserves
+  byte-for-byte the previous single-shot semantics; only
+  URLError triggers a retry (HTTP non-2xx and JSON / shape
+  errors surface immediately).
+- Future: optional dual priority_original /
+  priority_effective fields on agent_response.data if
+  analytics surface a need (audit-noted on PR #60). The
+  effective_priority(event) helper itself shipped as a
+  follow-up; the dual fields stay deferred until a
+  consumer needs them.
 ```
 
 ## Do NOT do yet

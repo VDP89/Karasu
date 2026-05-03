@@ -7,6 +7,7 @@ on each request and exposes:
   GET /design-system   UI-2 token documentation page
   GET /api/events      paginated event projection
   GET /api/health      server + crow state summary
+  GET /api/meta        version + configured bus path (UI-3)
   GET /assets/...      static assets (fonts, sprites, css)
 
 The projection in ``_project_event`` mirrors the bus schema as
@@ -20,6 +21,7 @@ from __future__ import annotations
 
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
@@ -129,6 +131,17 @@ def _crow_state(events: list[dict[str, Any]]) -> str:
     return state
 
 
+def _package_version() -> str:
+    """Return the installed ``karasu`` package version, or
+    ``"unknown"`` if the package is not installed (running from
+    a source checkout without ``pip install -e .``). The UI
+    footer prefers a graceful "v—" over a 500."""
+    try:
+        return importlib_metadata.version("karasu")
+    except importlib_metadata.PackageNotFoundError:
+        return "unknown"
+
+
 def _parse_limit(query: str) -> int:
     """Parse ``?limit=N`` from a raw query string. Out-of-range
     values clamp; non-integer / missing falls back to the default.
@@ -184,6 +197,19 @@ class UIHandler(BaseHTTPRequestHandler):
                     "status": "ok",
                     "events": len(events),
                     "crow": _crow_state(events),
+                }
+            )
+            return
+
+        # UI-3 — surface enough metadata for the application
+        # shell to render its own version line and bus-path
+        # badge without hard-coding either. Read-only and
+        # additive; no other endpoint changes shape.
+        if path == "/api/meta":
+            self._send_json(
+                {
+                    "version": _package_version(),
+                    "bus_path": str(EVENT_LOG),
                 }
             )
             return

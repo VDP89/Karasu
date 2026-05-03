@@ -8,122 +8,299 @@
 <link rel="stylesheet" href="/assets/css/reset.css">
 <link rel="stylesheet" href="/assets/css/base.css">
 <style>
-/* index.html stub styles — UI-2 keeps the same skeleton as
-   UI-1, just dressed in the design system. UI-3 replaces this
-   layout with the application shell; do not invest in chrome
-   here. */
-.header {
+/* UI-3 — application shell.
+ *
+ * Header (crow glyph + agent + bus path) sticky on top.
+ * Main canvas centred with the editorial empty state when the
+ * bus has zero events; switches to a "timeline lands in UI-4"
+ * placeholder when events exist. Footer sticky on bottom with
+ * version + last-event timestamp + crow state.
+ *
+ * Inline <style> is intentional for now: the UI ships static
+ * HTML/CSS through chunk UI-3 (no build step yet). UI-4 starts
+ * splitting feature CSS into static/css/ files when the
+ * timeline lands.
+ */
+
+/* The HTML ``hidden`` attribute maps to ``display: none`` in
+ * the UA stylesheet, but a class selector with ``display: flex``
+ * (the empty-state below) outranks the UA rule by specificity.
+ * Restate the contract once at the top so any element toggled
+ * via ``el.hidden = true`` actually disappears. */
+[hidden] { display: none !important; }
+
+.shell {
+    min-height: 100vh;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+}
+
+/* --- header ---------------------------------------------------- */
+
+.shell-header {
+    position: sticky;
+    top: 0;
+    z-index: var(--z-sticky);
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: var(--space-3) var(--space-4);
+    gap: var(--space-4);
+    padding: var(--space-3) var(--space-6);
     background: var(--bg-1);
     box-shadow: var(--shadow-1);
-    font-weight: var(--weight-ui);
 }
-.header .crow-state {
-    color: var(--fg-2);
-    font-family: var(--font-mono);
-    font-size: var(--fs-14);
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
 }
-.main {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    grid-template-rows: 1fr 200px;
-    gap: var(--space-2);
-    padding: var(--space-2);
-    height: calc(100vh - 56px);
-}
-.panel {
-    background: var(--bg-1);
-    border: 1px solid var(--fg-3);
-    border-radius: var(--radius-1);
-    padding: var(--space-3);
-    overflow: auto;
+
+.brand-name {
+    font-family: var(--font-display);
+    font-size: var(--fs-20);
+    font-weight: var(--weight-display);
+    letter-spacing: var(--tracking-display);
     color: var(--fg-1);
 }
-.panel-label {
-    color: var(--fg-2);
+
+.crow-glyph {
+    width: 24px;
+    height: 24px;
+    color: var(--fg-1);
+    display: block;
+    transition: color var(--duration-micro) var(--ease-out);
+}
+
+.crow-glyph.processing { color: var(--accent); }
+.crow-glyph.waiting    { color: var(--warn); }
+.crow-glyph.error      { color: var(--accent); }
+
+.bus-path {
+    font-family: var(--font-mono);
     font-size: var(--fs-12);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin-bottom: var(--space-2);
+    color: var(--fg-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 60vw;
 }
-.timeline {
-    grid-column: span 2;
+
+.bus-path .label {
+    color: var(--fg-3);
+    margin-right: var(--space-2);
 }
-.event {
-    padding: var(--space-2) var(--space-3);
-    border-bottom: 1px solid var(--fg-3);
+
+/* --- main canvas ----------------------------------------------- */
+
+.shell-main {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-12) var(--space-6);
+}
+
+/* Empty state — single sentence + the crow at rest. The brief's
+ * line: "Opens beautifully with zero events on the bus." */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-8);
+    max-width: 56ch;
+    text-align: center;
+}
+
+.crow-hero {
+    width: 96px;
+    height: 96px;
+    color: var(--fg-1);
+    display: block;
+    /* Ambient breathing — 1px translateY both ways across the
+     * 4s loop, ease-mag. Reduced-motion clamps animations to
+     * 1ms via reset.css, so the crow visibly stops without a
+     * dedicated guard here. */
+    animation: crow-ambient var(--duration-ambient) var(--ease-mag) infinite;
+}
+
+@keyframes crow-ambient {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-1px); }
+}
+
+.empty-line {
+    margin: 0;
+    color: var(--fg-2);
+    font-family: var(--font-display);
+    font-size: var(--fs-20);
+    line-height: var(--lh-display);
+    letter-spacing: var(--tracking-display);
+}
+
+/* Stub for the populated state — UI-4 replaces this with the
+ * actual event timeline. Kept minimal so the empty state stays
+ * the visible MVP of UI-3. */
+.canvas-stub {
+    max-width: 56ch;
+    color: var(--fg-2);
+    font-family: var(--font-display);
+    font-size: var(--fs-16);
+    text-align: center;
+}
+
+.canvas-stub .stub-meta {
+    margin-top: var(--space-3);
+    color: var(--fg-3);
     font-family: var(--font-mono);
-    font-size: var(--fs-14);
-    cursor: pointer;
-    transition: background-color var(--duration-micro) var(--ease-out);
+    font-size: var(--fs-12);
 }
-.event:last-child {
-    border-bottom: 0;
-}
-.event:hover {
-    background: var(--bg-2);
-}
-.event-time {
+
+/* --- footer ---------------------------------------------------- */
+
+.shell-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: var(--z-sticky);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-6);
+    background: var(--bg-1);
+    box-shadow: var(--shadow-1);
+    font-family: var(--font-mono);
+    font-size: var(--fs-12);
     color: var(--fg-2);
 }
-.event-type {
-    color: var(--fg-1);
-    margin-left: var(--space-2);
+
+.shell-footer .meta + .meta {
+    border-left: 1px solid var(--fg-3);
+    padding-left: var(--space-3);
+}
+
+/* --- narrow viewport adjustments -------------------------------- */
+
+@media (max-width: 720px) {
+    .shell-header,
+    .shell-footer {
+        padding-left: var(--space-4);
+        padding-right: var(--space-4);
+    }
+    .bus-path { max-width: 40vw; }
+    .empty-line { font-size: var(--fs-16); }
 }
 </style>
 </head>
 <body>
-<div class="header">
-    <div>Karasu</div>
-    <div class="crow-state" id="crow">crow: idle</div>
-</div>
-<div class="main">
-    <div class="panel" id="map">
-        <div class="panel-label">Live Map</div>
-        <div>UI-6 will render the crow's flights here.</div>
-    </div>
-    <div class="panel" id="detail">
-        <div class="panel-label">Detail</div>
-        <div>Select an event to inspect its payload.</div>
-    </div>
-    <div class="panel timeline" id="timeline">
-        <div class="panel-label">Timeline</div>
-        <div id="timeline-list"></div>
-    </div>
+<div class="shell">
+
+    <header class="shell-header">
+        <div class="brand">
+            <!-- Placeholder vector silhouette. UI-5 swaps this for
+                 the canonical 32x32 16-bit sprite per
+                 docs/ui/assets/karasu_sprites_spec.md. The
+                 currentColor binding lets the crow's display
+                 state recolour the glyph in place. -->
+            <svg class="crow-glyph" id="crow-glyph"
+                 viewBox="0 0 32 32" fill="currentColor"
+                 aria-label="Karasu crow">
+                <ellipse cx="14" cy="20" rx="9" ry="5"/>
+                <circle cx="22" cy="14" r="5"/>
+                <path d="M27 13 L31 13 L27 16 Z"/>
+                <path d="M5 16 L1 22 L7 22 Z"/>
+            </svg>
+            <span class="brand-name">Karasu</span>
+        </div>
+        <div class="bus-path" id="bus-path">
+            <span class="label">bus</span><code id="bus-path-value">—</code>
+        </div>
+    </header>
+
+    <main class="shell-main">
+        <div class="empty-state" id="empty-state">
+            <svg class="crow-hero" viewBox="0 0 32 32"
+                 fill="currentColor" aria-hidden="true">
+                <ellipse cx="14" cy="20" rx="9" ry="5"/>
+                <circle cx="22" cy="14" r="5"/>
+                <path d="M27 13 L31 13 L27 16 Z"/>
+                <path d="M5 16 L1 22 L7 22 Z"/>
+            </svg>
+            <p class="empty-line">
+                The bus is silent. Karasu watches the working tree;
+                the next change lands here.
+            </p>
+        </div>
+        <div class="canvas-stub" id="canvas-stub" hidden>
+            <p>UI-4 will render the event timeline here.</p>
+            <p class="stub-meta" id="stub-meta"></p>
+        </div>
+    </main>
+
+    <footer class="shell-footer">
+        <span class="meta" id="footer-version">v—</span>
+        <span class="meta" id="footer-last-event">no events yet</span>
+        <span class="meta" id="footer-crow">crow: idle</span>
+    </footer>
+
 </div>
 <script>
-async function load() {
-    const r = await fetch('/api/events');
-    const d = await r.json();
-    const t = document.getElementById('timeline-list');
-    t.innerHTML = '';
-    let crow = 'idle';
-    d.events.forEach(e => {
-        const div = document.createElement('div');
-        div.className = 'event';
-        const time = document.createElement('span');
-        time.className = 'event-time';
-        time.textContent = e.timestamp || '';
-        const type = document.createElement('span');
-        type.className = 'event-type';
-        type.textContent = e.type || '';
-        div.appendChild(time);
-        div.appendChild(type);
-        if (e.requires_human) { crow = 'waiting'; }
-        if (e.status === 'failed') { crow = 'error'; }
-        div.onclick = () => {
-            document.getElementById('detail').textContent =
-                JSON.stringify(e, null, 2);
-        };
-        t.appendChild(div);
-    });
-    document.getElementById('crow').textContent = 'crow: ' + crow;
+const REFRESH_MS = 3000;
+
+async function loadMeta() {
+    try {
+        const r = await fetch('/api/meta');
+        if (!r.ok) return;
+        const m = await r.json();
+        document.getElementById('bus-path-value').textContent = m.bus_path || '—';
+        document.getElementById('footer-version').textContent =
+            m.version ? 'v' + m.version : 'v—';
+    } catch { /* keep placeholders if /api/meta is unreachable */ }
 }
-setInterval(load, 3000);
-load();
+
+async function tick() {
+    let events = [];
+    let crow = 'idle';
+    try {
+        const [eventsRes, healthRes] = await Promise.all([
+            fetch('/api/events'),
+            fetch('/api/health'),
+        ]);
+        if (eventsRes.ok) {
+            events = (await eventsRes.json()).events || [];
+        }
+        if (healthRes.ok) {
+            crow = (await healthRes.json()).crow || 'idle';
+        }
+    } catch { /* network blip — leave the surface as-is */ }
+
+    const empty = document.getElementById('empty-state');
+    const stub = document.getElementById('canvas-stub');
+    const stubMeta = document.getElementById('stub-meta');
+    const lastEvent = document.getElementById('footer-last-event');
+    const footerCrow = document.getElementById('footer-crow');
+    const glyph = document.getElementById('crow-glyph');
+
+    if (events.length === 0) {
+        empty.hidden = false;
+        stub.hidden = true;
+        lastEvent.textContent = 'no events yet';
+    } else {
+        empty.hidden = true;
+        stub.hidden = false;
+        const tail = events[events.length - 1];
+        stubMeta.textContent =
+            events.length + ' events on the bus · last ' +
+            (tail.type || 'event') + ' at ' + (tail.timestamp || '—');
+        lastEvent.textContent = 'last event ' + (tail.timestamp || '—');
+    }
+    footerCrow.textContent = 'crow: ' + crow;
+    glyph.classList.remove('processing', 'waiting', 'error');
+    if (crow !== 'idle') glyph.classList.add(crow);
+}
+
+loadMeta();
+tick();
+setInterval(tick, REFRESH_MS);
 </script>
 </body>
 </html>

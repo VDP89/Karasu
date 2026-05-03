@@ -7,19 +7,15 @@
 <link rel="stylesheet" href="/assets/css/tokens.css">
 <link rel="stylesheet" href="/assets/css/reset.css">
 <link rel="stylesheet" href="/assets/css/base.css">
+<link rel="stylesheet" href="/assets/css/timeline.css">
 <style>
-/* UI-3 — application shell.
+/* index.html — application shell rules.
  *
- * Header (crow glyph + agent + bus path) sticky on top.
- * Main canvas centred with the editorial empty state when the
- * bus has zero events; switches to a "timeline lands in UI-4"
- * placeholder when events exist. Footer sticky on bottom with
- * version + last-event timestamp + crow state.
- *
- * Inline <style> is intentional for now: the UI ships static
- * HTML/CSS through chunk UI-3 (no build step yet). UI-4 starts
- * splitting feature CSS into static/css/ files when the
- * timeline lands.
+ * Shell-specific CSS lives inline; feature CSS (timeline,
+ * future map, future detail panel) lives under
+ * static/css/<feature>.css. UI-4 is the first chunk to make
+ * that split — see static/css/timeline.css for the event
+ * row primitives.
  */
 
 /* The HTML ``hidden`` attribute maps to ``display: none`` in
@@ -95,13 +91,22 @@
 
 .shell-main {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    justify-content: center;
     padding: var(--space-12) var(--space-6);
 }
 
 /* Empty state — single sentence + the crow at rest. The brief's
- * line: "Opens beautifully with zero events on the bus." */
+ * line: "Opens beautifully with zero events on the bus."
+ *
+ * margin: auto in a flex column centres the only visible child
+ * vertically. With the [hidden] safety net at the top of this
+ * file, exactly one of .empty-state / .timeline is in the
+ * layout at a time, so the auto-margin wins cleanly when the
+ * empty state is the visible one and disappears when the
+ * timeline takes over (the timeline anchors to the top by
+ * default, which is what the operator wants when they come
+ * back to read the latest beat). */
 .empty-state {
     display: flex;
     flex-direction: column;
@@ -109,6 +114,7 @@
     gap: var(--space-8);
     max-width: 56ch;
     text-align: center;
+    margin: auto;
 }
 
 .crow-hero {
@@ -135,24 +141,6 @@
     font-size: var(--fs-20);
     line-height: var(--lh-display);
     letter-spacing: var(--tracking-display);
-}
-
-/* Stub for the populated state — UI-4 replaces this with the
- * actual event timeline. Kept minimal so the empty state stays
- * the visible MVP of UI-3. */
-.canvas-stub {
-    max-width: 56ch;
-    color: var(--fg-2);
-    font-family: var(--font-display);
-    font-size: var(--fs-16);
-    text-align: center;
-}
-
-.canvas-stub .stub-meta {
-    margin-top: var(--space-3);
-    color: var(--fg-3);
-    font-family: var(--font-mono);
-    font-size: var(--fs-12);
 }
 
 /* --- footer ---------------------------------------------------- */
@@ -230,10 +218,8 @@
                 the next change lands here.
             </p>
         </div>
-        <div class="canvas-stub" id="canvas-stub" hidden>
-            <p>UI-4 will render the event timeline here.</p>
-            <p class="stub-meta" id="stub-meta"></p>
-        </div>
+        <ol class="timeline" id="timeline" hidden
+            aria-label="Bus event timeline, latest first"></ol>
     </main>
 
     <footer class="shell-footer">
@@ -257,6 +243,62 @@ async function loadMeta() {
     } catch { /* keep placeholders if /api/meta is unreachable */ }
 }
 
+/* The timeline reads /api/events as it ships from the server
+ * projection. Every visible field in a row maps to one
+ * projection key:
+ *
+ *   row.time       <- e.timestamp
+ *   row.type       <- e.type
+ *   row.meta       <- composed from e.path / e.agent / e.source
+ *
+ * The row order is latest-first. The bus is append-only (oldest
+ * first on disk), so we reverse a copy here rather than relying
+ * on the server. UI-9 may eventually expose a cursor / order
+ * parameter; until then this is the canonical surface order. */
+function eventMetaLine(e) {
+    const parts = [];
+    if (e.path)       parts.push(e.path);
+    if (e.agent)      parts.push(e.agent);
+    if (!parts.length && e.source) parts.push(e.source);
+    return parts.join(' · ');
+}
+
+function renderTimeline(events) {
+    const tl = document.getElementById('timeline');
+    /* Replace children rather than incrementally diffing. The
+     * default page size (100 events) is small enough that a
+     * full re-render every 3 s is invisible to the operator;
+     * UI-9 can swap to a key-based diff if dogfood metrics
+     * surface a need. */
+    tl.replaceChildren();
+    const reversed = [...events].reverse();
+    for (const e of reversed) {
+        const row = document.createElement('li');
+        row.className = 'event-row';
+        row.tabIndex = 0;
+
+        const time = document.createElement('time');
+        time.className = 'event-time';
+        if (e.timestamp) time.dateTime = e.timestamp;
+        time.textContent = e.timestamp || '—';
+
+        const content = document.createElement('div');
+        content.className = 'event-content';
+
+        const type = document.createElement('div');
+        type.className = 'event-type';
+        type.textContent = e.type || 'event';
+
+        const meta = document.createElement('div');
+        meta.className = 'event-meta';
+        meta.textContent = eventMetaLine(e);
+
+        content.append(type, meta);
+        row.append(time, content);
+        tl.append(row);
+    }
+}
+
 async function tick() {
     let events = [];
     let crow = 'idle';
@@ -274,23 +316,21 @@ async function tick() {
     } catch { /* network blip — leave the surface as-is */ }
 
     const empty = document.getElementById('empty-state');
-    const stub = document.getElementById('canvas-stub');
-    const stubMeta = document.getElementById('stub-meta');
+    const timeline = document.getElementById('timeline');
     const lastEvent = document.getElementById('footer-last-event');
     const footerCrow = document.getElementById('footer-crow');
     const glyph = document.getElementById('crow-glyph');
 
     if (events.length === 0) {
         empty.hidden = false;
-        stub.hidden = true;
+        timeline.hidden = true;
+        timeline.replaceChildren();
         lastEvent.textContent = 'no events yet';
     } else {
         empty.hidden = true;
-        stub.hidden = false;
+        timeline.hidden = false;
+        renderTimeline(events);
         const tail = events[events.length - 1];
-        stubMeta.textContent =
-            events.length + ' events on the bus · last ' +
-            (tail.type || 'event') + ' at ' + (tail.timestamp || '—');
         lastEvent.textContent = 'last event ' + (tail.timestamp || '—');
     }
     footerCrow.textContent = 'crow: ' + crow;

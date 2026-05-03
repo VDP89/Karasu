@@ -1,7 +1,18 @@
 # Review loop policy
 
-How Karasu's agents — currently Claude Code and Codex — coordinate
-on a pull request without dragging a human into every iteration.
+How Karasu's agents and the human operator coordinate on a pull
+request without dragging the human into every iteration.
+
+**Reviewer:** ChatGPT, out-of-band. The operator pastes the PR
+diff and an audit prompt into a ChatGPT conversation and ferries
+the verdict back. The earlier "Codex bot via the ChatGPT Codex
+Connector GitHub App" wiring was retired on 2026-05-03 — the
+operator did not want automated bot reviews on this repo.
+
+Do NOT tag `@codex review` on PRs. The Codex Connector App
+remains uninstalled at the repo level by operator decision; any
+automated review comment that does appear should be treated as
+noise, not as a finding to act on.
 
 ## Per-finding decision tree
 
@@ -25,12 +36,12 @@ A finding is "wrong" when at least one of these holds:
   the reviewer didn't notice.
 
 The standard is symmetrical: it applies whether the finding came
-from Codex or from Claude Code.
+from the ChatGPT reviewer or from Claude Code itself.
 
 ## Loop budget
 
-A "round" is one Codex review followed by the implementer's reply
-or fixup commit.
+A "round" is one ChatGPT review followed by the implementer's
+reply or fixup commit.
 
 - **Hard cap: 5 rounds per PR.** After round 5, escalate regardless
   of how many findings remain.
@@ -49,15 +60,16 @@ different base (e.g., main has moved several commits).
 
 ## Wait timeout
 
-After requesting a review (`@codex review` or equivalent):
+After the operator says they have requested a ChatGPT review:
 
-- Wait at most **5 minutes** for the response.
-- At 5 minutes with no response, switch to other work on a different
-  branch. Do not poll. Do not ping again immediately.
-- The PR webhook subscription will deliver Codex's review when it
-  arrives, regardless of which branch you're working on.
-- If 30 minutes pass with no response, post one diagnostic comment
-  (`@codex still alive?`) and continue.
+- Wait at most **5 minutes** for the verdict to come back.
+- At 5 minutes with no verdict, switch to other work on a
+  different branch. Do not poll. Do not ping the operator.
+- The operator will return with the verdict when ready; the
+  reviewer is not subscribed to the PR webhook directly, so
+  there is no auto-delivery.
+- If 30 minutes pass, ask the operator once whether the audit
+  is still in flight, then continue working on something else.
 
 ## Counter-arguments
 

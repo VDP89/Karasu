@@ -649,3 +649,28 @@ Impact:
 
 Next step:
 - Audit the PR. After merge, the only items left are operational (controlled dogfood of chunk 4c) or speculative future enhancements (git-tree-aware probe, fetch_card retry). No code work blocking.
+
+---
+
+## 2026-05-03 — effective_priority helper (PR #60 follow-up)
+
+What changed:
+- Audit-deferred follow-up from PR #60. Public read-side accessor `karasu.eventbus.effective_priority(event)` returns `event.data["priority"]` (or `None` when absent) so the bus-audit tooling does not duplicate the "None-vs-default" decision at every call site.
+- `src/karasu/eventbus/queries.py` (NEW) — owns the helper. Future read-side helpers over `Event` records (chain-depth, correlate-walks, etc.) belong here so `jsonl_bus.py` stays focused on persistence.
+- `src/karasu/eventbus/__init__.py` — re-exports `effective_priority` so callers can `from karasu.eventbus import effective_priority`.
+- `tests/test_eventbus_queries.py` (NEW) — 5 tests covering: agent_response present, agent_response absent (returns `None`), explicit `None` value, controller-resubmit `file_change` (chunk 3b inherits priority), non-string coercion.
+- `docs/event-schema.md` — new "Priority semantics" section explaining that `data.priority` on agent_response is the EFFECTIVE priority and pointing tooling at the helper. Notes that `None` surfaces a real audit-trail gap rather than substituting a default.
+- 340/340 pass locally (335 prior + 5 new).
+
+Decisions:
+- Helper returns `None`, not a default. PR #60 deliberately avoided populating a default so pre-PR #60 `agent_response` events stay observable as gaps. The helper preserves that semantic contract; callers decide whether `None` is acceptable for their use case (e.g. analyze can show "—", a future analytics pass can flag it).
+- Helper coerces to `str`. Bus events round-trip through JSON, so today every priority value is already a string; coercing defensively keeps callers from getting bitten if a future source writes an int / enum / number.
+- Did NOT add the optional dual `priority_original` / `priority_effective` fields on `agent_response.data`. The audit listed them as conditional on "analytics surface a need". No analytics consumer exists today, so the additive schema bump is deferred.
+- New module under `eventbus/queries.py` rather than free functions inside `jsonl_bus.py`. Persistence and read-side queries are different concerns; splitting them now avoids a future refactor when the second helper lands.
+
+Impact:
+- Frozen contracts untouched (additive helper, additive docs section, no schema change).
+- The remaining `Future:` entry under `current-state.md` shrinks to "optional dual priority fields if analytics surface a need" — a smaller, conditional follow-up.
+
+Next step:
+- Audit the PR. After merge, continue down the remote-friendly queue: optional retry on network error in `fetch_card` (PR #58 follow-up), then git-tree-aware path probe in `PromptBuilder` (PR #59 follow-up). UI-2 still parked until operator has computer + browser.

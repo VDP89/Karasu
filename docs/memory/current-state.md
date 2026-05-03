@@ -17,7 +17,7 @@ Phase 3: COMPLETED + DOGFOOD-VALIDATED + AUDIT-ACCEPTED — chunks 3a + 3b + 3c 
 - Cross-platform ignore matching (forward-slash normalization) ✔
 - Debounce per `(path, change_type)` with 250 ms default ✔
 - Dispatcher suppresses `agent_response` when no adapter handles ✔
-- Dispatcher persists effective priority on `agent_response.data` ✔ — additive schema bump (Phase 3 audit follow-up). The post-scar-override priority that actually reached the adapter is recorded so `analyze` can audit dispatch priority post-hoc without cross-referencing the originating `file_change`.
+- Dispatcher persists effective priority on `agent_response.data` ✔ — additive schema bump (Phase 3 audit follow-up). The post-scar-override priority that actually reached the adapter is recorded so `analyze` can audit dispatch priority post-hoc without cross-referencing the originating `file_change`. Public accessor: `karasu.eventbus.effective_priority(event)` — returns the priority string or `None` when the field is absent (pre-PR #60 events). Tooling that audits the bus reads through this helper instead of duplicating the None-vs-default decision per call site. See `docs/event-schema.md` "Priority semantics".
 - Real `ClaudeCodeAdapter` end-to-end via `claude -p` ✔
 - Cross-platform CLI shim resolution via `shutil.which` ✔
 - `dispatch_on` per classifier rule + `code_change` excludes `deleted` by default ✔
@@ -128,9 +128,12 @@ Remaining items beyond the UI MVP:
   PromptBuilder (audit-noted on PR #59).
 - Future: optional retry on network error in fetch_card
   (audit-noted on PR #58).
-- Future: helper effective_priority(event) and optional
-  dual priority_original / priority_effective fields if
-  analytics surface a need (audit-noted on PR #60).
+- Future: optional dual priority_original /
+  priority_effective fields on agent_response.data if
+  analytics surface a need (audit-noted on PR #60). The
+  effective_priority(event) helper itself shipped as a
+  follow-up; the dual fields stay deferred until a
+  consumer needs them.
 ```
 
 ## Do NOT do yet

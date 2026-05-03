@@ -99,15 +99,33 @@ table. Not before.
 --fg-1:    #ededf2   primary text
 --fg-2:    #8a8a93   muted text, metadata, timestamps
 --fg-3:    #4d4d54   dividers, subtle borders
---accent:  #d54834   rojo cuervo — single accent, error,
-                     active state, the crow's eye
+--accent:  #d54834   rojo cuervo — single accent, active
+                     state, the crow's eye
+--error:   var(--accent)   alias; error IS the identity
 --ok:      #4a9d6a   subtle success
 --warn:    #c69a4d   requires_human, attention-but-not-error
 ```
 
-Contrast ratios verified for WCAG AA on `--bg-0`:
-`--fg-1` 14.6:1, `--fg-2` 5.1:1, `--accent` 4.7:1. AAA on
-primary text.
+Contrast ratios verified on `--bg-0`:
+
+```text
+--fg-1   14.6:1   AAA  (primary text, any size)
+--fg-2    5.1:1   AA   (muted text, any size)
+--accent  4.5:1   AA   (large text + UI labels at ≥14px
+                       medium weight or ≥18px any weight;
+                       SVG / icon use unconstrained)
+```
+
+`--accent` margin over the AA threshold (4.5:1) is thin —
+deliberate, the accent is meant to feel saturated. Reserve it
+for headers, buttons, the crow's eye, and emphasis spans;
+NOT for paragraphs of body copy. Body text always uses
+`--fg-1` or `--fg-2`.
+
+The `--error` alias on `--accent` lets components reference an
+error semantic without coupling to the accent name. If a
+future operator wants to split error from accent, a single
+token swap does it.
 
 ### 5.2 · Typography
 
@@ -149,7 +167,42 @@ Max width: 1440px content, 1920px chrome (header / footer
            span the viewport).
 ```
 
-### 5.4 · Motion
+### 5.4 · Radius, elevation, focus, depth
+
+```text
+RADIUS (sparing — sharp corners by default)
+  --radius-0:  0      cards, panels, surfaces
+  --radius-1:  2px    inputs, code blocks
+  --radius-2:  6px    pill buttons, badges
+  Avoid larger; the look is editorial, not toy.
+
+SHADOW (almost none — the dark palette does the lifting)
+  --shadow-0:  none                              flat surfaces
+  --shadow-1:  0 1px 0 0 var(--fg-3)             hairline divider
+  --shadow-2:  0 8px 24px -12px rgba(0,0,0,.6)   drawer, modal
+  No drop shadows on cards. Elevation through bg-N steps,
+  not blurred shadows. The exception is the detail drawer
+  (UI-7) which earns --shadow-2 to clarify it floats over
+  the canvas.
+
+FOCUS RING (mandatory, AA visible)
+  --focus-ring:  0 0 0 2px var(--bg-0),
+                 0 0 0 4px var(--accent)
+  Two-step inset/outset so the ring reads on any surface.
+  Width 2px, offset 2px. Never removed via outline:none
+  without an equivalent replacement; lint forbids bare
+  outline:none.
+
+Z-INDEX (named layers, no magic numbers)
+  --z-base:        0     canvas + content
+  --z-sticky:     10     header, footer
+  --z-overlay:    20     drawer, popover
+  --z-modal:      30     blocking dialog (rare)
+  --z-toast:      40     transient notifications
+  Components MUST reference the layer name, never a literal.
+```
+
+### 5.5 · Motion
 
 ```text
 Easings:
@@ -169,7 +222,7 @@ Reduced motion (prefers-reduced-motion: reduce):
   color only. This is non-negotiable.
 ```
 
-### 5.5 · The Crow (mark of the house)
+### 5.6 · The Crow (mark of the house)
 
 ```text
 Format:     SVG, monochrome, single path where possible.
@@ -269,14 +322,21 @@ see the result. Every UI-N PR (UI-1 onward) MUST include:
    shots.sh or via Playwright headless. Committed under
    docs/ui/screenshots/UI-N-<slug>/.
 
-2. A short "what to look at" note in the PR body pointing
+2. PRs that introduce or modify motion (UI-5 the crow,
+   UI-6 Live Map, and any future motion-touching chunk)
+   ALSO ship a short screen recording (≤ 5 s, .webm
+   under 500 KB) at docs/ui/recordings/UI-N-<slug>.webm.
+   Static-only chunks (UI-2 tokens, UI-4 timeline) do NOT
+   need video — screenshots are enough.
+
+3. A short "what to look at" note in the PR body pointing
    the auditor at the visual decisions to evaluate (e.g.
    "type scale on the timeline rows", "the crow's idle
    breathing amplitude").
 
-3. The diff itself, as usual.
+4. The diff itself, as usual.
 
-4. The audit prompt for ChatGPT (same copy-paste flow as
+5. The audit prompt for ChatGPT (same copy-paste flow as
    backend), explicitly inviting visual critique alongside
    structural critique.
 ```
@@ -326,10 +386,20 @@ direct bus mutation.
   the first 5 seconds.
 - An operator can replace 80% of `karasu tail` use with the
   UI without losing information.
-- Lighthouse ≥95 on the four headline metrics; WCAG AA
-  pass; reduced-motion pass.
+- Lighthouse ≥95 on Performance, Accessibility, and Best
+  Practices; SEO ≥90 (an internal tool surface earns a
+  lower SEO bar — no public marketing copy, no JSON-LD,
+  no canonical-tag concerns).
+- WCAG AA pass on every shipped state.
+- Reduced-motion pass: every animation respects
+  prefers-reduced-motion.
 - The crow flies between nodes on every dispatch.
 - The bus is never mutated by the UI.
+- Browser support matrix verified:
+    Chromium ≥ N-1 (current + previous stable)
+    Safari   ≥ 17 (most recent two macOS / iOS releases)
+    Firefox  best-effort, not blocking — the operator
+             surface is Chromium / Safari first.
 ```
 
 After UI-9, the operator can dogfood the UI alongside the

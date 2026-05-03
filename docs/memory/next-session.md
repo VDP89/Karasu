@@ -2,177 +2,198 @@
 
 ## Goal
 
-**Phase 3+ chunk 4c — audit gate.**
+**README Fase 3 — PWA + Advanced.** Pick up the UI surface
+that was sketched on the parallel branch ``feat/ui-1-runtime``
+(originally driven by ChatGPT; operator asked Claude Code to
+take over). ChatGPT continues as auditor only.
 
-Chunk 4c (`feat/review-comment-handoff`) shipped on top of both
-gates landed (PR #53 cap-design outline + PR #54 trust-warning).
-The branch turns a `pull_request_review_comment.created` event
-into a directed Claude dispatch via a fenced, capped, USER-DATA-
-labelled PromptBuilder. PR open and awaiting audit.
+The backend roadmap (README Fase 1 + Fase 2) is complete.
+Phase 3+ archive (issue #5) closed at the code level. The
+only open phase in the README is the PWA / UI surface.
 
-After chunk 4c merges, the Phase 3+ archive (issue #5) is
-essentially closed. Remaining items are open-ended follow-ups
-that get their own chunks if/when operator demand surfaces.
+## Why pick up the parallel branch (not start fresh)
 
-## What chunk 4c shipped
+``feat/ui-1-runtime`` already ships:
 
 ```text
-src/karasu/router/dispatcher.py
-  - Dispatcher.dispatch copies event.data into
-    AgentRequest.metadata as a shallow copy. Named fields
-    (classification / path / priority) stay populated for
-    back-compat. The metadata dict is the new escape hatch for
-    source-specific fields (github_body, github_author, etc.).
-
-src/karasu/adapters/prompt_builder.py (NEW)
-  - PromptBuilder with two branches: default (legacy one-line
-    summary, identical to pre-4c) and github (fenced + USER
-    DATA prefix + capped). Detection by metadata["github_body"].
-  - DEFAULT_BODY_CAP_BYTES=4096, DEFAULT_AUTHOR_CAP_BYTES=256.
-  - _truncate_with_marker slices on UTF-8 bytes, errors=ignore
-    on the partial trailing sequence; appends
-    "[truncated, original was N bytes]" on overflow.
-  - Construction guards: zero / negative caps reject with
-    ValueError.
-
-src/karasu/adapters/claude_code.py
-  - ClaudeCodeAdapter accepts an optional prompt_builder kwarg;
-    defaults to PromptBuilder(). _build_argv delegates the
-    prompt string to the builder.
-
-tests/test_router.py (3 new)
-  - Metadata round-trip: github_* fields land in
-    request.metadata.
-  - Copy-not-reference: adapter mutation of metadata does NOT
-    leak into event.data.
-  - Watcher events: metadata is populated but no github fields.
-
-tests/test_claude_prompt_builder.py (NEW, 18 tests)
-  - Default branch matches pre-4c format.
-  - Default branch when no github_body / explicit None.
-  - F-HANDOFF-1 fence + USER DATA prefix + author-untrusted
-    label + pr+repo header + missing author/repo defaults.
-  - F-HANDOFF-5 cap held + truncation marker + byte-count-not-
-    char-count + DEFAULT_BODY_CAP_BYTES==4096 +
-    DEFAULT_AUTHOR_CAP_BYTES==256 + author cap.
-  - Construction guards for zero/negative caps.
-  - F-HANDOFF-3 ClaudeCodeAdapter wires builder by name +
-    falls back to default when none injected.
-
-docs/local-dogfood.md
-  - New "Phase 3+ chunk 4c" section.
-  - Explicit warning on trust_level >= 2 + auto-handoff
-    combination.
-  - What does NOT ship: multi-rule routing, token-based
-    replies, non-comment sources, A2A negotiation, edited /
-    deleted comments, path-existence fallback, chaining.
-
-289/289 pass locally (268 prior + 21 new).
+src/karasu/ui/__init__.py           5 LOC
+src/karasu/ui/server.py            95 LOC  ThreadingHTTPServer
+                                            reading events.jsonl,
+                                            /api/events endpoint,
+                                            crow-state derivation
+                                            (idle / processing /
+                                            waiting / error).
+src/karasu/ui/static/index.html    48 LOC  Stub HTML +
+                                            timeline + crow
+                                            state. Black/grey,
+                                            monospace, NOT the
+                                            Win95 mockup yet.
+karasu ui  (CLI subcommand)
+docs/ui/karasu-win95-runtime-mockup.md     415 LOC spec.
+docs/ui/assets/karasu_sprites_spec.md       30 LOC.
 ```
 
-## Failure modes addressed
+Throwing this away and starting fresh would lose the operator's
+UX direction (Win95 chrome, crow-as-message metaphor, five-domain
+Live Map). The scaffolding is ~150 LOC of code and ~445 LOC of
+spec — small enough to rebase cleanly, large enough that it
+encodes real design decisions.
+
+## Branch state — needs rebase
+
+``feat/ui-1-runtime`` was forked from main BEFORE chunks
+4a / 4b / 4c / cap-impl / fetch / path-fallback / priority-persist
+landed. It is **behind main by approximately 8-9 merged PRs**.
+
+Diff against current main shows 30 files changed because main
+has all the recent additions; the branch has only the UI
+scaffold (+725 LOC) and is missing everything else.
+
+Cleanest pickup path: **cherry-pick the 6 UI commits onto a
+fresh branch from current main** rather than merging the
+divergent state. The 6 UI commits (oldest first):
 
 ```text
-F-HANDOFF-1  Prompt injection from PR comments → fence + USER
-             DATA prefix.
-F-HANDOFF-3  Hardcoded prompt diverges from a future
-             LoopController rule table → PromptBuilder
-             abstraction injectable into ClaudeCodeAdapter.
-F-HANDOFF-5  Prompt bloat from oversized github_body → 4 KiB
-             body cap + 256 B author cap + explicit truncation
-             marker.
+20207a5 feat(ui): add UI package
+0b65059 feat(ui): add UI server
+1d5d054 feat(ui): add static UI
+553e5ed feat(ui): add karasu ui command
+1ebfe6e docs(ui): add Win95 Karasu runtime mockup spec
+466e55f assets(ui): add Karasu sprite definitions v1
 ```
 
-## Failure modes deferred (out of scope per chunk-4c contract)
+## Suggested chunk sequence
 
 ```text
-F-HANDOFF-2  Trust=2 + auto-handoff = remote code edits via PR
-             comment → covered by NICE-TO-HAVE #3 startup
-             warning (gate 2, already on main) + new
-             docs/local-dogfood.md section.
-F-HANDOFF-4  Cap distributed-loop amplification → covered by
-             issue #47 design outline (gate 1, already on
-             main); single-hop only in chunk 4c, chaining
-             bounded once the implementation PR ships.
-F-HANDOFF-6  Stale or missing referent → edited / deleted
-             comments already filtered at the webhook
-             receiver (chunk 4a). Path-existence fallback to
-             metadata-only prompt deferred as a NICE-TO-HAVE
-             follow-up.
+chunk UI-1  Cherry-pick the 6 commits onto current main.
+            Run pytest. Assert the existing UI server still
+            serves events.jsonl correctly with the new
+            additive fields (priority, controller_chain_depth,
+            github_* metadata). Open as feat/ui-rebase or
+            similar. Audit + merge.
+
+chunk UI-2  Win95 layout pass: replace the stub index.html
+            with the mockup's panel chrome (title bar, sunken
+            panels, button surfaces). Static assets only;
+            behaviour unchanged. The Win95 mockup spec is at
+            docs/ui/karasu-win95-runtime-mockup.md and the
+            sprites at docs/ui/assets/karasu_sprites_spec.md.
+
+chunk UI-3  Live Map view: render the five-domain graph
+            (User / Karasu / Claude / Codex / GitHub) with
+            the crow as the in-flight message. Use the
+            existing /api/events feed; no schema change.
+
+chunk UI-4  Detail panel: drill-down on an event shows the
+            full bus event JSON, including the new chunk-4c
+            fields (priority, controller_chain_depth,
+            github_* metadata).
+
+chunk UI-5  Tests for the UI server (HTTP-level, not browser).
+            Pin /api/events shape against the current bus
+            schema so a future schema change surfaces here.
+
+chunk UI-6+ Push notifications, offline (service worker),
+            trust management UI, scar browse/revoke per
+            README Fase 3. Larger; each likely needs its
+            own design pass.
 ```
 
-## Audit gate after chunk 4c
-
-Per the standard cadence:
+## Pre-reads for next session
 
 ```text
-1. PR pushed → manual ChatGPT review.
-2. Findings absorbed as round-2 commit on the same branch.
-3. Re-audit. Loop until APROBADO.
-4. Squash-merge to main. Phase 3+ archive (issue #5)
-   essentially closed.
+1. docs/ui/phase-ui-design.md            (vision)
+2. docs/ui/ui-1-layout.md                (layout v1)
+3. docs/ui/ui-1-runtime-plan.md          (runtime plan v1)
+4. docs/ui/karasu-win95-runtime-mockup.md  (NORTH STAR — only on
+                                            feat/ui-1-runtime)
+5. docs/ui/assets/karasu_sprites_spec.md   (sprites — only on
+                                            feat/ui-1-runtime)
+6. src/karasu/ui/server.py + static/index.html  (current stub
+                                            — only on
+                                            feat/ui-1-runtime)
 ```
 
-Audit prompt focal points:
+## Surface contract — must respect
 
 ```text
-- F-HANDOFF-1 fence is correct: triple backticks, no language
-  tag, USER DATA prefix outside the fence.
-- F-HANDOFF-5 cap: 4 KiB body + 256 B author defensible;
-  truncation marker quotes BYTE count not char count.
-- PromptBuilder shape: single class with overrideable
-  build(request) is enough for chunk 4c; registry waits for
-  LoopController rule table.
-- Dispatcher.metadata is a shallow copy, not a reference;
-  pinned by test.
+- UI = surface, not orchestrator. The bus (events.jsonl) is
+  the source of truth; the UI reads but never writes.
+- No new bus event types required. The UI reads existing
+  event types (file_change, agent_response, human_decision,
+  scar_consultation) and renders them.
+- No new dependency on the backend Python code beyond
+  ``import json`` / stdlib HTTP. The UI server lives in
+  ``src/karasu/ui/`` and depends only on the bus file shape.
 - Frozen contracts untouched: AgentResponse, F3, F7, F8,
-  surface=sink, single-worker, scar-stored-only, I-001..I-006,
-  TriggerSource.
-- F-HANDOFF-6 path-existence fallback explicitly deferred
-  with rationale.
+  surface=sink (the UI is a NEW surface, additive to
+  Telegram), single-worker invariant,
+  scar=stored-correction-only, I-001..I-006, TriggerSource
+  Protocol.
+- ``karasu ui`` is read-only in the MVP. No write endpoints
+  (no /api/correct, no /api/scar) in the rebase or layout
+  chunks. Write paths come later with the trust management
+  UI; they MUST go through ScarEngine / human_decision
+  events, not through direct bus mutation.
 ```
 
-## Optional follow-ups (NICE-TO-HAVE, none blocking)
+## ChatGPT auditor cadence
 
-```text
-- Issue #47 implementation PR (cap shape from PR #53 design;
-  Option B chain cap with origin-aware tracking, CHAIN_CAP=3,
-  F-CAP-1..F-CAP-5). Independent of chunk 4c.
-- fetch_card helper + karasu peers <url> CLI for outbound
-  A2A discovery (deferred from chunk 4b).
-- Persist effective priority on agent_response.data
-  (deferred from Phase 3 audit).
-- F-HANDOFF-6 path-existence fallback to "metadata-only"
-  prompt for force-pushed-away paths (deferred from chunk 4c
-  scope).
-- F-HANDOFF-2 in-the-loop dogfood: run chunk 4c at
-  trust_level=1 with a real GitHub PR to validate the
-  end-to-end flow before raising any adapter to trust>=2.
-```
+Same as the backend work: open PR → manual ChatGPT review
+through operator → REQUERIDOS / NICE-TO-HAVE → absorb on
+same branch → merge. This kept REQUERIDO churn low across
+the 12 PRs of this session and the previous one.
 
-## Do NOT do yet
+## Operational item — chunk 4c dogfood (deferred)
 
-```text
-- Do not let the webhook receiver mutate GitHub state.
-- Do not parallelize the controller worker.
-- Do not let the pipeline consume human_decision directly.
-- Do not touch AgentResponse, F3, F7, F8.
-- Do not chain auto-handoff dispatches (chunk 4c is single-
-  hop only) until the issue #47 implementation PR ships.
-```
+Controlled dogfood of chunk 4c on a real GitHub PR with
+``trust_level=1`` requires the operator's computer
+(``karasu serve`` long-running + GitHub webhook + bus
+monitoring). Operator targets Monday. NOT blocking the UI
+work — they are independent.
+
+When the dogfood runs:
+- Adapter at ``trust_level=1``.
+- Verify the stderr banner from NICE-TO-HAVE #3 lists the
+  adapter at startup.
+- Drop a review comment on a PR with a fenceable body
+  (e.g. containing ` ``` `).
+- Watch ``events.jsonl`` for the resulting file_change with
+  ``source="github_webhook"``, the dispatched
+  agent_response, and the persisted ``priority`` /
+  ``controller_chain_depth`` fields.
 
 ## Anchor for the previous sessions
 
 - Phase 3 closed 2026-05-02 (DOGFOOD-VALIDATED + AUDIT-ACCEPTED).
 - Phase 3+ pre-mortem merged (#48, two audit rounds).
-- `feat/webhook-receiver` (chunk 4a) merged after F-WH-6 follow-up.
-- `feat/a2a-agent-card` (chunk 4b) merged.
-- `feat/trust-startup-warning` (gate 2 of 4c) merged as #54
-  (squash e43808a) after one round of audit absorption
-  (cmd_hook over-reach + flush=True NICE-TO-HAVE).
-- `docs/issue-47-cap-shape` (gate 1 of 4c) merged as #53
-  (squash 6de0c84) after one round of audit absorption
-  (F-CAP-5 cycle/forged-deep, F-CAP-2 source=controller
-  alignment, restart semantics, eviction sketch).
-- `feat/review-comment-handoff` (chunk 4c, this PR) — 21 new
-  tests on top of 268 prior. Frozen contracts untouched.
+- ``feat/webhook-receiver`` (chunk 4a) merged after F-WH-6 follow-up.
+- ``feat/a2a-agent-card`` (chunk 4b) merged.
+- ``feat/trust-startup-warning`` (gate 2 of 4c) merged as #54.
+- ``docs/issue-47-cap-shape`` (gate 1 of 4c) merged as #53.
+- ``feat/review-comment-handoff`` (chunk 4c base) merged as #55.
+- ``feat/handoff-hardening`` (chunk 4c hardening) merged as #56.
+- ``feat/cap-shape-impl`` (chain cap implementation) merged
+  as #57. Closes issue #47.
+- ``feat/a2a-fetch-peers`` (chunk 4b outbound discovery)
+  merged as #58.
+- ``feat/handoff-path-fallback`` (F-HANDOFF-6) merged as #59.
+- ``feat/persist-effective-priority`` (Phase 3 audit
+  follow-up) merged as #60.
+- 335/335 pass on main. Frozen contracts intact.
+
+## Do NOT do yet
+
+```text
+- Do not let the UI mutate bus state. Read-only in the MVP.
+- Do not bypass ScarEngine / human_decision when writes
+  eventually arrive. Same contract as the Telegram surface.
+- Do not change the bus schema as part of UI work. New
+  fields on bus events must justify themselves outside the
+  UI need.
+- Do not start chunk UI-6+ (push, offline, trust mgmt)
+  before chunks UI-1..UI-5 are on main. Each later chunk
+  is large enough to warrant its own design pass.
+- Do not start chunk 4c dogfood from the sandbox; it needs
+  the operator's computer.
+```

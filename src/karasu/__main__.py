@@ -10,6 +10,7 @@ Subcommands:
 * ``karasu hook``    — run as a git-hook trigger source (one-shot).
 * ``karasu serve``   — run the GitHub webhook receiver (Phase 3+ chunk 4a).
 * ``karasu peers``   — fetch a peer agent's A2A AgentCard (outbound discovery).
+* ``karasu ui``      — run the local UI HTTP server (read-only surface over the bus).
 """
 
 from __future__ import annotations
@@ -653,6 +654,20 @@ def cmd_peers(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ui(args: argparse.Namespace) -> int:
+    """Run the local Karasu UI HTTP server.
+
+    Read-only surface over the bus log. Reuses
+    ``karasu.ui.server.run_ui_server``; CLI is a thin wrapper
+    that lets the operator override host / port without
+    importing the module.
+    """
+    from karasu.ui.server import run_ui_server
+
+    run_ui_server(host=args.host, port=args.port)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="karasu", description=__doc__)
     parser.add_argument("--version", action="version", version=f"karasu {__version__}")
@@ -698,6 +713,22 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1", help="HTTP bind host")
     serve.add_argument("--port", type=int, default=8080, help="HTTP bind port")
     serve.set_defaults(func=cmd_serve)
+
+    ui = sub.add_parser(
+        "ui",
+        help=(
+            "run the local Karasu UI HTTP server (read-only "
+            "surface over the bus)"
+        ),
+    )
+    ui.add_argument("--host", default="127.0.0.1", help="HTTP bind host")
+    ui.add_argument(
+        "--port",
+        type=int,
+        default=8787,
+        help="HTTP bind port (default: 8787)",
+    )
+    ui.set_defaults(func=cmd_ui)
 
     from karasu.a2a import DEFAULT_FETCH_TIMEOUT
 

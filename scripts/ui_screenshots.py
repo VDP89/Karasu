@@ -173,6 +173,39 @@ CAPTURES: dict[str, list[dict]] = {
             "full_page": True,
         },
     ],
+    "UI-4-timeline": [
+        {
+            "name": "00-timeline-default.png",
+            "url": "/",
+            "seed": True,
+            "wait_ms": 3500,
+            "full_page": False,
+        },
+        {
+            "name": "01-timeline-hover.png",
+            "url": "/",
+            "seed": True,
+            "wait_ms": 3500,
+            "hover": ".event-row:first-child",
+            "full_page": False,
+        },
+        {
+            "name": "02-timeline-focus.png",
+            "url": "/",
+            "seed": True,
+            "wait_ms": 3500,
+            "press_tab": 1,
+            "full_page": False,
+        },
+        {
+            "name": "03-timeline-narrow-viewport.png",
+            "url": "/",
+            "seed": True,
+            "viewport": {"width": 720, "height": 1024},
+            "wait_ms": 3500,
+            "full_page": True,
+        },
+    ],
 }
 
 
@@ -221,16 +254,28 @@ def _seed_workdir(workdir: Path, populate: bool = True) -> None:
 
 def _apply_step(page, plan: dict) -> None:
     """Apply the optional pre-screenshot steps for one capture
-    entry (scroll, focus, hover, wait). Each is a no-op when the
-    relevant key is absent."""
+    entry (scroll, focus, hover, press_tab, wait). Each is a
+    no-op when the relevant key is absent.
+
+    ``wait_ms`` runs FIRST so the page's setInterval-driven
+    state (e.g. UI-3 / UI-4 polling /api/events) settles before
+    the focus / hover / press_tab steps target an element that
+    only existed once the JS rendered. UI-4 needs this: the
+    timeline rows are JS-rendered after the first poll, and
+    targeting ``.event-row:first-child`` before the wait would
+    miss the elements entirely.
+    """
+    if "wait_ms" in plan:
+        page.wait_for_timeout(plan["wait_ms"])
     if "scroll_to" in plan:
         page.locator(plan["scroll_to"]).scroll_into_view_if_needed()
     if "focus" in plan:
         page.locator(plan["focus"]).focus()
     if "hover" in plan:
         page.locator(plan["hover"]).hover()
-    if "wait_ms" in plan:
-        page.wait_for_timeout(plan["wait_ms"])
+    if "press_tab" in plan:
+        for _ in range(int(plan["press_tab"])):
+            page.keyboard.press("Tab")
 
 
 def _capture(slug: str, port: int, out_dir: Path, workdir: Path) -> None:

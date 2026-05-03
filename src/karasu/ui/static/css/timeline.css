@@ -1,0 +1,105 @@
+/* timeline.css — UI-4.
+ *
+ * The event stream as editorial beats. Each row is a single
+ * typographic line: timestamp on the left in mono, type as
+ * the only display accent, path/agent as muted metadata
+ * underneath. NOT a table row, NOT a card — the line is the
+ * unit. UI-0 §6 + ChatGPT's UI-3 audit are explicit.
+ *
+ * Visual rhythm is generous on purpose. UI-3 just earned an
+ * empty canvas; UI-4 must not fill it back in with chrome.
+ * Hover and focus stay contained: a subtle --bg-2 wash and
+ * the design-system focus ring on Tab. Anything louder
+ * collapses the editorial calm.
+ */
+
+.timeline {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    max-width: 720px;
+}
+
+.event-row {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--space-4);
+    align-items: baseline;
+    padding: var(--space-4) var(--space-3);
+    border-bottom: 1px solid var(--fg-3);
+    transition: background-color var(--duration-micro) var(--ease-out);
+    /* No outline by default; :focus-visible (base.css) draws
+     * --focus-ring instead. Setting tabindex via JS on each
+     * row makes the row keyboard-reachable without a real
+     * <a> / <button> wrapper — the row is read-only, it
+     * does not navigate. */
+}
+
+.event-row:last-child {
+    border-bottom: 0;
+}
+
+.event-row:hover {
+    background: var(--bg-2);
+}
+
+.event-time {
+    font-family: var(--font-mono);
+    font-size: var(--fs-12);
+    color: var(--fg-2);
+    white-space: nowrap;
+    /* Baseline-aligned with the type line so the eye reads
+     * timestamp → type as a single beat rather than two
+     * separate columns. */
+}
+
+.event-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    /* min-width: 0 lets long paths ellipsize inside the
+     * grid cell instead of forcing the row wider than its
+     * 720px max. */
+    min-width: 0;
+}
+
+.event-type {
+    font-family: var(--font-display);
+    font-size: var(--fs-16);
+    font-weight: var(--weight-ui);
+    color: var(--fg-1);
+    line-height: var(--lh-body);
+    /* The type word IS the accent. No colour mapping per
+     * event type (chroma stays reserved for crow state /
+     * --accent / --error). */
+}
+
+.event-meta {
+    font-family: var(--font-mono);
+    font-size: var(--fs-14);
+    color: var(--fg-2);
+    line-height: var(--lh-body);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* When the timeline is empty (zero rows but the parent
+ * <ol> is rendered for whatever reason), nothing visible.
+ * Belt-and-braces: the JS hides the <ol> when events.length
+ * is zero, but a stray render shouldn't draw a single
+ * orphan border. */
+.timeline:empty {
+    display: none;
+}
+
+@media (max-width: 720px) {
+    .event-row {
+        /* Stack timestamp above content on narrow screens.
+         * Keeps the row legible without forcing the path
+         * column to ellipsize at extreme widths. */
+        grid-template-columns: 1fr;
+        gap: var(--space-2);
+    }
+}

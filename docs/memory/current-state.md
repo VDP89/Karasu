@@ -7,6 +7,12 @@ Phase 1B: COMPLETED (no-adapter pass validated, F1–F5 closed)
 Phase 1C: COMPLETED (real Claude adapter loop validated, F6–F8 closed)
 Phase 2: COMPLETED — chunks 1+2+3 merged (#30 #31 #32 #33). Audit accepted with one round of changes (PR #33 contract alignment + redaction).
 Phase 3: COMPLETED + DOGFOOD-VALIDATED + AUDIT-ACCEPTED — chunks 3a + 3b + 3c merged (#34 #35 #36 #37). Live dogfood 2026-05-02 (issue #39) validated end-to-end: `/scar` → controller resubmit (94 ms) → pipeline applies scar → second dispatch with `priority=high` → response back to Telegram. Cap held at 3 under spam. Three operational findings filed: F9 (#40), F10 (#41), F11 (#42). Audit forward-look returned by ChatGPT and recorded in [`docs/memory/phase-3-dogfood-audit-2026-05-02.md`](phase-3-dogfood-audit-2026-05-02.md): 2 REQUERIDOS applied this PR (trust=2 docs warning + cap-local-per-origin issue), 1 NICE-TO-HAVE applied (sessions template), 2 NICE-TO-HAVE queued for Phase 3+ hardening (priority persist + startup warning).
+UI surface progress (PWA roadmap):
+- UI-0 (design brief)         ✔ PR #62 merged (`92e2c91`).
+- UI-1 (rebase + projection)  ✔ PR #63 merged (`4819d7b`).
+- UI-2 (design system + tokens) ✔ PR #69 merged (`6ec5203`). One audit round (P0 on `prefers-reduced-motion`); fix in `ae975f3` switched to `transition-property` chromatic whitelist.
+- UI-3 (application shell)    ✔ PR #70 merged (`a67d729`). APPROVED on the first round, no P0/P1/P2. ChatGPT pinned a binding rule for UI-5: ship `.webm` without exception because the crow becomes the principal visual asset there.
+- UI-4..UI-9 pending per UI-0 §6 roadmap.
 
 ## System status
 
@@ -36,6 +42,12 @@ Phase 3: COMPLETED + DOGFOOD-VALIDATED + AUDIT-ACCEPTED — chunks 3a + 3b + 3c 
 - Trust-gradient startup warning ✔ (NICE-TO-HAVE #3, hard pre-req for chunk 4c) — `AgentAdapter.__init__` emits a structured `logging.WARNING` on `karasu.adapters.base` whenever `trust_level >= AUTONOMOUS_TRUST_LEVEL` (=2). `cmd_watch` / `cmd_serve` additionally print a loud stderr banner once at startup listing every autonomous adapter by `name(trust=N)`. Both layers reference `docs/local-dogfood.md` "Trust gradient — what trust_level actually does in production".
 - Review-comment auto-handoff ✔ (Phase 3+ chunk 4c) — `Dispatcher` copies `event.data` into `AgentRequest.metadata` as a shallow copy; `PromptBuilder` (`src/karasu/adapters/prompt_builder.py`) detects the github branch by presence of `metadata["github_body"]` and produces a USER-DATA-labelled, capped (4 KiB body / 256 B author), fenced prompt. Fence length is dynamic: one longer than the longest backtick run in the body, so a reviewer's own ` ``` ` blocks survive as content rather than closing the fence prematurely (F-HANDOFF-1 hardening). Truncation marker quotes both bytes and chars. When the comment's path is absent from the workspace (force-pushed away, branch deleted, etc.), the builder falls back to a metadata-only variant whose header is suffixed `(metadata-only)`, includes a `Do NOT attempt edits` note, and still fences the body as USER DATA (F-HANDOFF-6). The path probe is injectable (`path_exists` callable) so tests / git-tree-aware deployments can swap it. `ClaudeCodeAdapter` accepts an optional `prompt_builder` kwarg and delegates prompt construction. F-HANDOFF-1, F-HANDOFF-3, F-HANDOFF-5, F-HANDOFF-6 all addressed.
 - Pipeline still does NOT consume `human_decision` directly — only the controller reads them and resubmits a `file_change` so `Pipeline._apply_scar_override` picks up the chat-recorded scar on the next dispatch
+- UI design system primitives ✔ (UI-2) — `static/css/{tokens,reset,base}.css` + 6 self-hosted woff2 (Inter Display 4.x + JetBrains Mono v2.304, both SIL OFL 1.1, ~616 KB). `prefers-reduced-motion` clamp uses a `transition-property` chromatic whitelist so color and box-shadow keep their original durations while transform/opacity/filter/size become instant.
+- UI design-system documentation page ✔ (UI-2) — `GET /design-system` serves a live render of every token (palette swatches with contrast labels, type scale, spacing, radius, shadow, focus ring, z-index, motion). Unlinked from the operator surface; doubles as the visual regression baseline for UI-3..UI-9.
+- UI application shell ✔ (UI-3) — three-row sticky-grid layout (header + main + footer). Header: vector crow glyph (placeholder; UI-5 swaps with the canonical 32x32 sprite) + agent name + bus path right-aligned with ellipsis. Crow glyph recolours via class swap on `/api/health` state (`--fg-1` / `--accent` / `--warn`). Main: empty state (96px hero crow breathing 1px translateY 4s ease-mag, single editorial sentence) when zero events; canvas-stub placeholder when events exist. Footer: version + last event time + crow state. `[hidden] { display: none !important; }` global safety net keeps `el.hidden = true` from being outranked by class-level `display:` rules.
+- `GET /api/meta` ✔ (UI-3) — `{version, bus_path}` for the surface to render its own version line and bus-path badge. `version` via `importlib.metadata` (stdlib, no new runtime dep) with `"unknown"` fallback. Additive: `/api/events` and `/api/health` shapes unchanged.
+- `scripts/ui_fetch_fonts.sh` ✔ — idempotent, woff2 magic-byte verified.
+- `scripts/ui_screenshots.py` ✔ — per-slug capture plan; per-capture `seed` (populate/truncate the bus) and `viewport` (override 1440x900) knobs; fresh Playwright context per capture so viewport overrides don't leak; bus seeded via `ui_server.configure(...)` instead of `os.chdir` (Windows tempdir cleanup race fixed).
 
 ## Verified behavior (Phase 1C closed)
 
@@ -95,12 +107,21 @@ README Fase 1 + Fase 2: COMPLETE.
 README Fase 3 (PWA + Advanced): IN PROGRESS.
 
 UI surface progress:
-  UI-0 (design brief)     ✔ PR #62 merged (92e2c91).
-  UI-1 (rebase + projection) ✔ PR #63 merged (4819d7b).
-  UI-2 (design system + tokens page)   pending — operator
-                                       computer time
-                                       (Monday target).
-  UI-3..UI-9              pending per UI-0 brief roadmap.
+  UI-0 (design brief)         ✔ PR #62 merged (92e2c91).
+  UI-1 (rebase + projection)  ✔ PR #63 merged (4819d7b).
+  UI-2 (design system + tokens) ✔ PR #69 merged (6ec5203).
+  UI-3 (application shell)    ✔ PR #70 merged (a67d729).
+  UI-4 (event timeline as editorial beats)   <-- next.
+  UI-5 (crow sprite + state animations)      pending per
+                                              UI-0 brief.
+                                              .webm
+                                              required, no
+                                              exception
+                                              (ChatGPT
+                                              UI-3 review
+                                              pin).
+  UI-6..UI-9                  pending per UI-0 brief
+                                              roadmap.
   UI-10+ (write paths, push, trust mgmt) out of brief
                                        scope until UI-MVP
                                        lands.
@@ -108,12 +129,16 @@ UI surface progress:
 The UI MVP is read-only against the bus. karasu ui
 [--host H] [--port P] (defaults 127.0.0.1:8787) starts a
 ThreadingHTTPServer that serves the static shell + the
-JSON projection at /api/events and /api/health. The
-projection is the canonical contract; UI-2..UI-9 render
-against it.
+JSON projection at /api/events and /api/health (and the
+new /api/meta from UI-3). The projection is the canonical
+contract; UI-4..UI-9 render against it.
 
-See docs/memory/next-session.md for the next chunk's
-detailed plan (UI-2 design system primitives + tokens page).
+See docs/memory/next-session.md for UI-4's detailed plan
+and the editorial guidance ChatGPT pinned in the UI-3
+audit ("timestamp mono pequeño, tipo de evento como acento
+tipográfico, path/agente como metadata secundaria, hover/
+focus muy contenido — el mayor riesgo de UI-4 será llenar
+demasiado rápido el vacío que UI-3 acaba de ganar").
 
 Remaining items beyond the UI MVP:
 
@@ -131,17 +156,6 @@ Remaining items beyond the UI MVP:
   optional `retry_http_statuses` parameter; default empty
   set preserves the current "do not retry on HTTP errors"
   semantics. Not blocking; pick up when revisited.
-
-Closed during 2026-05-03 cleanup session (PR #65,
-squash → 64dc6ad):
-  - effective_priority(event) helper (PR #60 audit).
-  - fetch_card retry on URLError (PR #58 audit).
-  - git-tree-aware path probe (PR #59 audit).
-  - lint script for bare outline:none (UI-0 round-2).
-  - config-aware EVENT_LOG + path-traversal coverage
-    (UI-9 deferred).
-  - Three P3 hardening items applied during the same
-    audit cycle (commit 295b481).
 
 Operator-side TODOs no Claude Code session can perform
 from this MCP surface:

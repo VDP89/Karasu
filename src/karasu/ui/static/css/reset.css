@@ -1,0 +1,103 @@
+/* reset.css — minimal custom reset.
+ *
+ * NOT normalize.css. The UI-0 brief §4 explicitly excludes
+ * frameworks and the wider normalize default set. We only
+ * touch primitives whose user-agent default actively
+ * undermines the design system. Anything the UA already gets
+ * right (semantic vertical rhythm on lists, table defaults,
+ * etc.) is left alone.
+ *
+ * The reduced-motion block at the bottom is non-negotiable per
+ * §5.5: every animation duration clamps to 1ms, color
+ * transitions stay (the dark palette still needs hover
+ * feedback). The crow stops flying at the same time.
+ */
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+
+body {
+    margin: 0;
+}
+
+img,
+svg,
+video,
+canvas {
+    display: block;
+    max-width: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+    font: inherit;
+    color: inherit;
+}
+
+button {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+}
+
+a {
+    color: inherit;
+    text-decoration: none;
+}
+
+::selection {
+    background: var(--accent);
+    color: var(--bg-0);
+}
+
+/* §5.5 reduced motion contract.
+ *
+ * The brief is literal: ALL durations clamped to 1ms EXCEPT
+ * color transitions. The dark palette relies on hover/focus
+ * color shifts to acknowledge state; killing those would
+ * silently regress feedback for the very users
+ * prefers-reduced-motion is meant to protect.
+ *
+ * Implementation:
+ * - animation-duration / iteration-count clamp every keyframe
+ *   animation (the ambient crow loop, motion samples).
+ * - transition-property is restricted to a chromatic
+ *   whitelist. Any consumer that today transitions
+ *   `transform` / `opacity` / `filter` / size has its
+ *   transition-property overridden, so the property is no
+ *   longer animatable in reduced-motion mode and the change
+ *   becomes instant. Color, background, border, outline,
+ *   text-decoration, fill, stroke and box-shadow keep their
+ *   ORIGINAL durations intact — color transitions stay
+ *   smooth, focus-ring appearance stays smooth, transform/
+ *   movement stops immediately.
+ */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 1ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-property:
+            color,
+            background-color,
+            border-color,
+            outline-color,
+            text-decoration-color,
+            fill,
+            stroke,
+            box-shadow !important;
+    }
+}

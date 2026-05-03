@@ -1,0 +1,72 @@
+/* base.css — body baseline + chrome.
+ *
+ * Loaded after tokens.css and reset.css. Sets the visual
+ * defaults a fresh document inherits before any feature CSS
+ * runs: body typography, scrollbar styling, and the focus-ring
+ * replacement for `outline:none`. Per UI-0 §5.4, components
+ * MUST use --focus-ring (a stacked box-shadow) any time they
+ * suppress the user-agent outline.
+ */
+
+body {
+    background-color: var(--bg-0);
+    color: var(--fg-1);
+    font-family: var(--font-display);
+    font-size: var(--fs-16);
+    font-weight: var(--weight-body);
+    line-height: var(--lh-body);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+}
+
+code,
+kbd,
+pre,
+samp {
+    font-family: var(--font-mono);
+    font-size: 0.95em;
+    line-height: var(--lh-mono);
+}
+
+/* Scrollbar — Chromium / WebKit only. Firefox falls back to its
+ * own colour-only `scrollbar-color` API. The bar is muted by
+ * design (dividers, not chrome). */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-1);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--fg-3);
+    border-radius: var(--radius-1);
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--fg-2);
+}
+
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--fg-3) var(--bg-1);
+}
+
+/* Focus-ring contract.
+ *
+ * Default focus-visible: replace UA outline with --focus-ring.
+ * The two-step inset/outset reads on every surface (canvas,
+ * panel, hover state). Consumers that need a tighter ring on
+ * a specific control still suppress outline + apply the same
+ * token; the lint script forbids `outline: none` without a
+ * box-shadow replacement that includes --focus-ring or a token
+ * derived from it.
+ */
+:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+    border-radius: var(--radius-1);
+}

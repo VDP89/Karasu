@@ -1,47 +1,128 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Karasu UI</title>
+<link rel="stylesheet" href="/assets/css/tokens.css">
+<link rel="stylesheet" href="/assets/css/reset.css">
+<link rel="stylesheet" href="/assets/css/base.css">
 <style>
-body { font-family: monospace; background:#111; color:#ddd; margin:0 }
-.header { padding:10px; background:#222; display:flex; justify-content:space-between }
-.panel { padding:10px; border:1px solid #333 }
-.main { display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 200px; height:90vh }
-.timeline { grid-column:span 2; overflow:auto }
-.event { padding:4px; border-bottom:1px solid #333; cursor:pointer }
-.event:hover { background:#333 }
+/* index.html stub styles — UI-2 keeps the same skeleton as
+   UI-1, just dressed in the design system. UI-3 replaces this
+   layout with the application shell; do not invest in chrome
+   here. */
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-3) var(--space-4);
+    background: var(--bg-1);
+    box-shadow: var(--shadow-1);
+    font-weight: var(--weight-ui);
+}
+.header .crow-state {
+    color: var(--fg-2);
+    font-family: var(--font-mono);
+    font-size: var(--fs-14);
+}
+.main {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 200px;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    height: calc(100vh - 56px);
+}
+.panel {
+    background: var(--bg-1);
+    border: 1px solid var(--fg-3);
+    border-radius: var(--radius-1);
+    padding: var(--space-3);
+    overflow: auto;
+    color: var(--fg-1);
+}
+.panel-label {
+    color: var(--fg-2);
+    font-size: var(--fs-12);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: var(--space-2);
+}
+.timeline {
+    grid-column: span 2;
+}
+.event {
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--fg-3);
+    font-family: var(--font-mono);
+    font-size: var(--fs-14);
+    cursor: pointer;
+    transition: background-color var(--duration-micro) var(--ease-out);
+}
+.event:last-child {
+    border-bottom: 0;
+}
+.event:hover {
+    background: var(--bg-2);
+}
+.event-time {
+    color: var(--fg-2);
+}
+.event-type {
+    color: var(--fg-1);
+    margin-left: var(--space-2);
+}
 </style>
 </head>
 <body>
 <div class="header">
-<div>Karasu UI</div>
-<div id="crow">Crow: idle</div>
+    <div>Karasu</div>
+    <div class="crow-state" id="crow">crow: idle</div>
 </div>
 <div class="main">
-<div class="panel" id="map">Live Map</div>
-<div class="panel" id="detail">Select event</div>
-<div class="panel timeline" id="timeline"></div>
+    <div class="panel" id="map">
+        <div class="panel-label">Live Map</div>
+        <div>UI-6 will render the crow's flights here.</div>
+    </div>
+    <div class="panel" id="detail">
+        <div class="panel-label">Detail</div>
+        <div>Select an event to inspect its payload.</div>
+    </div>
+    <div class="panel timeline" id="timeline">
+        <div class="panel-label">Timeline</div>
+        <div id="timeline-list"></div>
+    </div>
 </div>
 <script>
-async function load(){
-const r=await fetch('/api/events');
-const d=await r.json();
-const t=document.getElementById('timeline');
-t.innerHTML='';
-let crow='idle';
-d.events.forEach(e=>{
-const div=document.createElement('div');
-div.className='event';
-div.innerText=e.timestamp+' | '+e.type;
-if(e.requires_human){crow='waiting';}
-if(e.success===false){crow='error';}
-div.onclick=()=>{document.getElementById('detail').innerText=JSON.stringify(e,null,2)};
-t.appendChild(div);
-});
-document.getElementById('crow').innerText='Crow: '+crow;
+async function load() {
+    const r = await fetch('/api/events');
+    const d = await r.json();
+    const t = document.getElementById('timeline-list');
+    t.innerHTML = '';
+    let crow = 'idle';
+    d.events.forEach(e => {
+        const div = document.createElement('div');
+        div.className = 'event';
+        const time = document.createElement('span');
+        time.className = 'event-time';
+        time.textContent = e.timestamp || '';
+        const type = document.createElement('span');
+        type.className = 'event-type';
+        type.textContent = e.type || '';
+        div.appendChild(time);
+        div.appendChild(type);
+        if (e.requires_human) { crow = 'waiting'; }
+        if (e.status === 'failed') { crow = 'error'; }
+        div.onclick = () => {
+            document.getElementById('detail').textContent =
+                JSON.stringify(e, null, 2);
+        };
+        t.appendChild(div);
+    });
+    document.getElementById('crow').textContent = 'crow: ' + crow;
 }
-setInterval(load,3000);
+setInterval(load, 3000);
 load();
 </script>
 </body>

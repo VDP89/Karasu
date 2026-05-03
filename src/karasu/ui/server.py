@@ -3,10 +3,11 @@
 Stdlib-only ThreadingHTTPServer. Reads ``.karasu/events.jsonl``
 on each request and exposes:
 
-  GET /              static index.html (the UI shell)
-  GET /api/events    paginated event projection
-  GET /api/health    server + crow state summary
-  GET /assets/...    static assets (fonts, sprites — UI-2+)
+  GET /                static index.html (the UI shell)
+  GET /design-system   UI-2 token documentation page
+  GET /api/events      paginated event projection
+  GET /api/health      server + crow state summary
+  GET /assets/...      static assets (fonts, sprites, css)
 
 The projection in ``_project_event`` mirrors the bus schema as
 of UI-1: the additive fields landed during chunks 4a/4b/4c +
@@ -192,9 +193,23 @@ class UIHandler(BaseHTTPRequestHandler):
             self._send(200, html, "text/html; charset=utf-8")
             return
 
-        # Static assets land in /assets/* — UI-2 introduces fonts
-        # and sprite SVGs. Path-traversal guard: must resolve
-        # under STATIC_DIR.
+        # /design-system is an unlinked tool / debug page (UI-0
+        # §6, leaned in next-session.md). It documents every
+        # token from the design system in live code so a token
+        # change is verifiable by rendering this page. Stays
+        # accessible in production builds; not advertised from
+        # the operator surface.
+        if path == "/design-system":
+            html = (STATIC_DIR / "design-system.html").read_bytes()
+            self._send(200, html, "text/html; charset=utf-8")
+            return
+
+        # Static assets land in /assets/* and resolve under
+        # STATIC_DIR. The /assets/ namespace exposes static
+        # subdirs (css/, fonts/, sprites/...) at the URL level
+        # while keeping the on-disk layout flat under static/.
+        # Path-traversal guard: target must resolve under
+        # STATIC_DIR.
         if path.startswith("/assets/"):
             target = (STATIC_DIR / path[len("/assets/"):]).resolve()
             try:

@@ -8,7 +8,7 @@ opens each documented state in a headless browser, and writes
 PNGs under ``docs/ui/screenshots/UI-N-<slug>/``.
 
 Usage:
-    python scripts/ui_screenshots.py UI-1-rebase
+    python scripts/ui_screenshots.py UI-2-tokens
 
 Requires Playwright with Chromium installed locally:
     pip install playwright
@@ -20,7 +20,6 @@ from __future__ import annotations
 import argparse
 import http.server
 import json
-import os
 import socket
 import sys
 import tempfile
@@ -104,6 +103,45 @@ SYNTHETIC_EVENTS = [
     },
 ]
 
+# Capture plan per slug. Each entry is a sequence of screenshots
+# to take. Steps: ``focus`` puts keyboard focus on a selector
+# (so :focus-visible kicks in), ``hover`` triggers a mouse-over
+# state, ``scroll_to`` brings a section into view, ``wait`` sleeps
+# inside the page so a mid-transition frame can be captured.
+CAPTURES: dict[str, list[dict]] = {
+    "UI-1-rebase": [
+        {"name": "00-index-default.png", "url": "/", "full_page": True},
+    ],
+    "UI-2-tokens": [
+        {
+            "name": "00-design-system-default.png",
+            "url": "/design-system",
+            "full_page": True,
+        },
+        {
+            "name": "01-design-system-focus.png",
+            "url": "/design-system",
+            "scroll_to": "#focus",
+            "focus": ".focus-button.primary",
+            "wait_ms": 200,
+            "full_page": False,
+        },
+        {
+            "name": "02-design-system-motion.png",
+            "url": "/design-system",
+            "scroll_to": "#motion",
+            "hover": ".motion-row:nth-of-type(3)",
+            "wait_ms": 100,
+            "full_page": False,
+        },
+        {
+            "name": "03-index-with-tokens.png",
+            "url": "/",
+            "full_page": False,
+        },
+    ],
+}
+
 
 def _free_port() -> int:
     with socket.socket() as s:
@@ -112,13 +150,20 @@ def _free_port() -> int:
 
 
 def _start_server(workdir: Path, port: int) -> http.server.ThreadingHTTPServer:
-    """Start the UI server with cwd pinned to ``workdir`` so the
-    EVENT_LOG path resolves to the synthetic file."""
-    os.chdir(workdir)
-    sys.path.insert(0, str(REPO_ROOT / "src"))
-    from karasu.ui.server import UIHandler
+    """Start the UI server reading ``workdir/.karasu/events.jsonl``.
 
-    srv = http.server.ThreadingHTTPServer(("127.0.0.1", port), UIHandler)
+    Uses ``ui_server.configure`` to point EVENT_LOG at the
+    synthetic bus instead of ``os.chdir``. Changing the process
+    cwd would leave the tempdir locked on Windows when
+    ``TemporaryDirectory`` runs cleanup, raising a misleading
+    PermissionError after the screenshots have already been
+    captured successfully.
+    """
+    sys.path.insert(0, str(REPO_ROOT / "src"))
+    from karasu.ui import server as ui_server
+
+    ui_server.configure(workdir / ".karasu" / "events.jsonl")
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", port), ui_server.UIHandler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     time.sleep(0.2)
     return srv
@@ -132,7 +177,30 @@ def _seed_workdir(workdir: Path) -> None:
             fh.write(json.dumps(event) + "\n")
 
 
+def _apply_step(page, plan: dict) -> None:
+    """Apply the optional pre-screenshot steps for one capture
+    entry (scroll, focus, hover, wait). Each is a no-op when the
+    relevant key is absent."""
+    if "scroll_to" in plan:
+        page.locator(plan["scroll_to"]).scroll_into_view_if_needed()
+    if "focus" in plan:
+        page.locator(plan["focus"]).focus()
+    if "hover" in plan:
+        page.locator(plan["hover"]).hover()
+    if "wait_ms" in plan:
+        page.wait_for_timeout(plan["wait_ms"])
+
+
 def _capture(slug: str, port: int, out_dir: Path) -> None:
+    plans = CAPTURES.get(slug)
+    if not plans:
+        print(
+            f"error: no capture plan for slug {slug!r}.\n"
+            f"  known slugs: {', '.join(sorted(CAPTURES))}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -157,20 +225,27 @@ def _capture(slug: str, port: int, out_dir: Path) -> None:
             sys.exit(2)
         context = browser.new_context(viewport={"width": 1440, "height": 900})
         page = context.new_page()
-        page.goto(f"http://127.0.0.1:{port}/")
-        # Give the page's setInterval(load,3000) one cycle to settle.
-        page.wait_for_load_state("networkidle")
-        time.sleep(0.5)
-        page.screenshot(path=out_dir / "00-index-default.png", full_page=True)
+        for plan in plans:
+            page.goto(f"http://127.0.0.1:{port}{plan['url']}")
+            page.wait_for_load_state("networkidle")
+            # Give the page's setInterval(load,3000) one cycle
+            # to settle when the URL is the index.
+            time.sleep(0.5)
+            _apply_step(page, plan)
+            page.screenshot(
+                path=out_dir / plan["name"],
+                full_page=plan.get("full_page", False),
+            )
+            print(f"  wrote {plan['name']}")
         browser.close()
-    print(f"wrote screenshots to {out_dir}")
+    print(f"wrote {len(plans)} screenshots to {out_dir}")
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "slug",
-        help="chunk slug (e.g. UI-1-rebase). Becomes the screenshot dir name.",
+        help="chunk slug (e.g. UI-2-tokens). Becomes the screenshot dir name.",
     )
     args = parser.parse_args(argv)
 

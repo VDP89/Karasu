@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Karasu — Design System</title>
+<link rel="stylesheet" href="/assets/css/tokens.css">
+<link rel="stylesheet" href="/assets/css/reset.css">
+<link rel="stylesheet" href="/assets/css/base.css">
+<style>
+/* design-system.html — live documentation of every token from
+ * UI-0 §5. Each section renders the actual token so visual
+ * regression on this page == regression on the design system.
+ *
+ * Local styles below are layout glue ONLY. They MUST reference
+ * tokens; the lint script forbids magic literals on this file
+ * once UI-9 lands the formal lint pass. */
+.page {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: var(--space-12) var(--space-8) var(--space-20);
+}
+.page-header {
+    margin-bottom: var(--space-12);
+    border-bottom: 1px solid var(--fg-3);
+    padding-bottom: var(--space-6);
+}
+.page-header h1 {
+    font-family: var(--font-display);
+    font-size: var(--fs-44);
+    font-weight: var(--weight-display);
+    line-height: var(--lh-display);
+    letter-spacing: var(--tracking-display);
+    margin: 0 0 var(--space-3);
+}
+.page-header .lede {
+    color: var(--fg-2);
+    font-size: var(--fs-20);
+    line-height: var(--lh-body);
+    max-width: 60ch;
+    margin: 0;
+}
+section {
+    margin-bottom: var(--space-12);
+}
+section > h2 {
+    font-family: var(--font-display);
+    font-size: var(--fs-28);
+    font-weight: var(--weight-display);
+    line-height: var(--lh-display);
+    letter-spacing: var(--tracking-display);
+    margin: 0 0 var(--space-2);
+}
+section > .desc {
+    color: var(--fg-2);
+    font-size: var(--fs-14);
+    margin: 0 0 var(--space-6);
+    max-width: 60ch;
+}
+
+/* §5.1 — palette */
+.palette {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: var(--space-4);
+}
+.swatch {
+    background: var(--bg-1);
+    border: 1px solid var(--fg-3);
+    border-radius: var(--radius-1);
+    overflow: hidden;
+}
+.swatch-color {
+    height: 80px;
+    width: 100%;
+}
+.swatch-meta {
+    padding: var(--space-3);
+    font-family: var(--font-mono);
+    font-size: var(--fs-12);
+    color: var(--fg-2);
+    line-height: var(--lh-body);
+}
+.swatch-meta .token {
+    color: var(--fg-1);
+    font-weight: var(--weight-ui);
+}
+
+/* §5.2 — typography */
+.type-row {
+    display: grid;
+    grid-template-columns: 80px 1fr;
+    gap: var(--space-4);
+    align-items: baseline;
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--fg-3);
+}
+.type-row:last-child { border-bottom: 0; }
+.type-row .label {
+    font-family: var(--font-mono);
+    font-size: var(--fs-12);
+    color: var(--fg-2);
+}
+.type-44 { font-size: var(--fs-44); line-height: var(--lh-display);
+    letter-spacing: var(--tracking-display);
+    font-weight: var(--weight-display); }
+.type-28 { font-size: var(--fs-28); line-height: var(--lh-display);
+    letter-spacing: var(--tracking-display);
+    font-weight: var(--weight-display); }
+.type-20 { font-size: var(--fs-20); line-height: var(--lh-display);
+    letter-spacing: var(--tracking-display);
+    font-weight: var(--weight-ui); }
+.type-16 { font-size: var(--fs-16); line-height: var(--lh-body); }
+.type-14 { font-size: var(--fs-14); line-height: var(--lh-body); }
+.type-12 { font-size: var(--fs-12); line-height: var(--lh-body); }
+.mono-sample {
+    font-family: var(--font-mono);
+    color: var(--fg-2);
+    font-size: var(--fs-14);
+    line-height: var(--lh-mono);
+    margin-top: var(--space-2);
+    padding: var(--space-3);
+    background: var(--bg-1);
+    border-radius: var(--radius-1);
+}
+
+/* §5.3 — spacing */
+.spacing-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--fg-3);
+}
+.spacing-row:last-child { border-bottom: 0; }
+.spacing-row .label {
+    font-family: var(--font-mono);
+    font-size: var(--fs-12);
+    color: var(--fg-2);
+    width: 88px;
+    flex-shrink: 0;
+}
+.spacing-bar {
+    height: 12px;
+    background: var(--accent);
+    border-radius: var(--radius-1);
+}
+
+/* §5.4 — radius */
+.radius-grid {
+    display: flex;
+    gap: var(--space-6);
+}
+.radius-tile {
+    width: 96px;
+    height: 96px;
+    background: var(--bg-2);
+    border: 1px solid var(--fg-3);
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: var(--space-2);
+    font-family: var(--font-mono);
+    font-size: var(--fs-12);
+    color: var(--fg-2);
+}
+.radius-tile.r0 { border-radius: var(--radius-0); }
+.radius-tile.r1 { border-radius: var(--radius-1); }
+.radius-tile.r2 { border-radius: var(--radius-2); }
+
+/* §5.4 — focus ring demo */
+.focus-row {
+    display: flex;
+    gap: var(--space-4);
+    align-items: center;
+    flex-wrap: wrap;
+}
+.focus-input,
+.focus-button {
+    background: var(--bg-2);
+    color: var(--fg-1);
+    border: 1px solid var(--fg-3);
+    border-radius: var(--radius-1);
+    padding: var(--space-2) var(--space-4);
+    font-size: var(--fs-14);
+}
+.focus-button.primary {
+    background: var(--accent);
+    color: var(--bg-0);
+    font-weight: var(--weight-ui);
+    border-color: var(--accent);
+}
+.focus-hint {
+    color: var(--fg-2);
+    font-size: var(--fs-12);
+    font-family: var(--font-mono);
+}
+
+/* §5.4 — z-index */
+.z-stack {
+    position: relative;
+    height: 200px;
+}
+.z-card {
+    position: absolute;
+    width: 220px;
+    padding: var(--space-3);
+    background: var(--bg-2);
+    border: 1px solid var(--fg-3);
+    border-radius: var(--radius-1);
+    font-family: var(--font-mono);
+    font-size: var(--fs-12);
+    color: var(--fg-1);
+}
+.z-base    { left:   0px; top:   0px; z-index: var(--z-base); }
+.z-sticky  { left:  40px; top:  20px; z-index: var(--z-sticky);
+             background: var(--bg-1); }
+.z-overlay { left:  80px; top:  40px; z-index: var(--z-overlay);
+             box-shadow: var(--shadow-2); }
+.z-modal   { left: 120px; top:  60px; z-index: var(--z-modal);
+             box-shadow: var(--shadow-2);
+             border-color: var(--accent); }
+.z-toast   { left: 160px; top:  80px; z-index: var(--z-toast);
+             background: var(--accent); color: var(--bg-0); }
+
+/* §5.5 — motion */
+.motion-row {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: var(--space-4);
+    align-items: center;
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--fg-3);
+}
+.motion-row:last-child { border-bottom: 0; }
+.motion-row .label {
+    font-family: var(--font-mono);
+    font-size: var(--fs-12);
+    color: var(--fg-2);
+}
+.motion-dot {
+    width: 16px;
+    height: 16px;
+    background: var(--accent);
+    border-radius: 50%;
+    transform: translateX(0);
+}
+.motion-row:hover .motion-dot.micro {
+    transform: translateX(160px);
+    transition: transform var(--duration-micro) var(--ease-out);
+}
+.motion-row:hover .motion-dot.panel {
+    transform: translateX(240px);
+    transition: transform var(--duration-panel) var(--ease-out);
+}
+.motion-row:hover .motion-dot.flight {
+    transform: translateX(360px);
+    transition: transform var(--duration-flight) var(--ease-mag);
+}
+.motion-dot.ambient {
+    animation: ambient var(--duration-ambient) var(--ease-mag) infinite;
+}
+@keyframes ambient {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(8px); }
+}
+.reduced-motion-note {
+    margin-top: var(--space-4);
+    padding: var(--space-3);
+    background: var(--bg-1);
+    border-left: 2px solid var(--warn);
+    color: var(--fg-2);
+    font-size: var(--fs-14);
+}
+
+/* shadow demo */
+.shadow-grid {
+    display: flex;
+    gap: var(--space-6);
+}
+.shadow-tile {
+    width: 140px;
+    height: 96px;
+    background: var(--bg-2);
+    border-radius: var(--radius-1);
+    padding: var(--space-3);
+    font-family: var(--font-mono);
+    font-size: var(--fs-12);
+    color: var(--fg-2);
+}
+.shadow-tile.s0 { box-shadow: var(--shadow-0); }
+.shadow-tile.s1 { box-shadow: var(--shadow-1); }
+.shadow-tile.s2 { box-shadow: var(--shadow-2); }
+</style>
+</head>
+<body>
+<main class="page">
+    <header class="page-header">
+        <h1>Karasu — Design System</h1>
+        <p class="lede">Living documentation of every token from
+            the UI-0 brief §5. Render this page after a token
+            change to verify the design system stays coherent.
+            Visual regression on this page == regression on the
+            system.</p>
+    </header>
+
+    <section id="palette">
+        <h2>Palette</h2>
+        <p class="desc">Dark editorial. Single accent (rojo cuervo).
+            Error aliases the accent on purpose: error IS the
+            identity.</p>
+        <div class="palette">
+            <div class="swatch">
+                <div class="swatch-color" style="background:var(--bg-0)"></div>
+                <div class="swatch-meta"><div class="token">--bg-0</div>#0a0a0b · canvas</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:var(--bg-1)"></div>
+                <div class="swatch-meta"><div class="token">--bg-1</div>#131316 · panel</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:var(--bg-2)"></div>
+                <div class="swatch-meta"><div class="token">--bg-2</div>#1c1c20 · hover/focus</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:var(--fg-1)"></div>
+                <div class="swatch-meta"><div class="token">--fg-1</div>#ededf2 · primary text · 14.6:1 AAA</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:var(--fg-2)"></div>
+                <div class="swatch-meta"><div class="token">--fg-2</div>#8a8a93 · muted · 5.1:1 AA</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:var(--fg-3)"></div>
+                <div class="swatch-meta"><div class="token">--fg-3</div>#4d4d54 · dividers</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:var(--accent)"></div>
+                <div class="swatch-meta"><div class="token">--accent</div>#d54834 · rojo cuervo · 4.5:1 AA</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:var(--ok)"></div>
+                <div class="swatch-meta"><div class="token">--ok</div>#4a9d6a · subtle success</div>
+            </div>
+            <div class="swatch">
+                <div class="swatch-color" style="background:var(--warn)"></div>
+                <div class="swatch-meta"><div class="token">--warn</div>#c69a4d · requires_human</div>
+            </div>
+        </div>
+    </section>
+
+    <section id="typography">
+        <h2>Typography</h2>
+        <p class="desc">Inter Display + JetBrains Mono, both
+            self-hosted woff2 (SIL OFL 1.1). Scale 12–44 px,
+            ratio 1.4. Display tracks tight at -0.01em for
+            ≥20px hierarchy.</p>
+        <div class="type-row">
+            <span class="label">--fs-44</span>
+            <span class="type-44">Karasu watches the bus</span>
+        </div>
+        <div class="type-row">
+            <span class="label">--fs-28</span>
+            <span class="type-28">Editorial calm at every layer</span>
+        </div>
+        <div class="type-row">
+            <span class="label">--fs-20</span>
+            <span class="type-20">UI labels & section headers</span>
+        </div>
+        <div class="type-row">
+            <span class="label">--fs-16</span>
+            <span class="type-16">Body text. The watchtower's
+                first job is to present the event stream with
+                editorial calm; the second is to give the crow
+                a stage.</span>
+        </div>
+        <div class="type-row">
+            <span class="label">--fs-14</span>
+            <span class="type-14">Dense rows, compact UI body.</span>
+        </div>
+        <div class="type-row">
+            <span class="label">--fs-12</span>
+            <span class="type-12">Metadata, timestamps, micro labels.</span>
+        </div>
+        <div class="mono-sample">
+            JetBrains Mono · timestamps & code<br>
+            2026-05-03T22:19:04Z  file_change  src/foo.py
+        </div>
+    </section>
+
+    <section id="spacing">
+        <h2>Spacing</h2>
+        <p class="desc">Base 4 px. Stack 4 / 8 / 12 / 16 / 24 / 32
+            / 48 / 80. Generous defaults — the surface earns its
+            calm by leaving air around content.</p>
+        <div class="spacing-row"><span class="label">--space-1 · 4</span>  <div class="spacing-bar" style="width:4px"></div></div>
+        <div class="spacing-row"><span class="label">--space-2 · 8</span>  <div class="spacing-bar" style="width:8px"></div></div>
+        <div class="spacing-row"><span class="label">--space-3 · 12</span> <div class="spacing-bar" style="width:12px"></div></div>
+        <div class="spacing-row"><span class="label">--space-4 · 16</span> <div class="spacing-bar" style="width:16px"></div></div>
+        <div class="spacing-row"><span class="label">--space-6 · 24</span> <div class="spacing-bar" style="width:24px"></div></div>
+        <div class="spacing-row"><span class="label">--space-8 · 32</span> <div class="spacing-bar" style="width:32px"></div></div>
+        <div class="spacing-row"><span class="label">--space-12 · 48</span><div class="spacing-bar" style="width:48px"></div></div>
+        <div class="spacing-row"><span class="label">--space-20 · 80</span><div class="spacing-bar" style="width:80px"></div></div>
+    </section>
+
+    <section id="radius">
+        <h2>Radius</h2>
+        <p class="desc">Sharp by default. Larger radii read as toy
+            on an editorial surface; reserve for pills.</p>
+        <div class="radius-grid">
+            <div class="radius-tile r0">--radius-0 · 0</div>
+            <div class="radius-tile r1">--radius-1 · 2</div>
+            <div class="radius-tile r2">--radius-2 · 6</div>
+        </div>
+    </section>
+
+    <section id="shadow">
+        <h2>Shadow & elevation</h2>
+        <p class="desc">Almost flat. Elevation comes from the
+            bg-N steps; --shadow-2 is reserved for the detail
+            drawer (UI-7).</p>
+        <div class="shadow-grid">
+            <div class="shadow-tile s0">--shadow-0 · none</div>
+            <div class="shadow-tile s1">--shadow-1 · hairline</div>
+            <div class="shadow-tile s2">--shadow-2 · drawer</div>
+        </div>
+    </section>
+
+    <section id="focus">
+        <h2>Focus ring</h2>
+        <p class="desc">Two-step inset/outset against any surface.
+            Tab into the controls below to see the ring read.
+            Lint forbids bare <code>outline:none</code>.</p>
+        <div class="focus-row">
+            <input class="focus-input" type="text" placeholder="Tab here">
+            <button class="focus-button">Default</button>
+            <button class="focus-button primary">Primary</button>
+            <span class="focus-hint">Tab → focus ring at 4px outset</span>
+        </div>
+    </section>
+
+    <section id="z-index">
+        <h2>Z-index layers</h2>
+        <p class="desc">Named layers, no magic numbers. Components
+            reference the layer name.</p>
+        <div class="z-stack">
+            <div class="z-card z-base">--z-base · 0 · canvas</div>
+            <div class="z-card z-sticky">--z-sticky · 10 · header</div>
+            <div class="z-card z-overlay">--z-overlay · 20 · drawer</div>
+            <div class="z-card z-modal">--z-modal · 30 · dialog</div>
+            <div class="z-card z-toast">--z-toast · 40 · toast</div>
+        </div>
+    </section>
+
+    <section id="motion">
+        <h2>Motion</h2>
+        <p class="desc">Hover each row to trigger the duration.
+            The ambient sample breathes on its own (the crow's
+            idle anim).</p>
+        <div class="motion-row">
+            <span class="label">micro · 120ms</span>
+            <div class="motion-dot micro"></div>
+        </div>
+        <div class="motion-row">
+            <span class="label">panel · 240ms</span>
+            <div class="motion-dot panel"></div>
+        </div>
+        <div class="motion-row">
+            <span class="label">flight · 600ms</span>
+            <div class="motion-dot flight"></div>
+        </div>
+        <div class="motion-row">
+            <span class="label">ambient · 4s loop</span>
+            <div class="motion-dot ambient"></div>
+        </div>
+        <div class="reduced-motion-note">
+            <strong>prefers-reduced-motion</strong> clamps every
+            non-color transition / animation to 1ms.
+            Color hover feedback persists.
+        </div>
+    </section>
+</main>
+</body>
+</html>

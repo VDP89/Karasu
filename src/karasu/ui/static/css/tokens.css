@@ -1,0 +1,146 @@
+/* tokens.css — UI-2 design system primitives.
+ *
+ * Every custom property below is sourced verbatim from the
+ * UI-0 design brief §5. Subsequent UI-N stylesheets reference
+ * these tokens; no magic literals downstream.
+ *
+ * Naming reads like the brief: --bg-N for surfaces, --fg-N for
+ * text, --accent for the rojo cuervo, semantic aliases for
+ * states. The numeric suffixes follow the depth/contrast steps
+ * defined in §5.1, NOT scale (i.e. --bg-1 is "one step lighter
+ * than --bg-0", not "the smallest background").
+ */
+
+@font-face {
+    font-family: "Inter Display";
+    src: url("../fonts/inter-display-400.woff2") format("woff2");
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Inter Display";
+    src: url("../fonts/inter-display-500.woff2") format("woff2");
+    font-weight: 500;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Inter Display";
+    src: url("../fonts/inter-display-700.woff2") format("woff2");
+    font-weight: 700;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "JetBrains Mono";
+    src: url("../fonts/jetbrains-mono-400.woff2") format("woff2");
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "JetBrains Mono";
+    src: url("../fonts/jetbrains-mono-500.woff2") format("woff2");
+    font-weight: 500;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "JetBrains Mono";
+    src: url("../fonts/jetbrains-mono-700.woff2") format("woff2");
+    font-weight: 700;
+    font-style: normal;
+    font-display: swap;
+}
+
+:root {
+    /* §5.1 — colour (dark editorial, single accent) */
+    --bg-0: #0a0a0b;
+    --bg-1: #131316;
+    --bg-2: #1c1c20;
+    --fg-1: #ededf2;
+    --fg-2: #8a8a93;
+    --fg-3: #4d4d54;
+    --accent: #d54834;
+    --error: var(--accent);
+    --ok: #4a9d6a;
+    --warn: #c69a4d;
+
+    /* §5.2 — typography. FOUT accepted (font-display: swap) so
+     * first paint is readable on the system fallback while the
+     * woff2 streams. */
+    --font-display: "Inter Display", ui-sans-serif, system-ui,
+        -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "SF Mono",
+        Consolas, monospace;
+
+    --fs-12: 0.75rem;   /* 12px — micro labels, dense metadata */
+    --fs-14: 0.875rem;  /* 14px — UI body, table dense rows */
+    --fs-16: 1rem;      /* 16px — body baseline */
+    --fs-20: 1.25rem;   /* 20px — section header */
+    --fs-28: 1.75rem;   /* 28px — panel header */
+    --fs-44: 2.75rem;   /* 44px — display H1 */
+
+    --lh-body: 1.5;
+    --lh-display: 1.2;
+    --lh-mono: 1;
+
+    --tracking-display: -0.01em;
+
+    --weight-body: 400;
+    --weight-ui: 500;
+    --weight-display: 700;
+
+    /* §5.3 — spacing (4px base, asymmetric grid) */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-6: 24px;
+    --space-8: 32px;
+    --space-12: 48px;
+    --space-20: 80px;
+
+    /* §5.4 — radius, shadow, focus, depth */
+    --radius-0: 0;
+    --radius-1: 2px;
+    --radius-2: 6px;
+
+    --shadow-0: none;
+    --shadow-1: 0 1px 0 0 var(--fg-3);
+    --shadow-2: 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+
+    /* The brief specifies a 2px ring at 2px offset on bg-0;
+     * encoded as a stacked outset box-shadow so it reads on
+     * any surface without coupling to outline rendering quirks
+     * across browsers. The lint script forbids bare
+     * outline:none replacements; consumers swap outline for
+     * box-shadow with this token. */
+    --focus-ring:
+        0 0 0 2px var(--bg-0),
+        0 0 0 4px var(--accent);
+
+    --z-base: 0;
+    --z-sticky: 10;
+    --z-overlay: 20;
+    --z-modal: 30;
+    --z-toast: 40;
+
+    /* §5.5 — motion. Reduced-motion clamp lives in reset.css
+     * (it must apply at the *consumer* selector level, not at
+     * the token level — tokens stay constant). */
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --ease-in: cubic-bezier(0.32, 0, 0.67, 0);
+    --ease-mag: cubic-bezier(0.5, 0, 0.1, 1);
+
+    --duration-micro: 120ms;
+    --duration-panel: 240ms;
+    --duration-flight: 600ms;
+    --duration-ambient: 4000ms;
+}

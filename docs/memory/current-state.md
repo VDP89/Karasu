@@ -12,7 +12,8 @@ UI surface progress (PWA roadmap):
 - UI-1 (rebase + projection)  ✔ PR #63 merged (`4819d7b`).
 - UI-2 (design system + tokens) ✔ PR #69 merged (`6ec5203`). One audit round (P0 on `prefers-reduced-motion`); fix in `ae975f3` switched to `transition-property` chromatic whitelist.
 - UI-3 (application shell)    ✔ PR #70 merged (`a67d729`). APPROVED on the first round, no P0/P1/P2. ChatGPT pinned a binding rule for UI-5: ship `.webm` without exception because the crow becomes the principal visual asset there.
-- UI-4..UI-9 pending per UI-0 §6 roadmap.
+- UI-4 (event timeline)       ✔ PR #72 merged (`13e6270`). APPROVED on the first round. ChatGPT added a binding editorial constraint for UI-5: *"el crow puede tener vida; la superficie no puede perder calma"*.
+- UI-5..UI-9 pending per UI-0 §6 roadmap.
 
 ## System status
 
@@ -47,7 +48,8 @@ UI surface progress (PWA roadmap):
 - UI application shell ✔ (UI-3) — three-row sticky-grid layout (header + main + footer). Header: vector crow glyph (placeholder; UI-5 swaps with the canonical 32x32 sprite) + agent name + bus path right-aligned with ellipsis. Crow glyph recolours via class swap on `/api/health` state (`--fg-1` / `--accent` / `--warn`). Main: empty state (96px hero crow breathing 1px translateY 4s ease-mag, single editorial sentence) when zero events; canvas-stub placeholder when events exist. Footer: version + last event time + crow state. `[hidden] { display: none !important; }` global safety net keeps `el.hidden = true` from being outranked by class-level `display:` rules.
 - `GET /api/meta` ✔ (UI-3) — `{version, bus_path}` for the surface to render its own version line and bus-path badge. `version` via `importlib.metadata` (stdlib, no new runtime dep) with `"unknown"` fallback. Additive: `/api/events` and `/api/health` shapes unchanged.
 - `scripts/ui_fetch_fonts.sh` ✔ — idempotent, woff2 magic-byte verified.
-- `scripts/ui_screenshots.py` ✔ — per-slug capture plan; per-capture `seed` (populate/truncate the bus) and `viewport` (override 1440x900) knobs; fresh Playwright context per capture so viewport overrides don't leak; bus seeded via `ui_server.configure(...)` instead of `os.chdir` (Windows tempdir cleanup race fixed).
+- `scripts/ui_screenshots.py` ✔ — per-slug capture plan; per-capture `seed` (populate/truncate the bus) and `viewport` (override 1440x900) knobs; per-capture `press_tab` step (real keyboard-driven focus, not synthetic `.focus()`); `_apply_step` runs `wait_ms` first so JS-rendered targets exist before hover / press_tab fire; fresh Playwright context per capture so viewport overrides don't leak; bus seeded via `ui_server.configure(...)` instead of `os.chdir` (Windows tempdir cleanup race fixed).
+- UI event timeline ✔ (UI-4) — `static/css/timeline.css` (first feature CSS split). `.timeline` is a `<ol>` with max-width 720 px, centred. Each row is a single typographic line: `<time>` mono `--fs-12 --fg-2`, type display `--fs-16 --fg-1` (the only accent), meta mono `--fs-14 --fg-2`. Hairline `--fg-3` between rows; `--bg-2` hover wash; design-system `--focus-ring` on Tab via `.event-row[tabindex=0]`. Latest-on-top via reversed copy; full re-render every 3 s tick. Narrow viewport (≤720 px) collapses to a single column. Empty-state branch from UI-3 is unchanged.
 
 ## Verified behavior (Phase 1C closed)
 
@@ -111,15 +113,21 @@ UI surface progress:
   UI-1 (rebase + projection)  ✔ PR #63 merged (4819d7b).
   UI-2 (design system + tokens) ✔ PR #69 merged (6ec5203).
   UI-3 (application shell)    ✔ PR #70 merged (a67d729).
-  UI-4 (event timeline as editorial beats)   <-- next.
-  UI-5 (crow sprite + state animations)      pending per
-                                              UI-0 brief.
+  UI-4 (event timeline)       ✔ PR #72 merged (13e6270).
+  UI-5 (crow sprite + state animations)   <-- next.
                                               .webm
                                               required, no
                                               exception
                                               (ChatGPT
-                                              UI-3 review
-                                              pin).
+                                              UI-3 pin).
+                                              "El crow
+                                              puede tener
+                                              vida; la
+                                              superficie
+                                              no puede
+                                              perder calma"
+                                              (ChatGPT
+                                              UI-4 pin).
   UI-6..UI-9                  pending per UI-0 brief
                                               roadmap.
   UI-10+ (write paths, push, trust mgmt) out of brief
@@ -133,12 +141,9 @@ JSON projection at /api/events and /api/health (and the
 new /api/meta from UI-3). The projection is the canonical
 contract; UI-4..UI-9 render against it.
 
-See docs/memory/next-session.md for UI-4's detailed plan
-and the editorial guidance ChatGPT pinned in the UI-3
-audit ("timestamp mono pequeño, tipo de evento como acento
-tipográfico, path/agente como metadata secundaria, hover/
-focus muy contenido — el mayor riesgo de UI-4 será llenar
-demasiado rápido el vacío que UI-3 acaba de ganar").
+See docs/memory/next-session.md for UI-5's detailed plan
+and the binding editorial guidance ChatGPT pinned across
+the UI-3 / UI-4 audits.
 
 Remaining items beyond the UI MVP:
 

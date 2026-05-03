@@ -665,10 +665,20 @@ def cmd_ui(args: argparse.Namespace) -> int:
     ``karasu.ui.server.run_ui_server``; CLI is a thin wrapper
     that lets the operator override host / port without
     importing the module.
+
+    Honours ``event_bus.path`` from ``karasu.yaml`` (UI-9
+    deferred follow-up): an operator running ``karasu watch``
+    against a non-default bus path can point ``karasu ui`` at
+    the same log without a separate flag.
     """
     from karasu.ui.server import run_ui_server
 
-    run_ui_server(host=args.host, port=args.port)
+    config = _load_config(args.config)
+    run_ui_server(
+        host=args.host,
+        port=args.port,
+        event_log=_bus_path(config),
+    )
     return 0
 
 

@@ -787,3 +787,48 @@ Impact:
 
 Next step:
 - Last item in the remote-friendly queue: UI-9 deferred (URL-encoded path-traversal test for `/assets/*` + config-aware `EVENT_LOG` constant).
+
+---
+
+## 2026-05-03 (queue close) — UI-9 deferred items shipped
+
+What changed:
+- Final entry in the remote-friendly queue: the two UI-9 audit-noted items land now (well before UI-9 itself) so neither becomes deadline pressure later.
+- `src/karasu/ui/server.py`:
+  - `EVENT_LOG` is still the module-level default but now mutable via `configure(event_log)`.
+  - `run_ui_server(host, port, event_log: Path | None = None)` accepts the override; `event_log=None` keeps the pre-existing default for callers that don't supply a config.
+  - `_read_events` reads `EVENT_LOG` at call time, so `configure` flips the path even mid-server (useful for tests, transparent to operators).
+- `src/karasu/__main__.py`:
+  - `cmd_ui` now loads `karasu.yaml` via `_load_config(args.config)` and passes `event_log=_bus_path(config)` through to `run_ui_server`. `karasu watch` and `karasu ui` now read the SAME log when `event_bus.path` is set.
+- `tests/test_ui_server.py` (NEW) — 12 tests across two layers:
+  - **Path-traversal coverage** (UI-9 audit-noted item):
+    - Literal `..` traversal → 403.
+    - Inner-segment `..` traversal (`foo/../bar/../..`) → 403.
+    - Percent-encoded `%2E%2E` → 403/404 (literal filename, not decoded by `BaseHTTPRequestHandler`).
+    - Percent-encoded `%2E%2E%2F` → 403/404.
+    - Double-encoded `%252E%252E` → 403/404 (defence against a hypothetical future middleware that decodes once).
+    - Real file outside `STATIC_DIR` (a peer of it) is unreachable via `/assets/../`. Pinned because a future refactor that sets `STATIC_DIR` off the import-time location could otherwise widen the reachable set silently.
+    - Sanity: a real file under `static/` IS served; index.html responds with `<title>Karasu UI</title>`.
+  - **Config-aware EVENT_LOG** (UI-9 audit-noted item):
+    - `configure(path)` sets the global; calling it twice leaves the second value in place (idempotent).
+    - End-to-end: write a synthetic event to the configured path → `/api/events` returns it through the projection.
+    - Missing log → empty projection, not 500.
+    - `run_ui_server(event_log=PATH)` calls `configure` (verified via patched `ThreadingHTTPServer`).
+- 393/393 pass locally (381 prior + 12 new).
+
+Decisions:
+- `configure` mutates a module global rather than threading the path through every function. The handler is a stdlib `BaseHTTPRequestHandler` whose `__init__` signature is fixed; passing per-request state via a global is the documented stdlib pattern. The cost is "tests must save / restore"; the `ui_http` fixture handles that.
+- Tests assert `status in (403, 404)` for the encoded-traversal cases. Both are SAFE — the test pins the boundary, not the specific code path. If a future refactor changes which branch fires, the test still asserts "no 200, no escape".
+- `cmd_ui` loads the config eagerly; if `karasu.yaml` is absent, the existing fall-through in `_load_config` returns `{}` and `_bus_path({})` returns the default. The UI keeps working from a fresh checkout without a config file.
+- Did NOT add a `--event-log` CLI flag. The bus path is a karasu-wide concern (every other CLI command reads `event_bus.path`); duplicating it on the UI command would diverge the contract. Operators set the path in `karasu.yaml` once.
+- Did NOT introduce an HTTP-layer URL decoder. The current behaviour ("encoded chars stay literal") is itself the safe default; tests pin it so an accidental decode in a future refactor surfaces as a regression.
+
+Impact:
+- `karasu ui` is now usable against any operator's bus path, not just the dogfood default.
+- Path-traversal boundary is now explicitly tested. The implementation already held; the test pins it against future refactors.
+- All 5 chunks in the remote-friendly queue closed.
+- No bus mutation, no schema change. Frozen contracts untouched.
+
+Next step:
+- Operator audits the multi-chunk PR offline (ChatGPT review out-of-band, per session preference).
+- Local items (UI-2 design system + tokens page) still parked until the operator has a computer with browser. Controlled chunk-4c dogfood likewise.

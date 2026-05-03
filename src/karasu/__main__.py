@@ -614,7 +614,11 @@ def cmd_peers(args: argparse.Namespace) -> int:
     from karasu.a2a import AgentCardFetchError, fetch_card
 
     try:
-        card = fetch_card(args.url, timeout=args.timeout)
+        card = fetch_card(
+            args.url,
+            timeout=args.timeout,
+            retries=args.retries,
+        )
     except AgentCardFetchError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -730,7 +734,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ui.set_defaults(func=cmd_ui)
 
-    from karasu.a2a import DEFAULT_FETCH_TIMEOUT
+    from karasu.a2a import DEFAULT_FETCH_RETRIES, DEFAULT_FETCH_TIMEOUT
 
     peers = sub.add_parser(
         "peers",
@@ -753,6 +757,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_FETCH_TIMEOUT,
         help=(
             f"HTTP timeout in seconds (default: {DEFAULT_FETCH_TIMEOUT})"
+        ),
+    )
+    peers.add_argument(
+        "--retries",
+        type=int,
+        default=DEFAULT_FETCH_RETRIES,
+        help=(
+            "additional retry attempts on transient network errors "
+            "(URLError only, NOT non-2xx HTTP status). Backoff is "
+            f"exponential. Default: {DEFAULT_FETCH_RETRIES} "
+            "(no retries — preserves single-shot semantics)."
         ),
     )
     peers.add_argument(

@@ -674,3 +674,46 @@ Impact:
 
 Next step:
 - Audit the PR. After merge, continue down the remote-friendly queue: optional retry on network error in `fetch_card` (PR #58 follow-up), then git-tree-aware path probe in `PromptBuilder` (PR #59 follow-up). UI-2 still parked until operator has computer + browser.
+
+---
+
+## 2026-05-03 (later) — fetch_card retry on transient network errors (PR #58 follow-up)
+
+What changed:
+- Audit-deferred follow-up from PR #58. `fetch_card` now accepts an optional `retries` kwarg (default 0); `karasu peers --retries N` exposes it on the CLI. Designed for the operator who runs `karasu peers` over a flaky link or against a peer that just restarted.
+- `src/karasu/a2a/fetch.py`:
+  - New constant `DEFAULT_FETCH_RETRIES = 0` — preserves byte-for-byte the previous single-shot semantics for every existing caller. Operators opt in via the kwarg / flag.
+  - `fetch_card(base_url, *, timeout=..., retries=0)` loops attempts on `URLError` only. `HTTPError` and downstream JSON / shape errors short-circuit immediately — those are real answers from the peer, not transient network failures, and retrying them would amplify a server outage.
+  - Backoff schedule: `0.5 s, 1.0 s, 2.0 s, 4.0 s, 4.0 s, ...` (exponential up to a 4 s cap). Total wall-clock is bounded by `(timeout + backoff) * (retries + 1)`.
+  - `_sleep_backoff(attempt)` extracted as a module-level function so tests patch it surgically rather than `time.sleep`. Avoids accidentally swallowing pytest-internal sleeps.
+  - `retries < 0` raises `ValueError` (same fail-fast convention as the `timeout <= 0` guard). An operator typing `--retries -1` should not silently degrade to "no retries".
+- `src/karasu/a2a/__init__.py` re-exports `DEFAULT_FETCH_RETRIES`.
+- `src/karasu/__main__.py`:
+  - `cmd_peers` passes `retries` through to `fetch_card`.
+  - `--retries` CLI flag added with `default=DEFAULT_FETCH_RETRIES` so the help-text default tracks the constant.
+- `tests/test_a2a_fetch.py` — 9 new tests:
+  - Default `DEFAULT_FETCH_RETRIES == 0` pinned.
+  - `retries=0` (default) → 1 urlopen call, 0 backoff sleeps.
+  - 2 URLErrors then 200 with `retries=2` → 3 calls, 2 sleeps, success returned.
+  - All URLErrors with `retries=3` → 4 calls, 3 sleeps, final error wrapped.
+  - HTTPError with `retries=5` → 1 call, 0 sleeps (no retry on real server answer).
+  - Invalid JSON with `retries=3` → 1 call, 0 sleeps (no retry on parse error).
+  - `retries=-1` → ValueError.
+  - `_sleep_backoff` schedule matches `[0.5, 1.0, 2.0, 4.0, 4.0]` for attempts 0..4.
+  - CLI: `--retries 2` propagates to `urlopen.call_count == 3` on URLError.
+- 349/349 pass locally (340 prior + 9 new).
+
+Decisions:
+- Default `retries=0`. Every existing caller keeps single-shot semantics; opt-in via the kwarg / flag. Avoids retroactively changing the cost / latency profile of a function that 4 places already call.
+- Retry only on `URLError`, not on `HTTPError` or JSON / shape errors. The motivating use case is "DNS / TCP hiccup that resolves in <1 s", not "peer is genuinely down" — the latter benefits from the operator seeing the failure quickly. Per F-WH-style fail-fast conventions in this repo.
+- Exponential backoff with a 4 s cap. Caps the wall-clock surprise: operator can compute "worst case ~ (timeout + 4) × (retries + 1)" without reading the implementation. Initial 0.5 s is small enough that a single retry on a transient hiccup feels instant.
+- Extracted `_sleep_backoff` module-level. Tests patching `time.sleep` directly would swallow sleeps from any other code path that happened to enter via the same call (pytest-asyncio internals, threading shutdown, etc.). Patching the named helper isolates the assertion.
+- `--retries` (not `--max-retries` or `--retry-count`). Matches `--timeout` cadence for the same CLI; one flag = one operator concern.
+
+Impact:
+- `karasu peers` is more forgiving on flaky networks without changing default behaviour for anyone.
+- One more entry strikes off the `Future:` list in `current-state.md`.
+- Frozen contracts untouched (additive parameter with backwards-compatible default, additive constant, no schema change).
+
+Next step:
+- Continue the remote-friendly queue. Next: git-tree-aware path probe in `PromptBuilder` (PR #59 follow-up), then the UI-0 lint script for bare `outline:none`, then UI-9 deferred items (path-traversal test + EVENT_LOG config-aware).

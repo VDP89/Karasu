@@ -104,10 +104,19 @@ SYNTHETIC_EVENTS = [
 ]
 
 # Capture plan per slug. Each entry is a sequence of screenshots
-# to take. Steps: ``focus`` puts keyboard focus on a selector
-# (so :focus-visible kicks in), ``hover`` triggers a mouse-over
-# state, ``scroll_to`` brings a section into view, ``wait`` sleeps
-# inside the page so a mid-transition frame can be captured.
+# to take. Optional steps:
+#   ``seed``        — true (default) seeds the synthetic 4-event
+#                     bus before navigating; false truncates the
+#                     bus file so the page renders the empty state
+#                     (UI-3 entry condition).
+#   ``viewport``    — {"width": W, "height": H} overrides the
+#                     default 1440x900 for that single capture.
+#   ``scroll_to``   — bring a section into view via locator.
+#   ``focus``       — put keyboard focus on a selector for
+#                     :focus-visible.
+#   ``hover``       — trigger a mouse-over state.
+#   ``wait_ms``     — sleep inside the page (used for animation
+#                     mid-frames or to let setInterval poll once).
 CAPTURES: dict[str, list[dict]] = {
     "UI-1-rebase": [
         {"name": "00-index-default.png", "url": "/", "full_page": True},
@@ -140,6 +149,30 @@ CAPTURES: dict[str, list[dict]] = {
             "full_page": False,
         },
     ],
+    "UI-3-shell": [
+        {
+            "name": "00-shell-empty-state.png",
+            "url": "/",
+            "seed": False,
+            "wait_ms": 3500,
+            "full_page": False,
+        },
+        {
+            "name": "01-shell-with-events.png",
+            "url": "/",
+            "seed": True,
+            "wait_ms": 3500,
+            "full_page": False,
+        },
+        {
+            "name": "02-shell-narrow-viewport.png",
+            "url": "/",
+            "seed": True,
+            "viewport": {"width": 720, "height": 1024},
+            "wait_ms": 3500,
+            "full_page": True,
+        },
+    ],
 }
 
 
@@ -169,12 +202,21 @@ def _start_server(workdir: Path, port: int) -> http.server.ThreadingHTTPServer:
     return srv
 
 
-def _seed_workdir(workdir: Path) -> None:
+def _seed_workdir(workdir: Path, populate: bool = True) -> None:
+    """Reset the synthetic bus before each capture.
+
+    ``populate=True`` writes the four-event corpus; ``populate=
+    False`` clears the file so the page renders against an
+    empty bus (the UI-3 empty state). Re-running the helper
+    between captures keeps the surface deterministic without
+    relying on the previous capture's cleanup.
+    """
     bus = workdir / ".karasu" / "events.jsonl"
     bus.parent.mkdir(parents=True, exist_ok=True)
     with bus.open("w", encoding="utf-8") as fh:
-        for event in SYNTHETIC_EVENTS:
-            fh.write(json.dumps(event) + "\n")
+        if populate:
+            for event in SYNTHETIC_EVENTS:
+                fh.write(json.dumps(event) + "\n")
 
 
 def _apply_step(page, plan: dict) -> None:
@@ -191,7 +233,7 @@ def _apply_step(page, plan: dict) -> None:
         page.wait_for_timeout(plan["wait_ms"])
 
 
-def _capture(slug: str, port: int, out_dir: Path) -> None:
+def _capture(slug: str, port: int, out_dir: Path, workdir: Path) -> None:
     plans = CAPTURES.get(slug)
     if not plans:
         print(
@@ -223,20 +265,26 @@ def _capture(slug: str, port: int, out_dir: Path) -> None:
                 file=sys.stderr,
             )
             sys.exit(2)
-        context = browser.new_context(viewport={"width": 1440, "height": 900})
-        page = context.new_page()
+        default_viewport = {"width": 1440, "height": 900}
         for plan in plans:
-            page.goto(f"http://127.0.0.1:{port}{plan['url']}")
-            page.wait_for_load_state("networkidle")
-            # Give the page's setInterval(load,3000) one cycle
-            # to settle when the URL is the index.
-            time.sleep(0.5)
-            _apply_step(page, plan)
-            page.screenshot(
-                path=out_dir / plan["name"],
-                full_page=plan.get("full_page", False),
-            )
-            print(f"  wrote {plan['name']}")
+            viewport = plan.get("viewport", default_viewport)
+            # New context per capture so a viewport override on
+            # one entry does not leak into the next. Cheap on
+            # Chromium; Playwright contexts are lightweight.
+            context = browser.new_context(viewport=viewport)
+            page = context.new_page()
+            try:
+                _seed_workdir(workdir, populate=plan.get("seed", True))
+                page.goto(f"http://127.0.0.1:{port}{plan['url']}")
+                page.wait_for_load_state("networkidle")
+                _apply_step(page, plan)
+                page.screenshot(
+                    path=out_dir / plan["name"],
+                    full_page=plan.get("full_page", False),
+                )
+                print(f"  wrote {plan['name']}")
+            finally:
+                context.close()
         browser.close()
     print(f"wrote {len(plans)} screenshots to {out_dir}")
 
@@ -253,10 +301,13 @@ def main(argv: list[str] | None = None) -> int:
     port = _free_port()
     with tempfile.TemporaryDirectory() as tmp:
         workdir = Path(tmp)
-        _seed_workdir(workdir)
+        # Seed once up front so the server boots against a real
+        # bus path; per-capture reseeding inside ``_capture``
+        # picks the right state for each shot.
+        _seed_workdir(workdir, populate=True)
         srv = _start_server(workdir, port)
         try:
-            _capture(args.slug, port, out_dir)
+            _capture(args.slug, port, out_dir, workdir)
         finally:
             srv.shutdown()
     return 0

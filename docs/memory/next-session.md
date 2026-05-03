@@ -218,6 +218,14 @@ Per UI-0 §7 + the binding pins:
    no puede perder calma" — the auditor is invited to
    scrutinise that the surrounding shell did NOT pick up any
    crow personality.
+7. The .webm must let the auditor confirm BOTH that the crow
+   moves AND that the environment does not. Header chrome,
+   timeline rows, footer cells must visibly stay editorially
+   still while the crow cycles through its states. A
+   recording that crops to the crow alone is insufficient —
+   keep enough of the surrounding shell in frame that the
+   "no motion outside the crow" rule is testable from the
+   video itself. (Pinned by ChatGPT in the PR #73 review.)
 ```
 
 ## Pre-reads for next session

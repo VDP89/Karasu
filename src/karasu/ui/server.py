@@ -21,6 +21,7 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs
 
 EVENT_LOG = Path(".karasu/events.jsonl")
 STATIC_DIR = Path(__file__).parent / "static"
@@ -115,18 +116,21 @@ def _crow_state(events: list[dict[str, Any]]) -> str:
 
 def _parse_limit(query: str) -> int:
     """Parse ``?limit=N`` from a raw query string. Out-of-range
-    values clamp; non-integer falls back to the default."""
+    values clamp; non-integer / missing falls back to the default.
+
+    Uses urllib.parse.parse_qs so percent-encoded values, repeated
+    keys, and other URL-grammar edge cases parse correctly.
+    """
     if not query:
         return DEFAULT_EVENT_LIMIT
-    for chunk in query.split("&"):
-        if not chunk.startswith("limit="):
-            continue
-        try:
-            value = int(chunk.split("=", 1)[1])
-        except ValueError:
-            return DEFAULT_EVENT_LIMIT
-        return max(1, min(value, MAX_EVENT_LIMIT))
-    return DEFAULT_EVENT_LIMIT
+    raw = parse_qs(query, keep_blank_values=False).get("limit")
+    if not raw:
+        return DEFAULT_EVENT_LIMIT
+    try:
+        value = int(raw[0])
+    except (ValueError, TypeError):
+        return DEFAULT_EVENT_LIMIT
+    return max(1, min(value, MAX_EVENT_LIMIT))
 
 
 class UIHandler(BaseHTTPRequestHandler):

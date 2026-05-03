@@ -122,8 +122,15 @@ Remaining items beyond the UI MVP:
   computadora; operator targets Monday). NOT blocking UI.
 - UI-9 deferred items: URL-encoded path-traversal test
   for /assets/*; config-aware EVENT_LOG.
-- UI-2 deferred item: lint script for bare outline:none
-  (UI-0 round-2 NICE-TO-HAVE).
+- ~~UI-2 deferred item: lint script for bare
+  outline:none (UI-0 round-2 NICE-TO-HAVE)~~ — shipped
+  ahead of UI-2. `scripts/lint_ui_css.py` walks
+  `src/karasu/ui/static/**/*.{css,html}` and flags any
+  rule block that contains `outline: none|0` without a
+  matching `--focus-ring` replacement. Pinned in CI via
+  `tests/test_lint_ui_css.py::test_live_ui_static_tree_is_clean`
+  so a future regression trips automatically — no
+  separate workflow.
 - ~~Future: git-tree-aware path probe injectable in
   PromptBuilder (audit-noted on PR #59)~~ — shipped as
   a follow-up. `karasu.adapters.git_tree_path_exists`

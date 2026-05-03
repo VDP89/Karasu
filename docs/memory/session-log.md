@@ -751,3 +751,39 @@ Impact:
 
 Next step:
 - Continue the queue: UI-0 lint script for bare `outline:none` (UI-2 deferred), then UI-9 deferred items (URL-encoded path-traversal test for `/assets/*` + config-aware `EVENT_LOG`).
+
+---
+
+## 2026-05-03 (later still ×2) — UI-0 lint script for bare outline:none
+
+What changed:
+- UI-0 round-2 NICE-TO-HAVE — UI-2 deferred lint script catches bare `outline: none` rules that strip the focus ring without the canonical `--focus-ring` replacement. Shipped ahead of UI-2 since it is pure Python tooling (no browser, no design tokens needed yet) and lets every subsequent UI-N PR start from a CI-enforced baseline.
+- `scripts/lint_ui_css.py` (NEW):
+  - Walks each provided root for `*.css` files and the inline `<style>` block of every `*.html`.
+  - For each rule block (`{ ... }`) that contains `outline: none` / `outline: 0` / no-space variants, requires a matching `--focus-ring` reference in the same block. Otherwise flagged as a violation.
+  - Reports `path:line: bare 'outline: none' — UI-0 brief §6 requires --focus-ring replacement in the same rule block.`
+  - Default scan root: `src/karasu/ui/static`. CLI accepts additional roots: `python scripts/lint_ui_css.py docs/ui/explorations`.
+  - Exit 0 = clean, exit 1 = at least one violation.
+  - Missing roots are treated as "nothing to scan" (exit 0) so composed CI invocations stay simple.
+- `tests/test_lint_ui_css.py` (NEW) — 15 tests across three layers:
+  - Unit (`lint_css_text`): bare none / 0 / no-space variants flagged; `outline: none + box-shadow: var(--focus-ring)` allowed; non-bare values (`outline: 2px solid var(--accent)`) allowed; `outline-color: none` NOT matched (different property); multi-block files yield one violation per offending block; at-rule-nested compliant blocks do not mask sibling violations.
+  - File-level: CSS suffix routes via `lint_css_text`; HTML inline `<style>` parsed with correct line offsets including the lines BEFORE `<style>`; non-CSS / non-HTML suffixes ignored.
+  - End-to-end `main()`: clean tree → exit 0; violation → exit 1 with file:line on stdout; missing root → exit 0.
+  - CI pin: `test_live_ui_static_tree_is_clean` runs the lint against `src/karasu/ui/static` and asserts rc=0. Trips automatically when a future UI-N PR introduces a bare `outline: none`.
+- 381/381 pass locally (366 prior + 15 new).
+
+Decisions:
+- Regex-based, not full CSS parser. The rule is local (a single block) and the scope is small (one stylesheet today, ~5 expected by UI-9). A real parser would be over-engineered for the surface; the regex with `[^{}]` for top-level block matching avoids most of the false-positive surface.
+- The `--focus-ring` token is the SOLE accepted replacement signal. UI-0 brief explicitly names it as the canonical mechanism; an operator who wants a different replacement should justify it in the brief first, then update the lint. Avoids the lint becoming permissive over time.
+- Missing roots are silent (exit 0), not warnings. CI invocations like `lint_ui_css.py src/karasu/ui/static custom/exploration` should not fail just because the optional second root does not exist on this branch.
+- Lives in `scripts/` next to `ui_screenshots.py`, not in `src/karasu/`. It is dev tooling, not runtime code; shipping it inside the package would imply operators can `karasu lint`, which is not the design.
+- CI integration via pytest, not a separate GitHub workflow. The repo already runs `pytest -q` on every PR; piggy-backing keeps the lint visible to the same review cadence.
+- The script also supports `<style>` blocks in HTML so the current `src/karasu/ui/static/index.html` (inline-styled stub) is covered. Once UI-2 lifts styles into `tokens.css` / `base.css`, the `.html` branch becomes mostly dormant — but it stays as a defence against future inline-style regressions.
+
+Impact:
+- UI-2 onward starts from a CI-enforced focus-ring baseline.
+- The Phase 3 audit's last UI-0 round-2 NICE-TO-HAVE closes.
+- No runtime change. No bus mutation. No new dependency. Frozen contracts untouched.
+
+Next step:
+- Last item in the remote-friendly queue: UI-9 deferred (URL-encoded path-traversal test for `/assets/*` + config-aware `EVENT_LOG` constant).

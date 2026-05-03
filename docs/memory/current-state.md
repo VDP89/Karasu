@@ -124,8 +124,16 @@ Remaining items beyond the UI MVP:
   for /assets/*; config-aware EVENT_LOG.
 - UI-2 deferred item: lint script for bare outline:none
   (UI-0 round-2 NICE-TO-HAVE).
-- Future: git-tree-aware path probe injectable in
-  PromptBuilder (audit-noted on PR #59).
+- ~~Future: git-tree-aware path probe injectable in
+  PromptBuilder (audit-noted on PR #59)~~ — shipped as
+  a follow-up. `karasu.adapters.git_tree_path_exists`
+  probes ``git cat-file -e <ref>:<path>`` so the prompt
+  builder can consult committed state instead of working
+  tree state. Wire via
+  `PromptBuilder(path_exists=git_tree_path_exists)`.
+  Failures (no git, not a repo, unknown ref, timeout)
+  return False — falls through to metadata-only handoff,
+  the safer default.
 - ~~Future: optional retry on network error in
   fetch_card (audit-noted on PR #58)~~ — shipped as a
   follow-up. `fetch_card(..., retries=N)` and

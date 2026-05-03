@@ -717,3 +717,37 @@ Impact:
 
 Next step:
 - Continue the remote-friendly queue. Next: git-tree-aware path probe in `PromptBuilder` (PR #59 follow-up), then the UI-0 lint script for bare `outline:none`, then UI-9 deferred items (path-traversal test + EVENT_LOG config-aware).
+
+---
+
+## 2026-05-03 (later still) — git-tree-aware path probe (PR #59 follow-up)
+
+What changed:
+- Audit-deferred follow-up from chunk 4c (PR #59). The default `PromptBuilder` probe is `Path.exists` — i.e. "is this file on disk in the working tree?". This change ships a sibling probe that consults the COMMITTED tree at a given ref, so deployments where the repo state is the source of truth (bare repo, divergent workspace) can opt in.
+- `src/karasu/adapters/git_probe.py` (NEW):
+  - `git_tree_path_exists(path, *, ref="HEAD", cwd=None, timeout=5.0, runner=_default_runner)` — runs `git cat-file -e <ref>:<path>`; returns True on rc=0, False on rc!=0 / empty path / runner error.
+  - `_default_runner(argv, cwd, timeout) -> int` — wraps `subprocess.run`, swallows `FileNotFoundError` / `TimeoutExpired` / `OSError` and returns a sentinel non-zero rc. Never raises into the dispatch path.
+  - `runner` is injected in the same shape as `karasu.controller.sources.git_hook.GitRunner` — module-level callable type alias, fake `runner` for unit tests, real `_default_runner` in production.
+  - `_DEFAULT_GIT_PROBE_TIMEOUT_S = 5.0` — generous enough for cold-cache cat-file on a large repo, short enough that an operator's dispatch never hangs on a wedged git process.
+- `src/karasu/adapters/__init__.py` re-exports `git_tree_path_exists` and `PromptBuilder`. The `from karasu.adapters import PromptBuilder, git_tree_path_exists` pattern in the module docstring example now resolves.
+- `tests/test_git_probe.py` (NEW) — 17 tests across three layers:
+  - Unit (mocked runner): rc=0 → True; rc!=0 → False; empty path skips runner entirely; ref / cwd pass-through; default cwd=None pinned.
+  - `_default_runner` error fallthrough: FileNotFoundError, TimeoutExpired, OSError each return a non-zero rc.
+  - End-to-end against a real `git init` repo in `tmp_path`: committed file → True; untracked file → False; missing path → False; unknown ref → False; not-a-repo cwd → False. All gated by `pytest.mark.skipif(not _git_available())`.
+  - PromptBuilder integration: `path_exists=lambda _: False` → metadata-only branch with "Do NOT attempt edits"; `path_exists=lambda _: True` → full handoff branch.
+- 366/366 pass locally (349 prior + 17 new).
+
+Decisions:
+- `runner` injected via callable, mirroring the `git_hook` source pattern. Lets tests verify argv shape without spawning real processes; production wiring stays the simple default.
+- Probe never raises. The dispatch path is on the hot loop for review-comment handoff; an exception in the probe would break dispatch entirely, which is much worse than a missed "this file is editable" optimization. Failure modes (no git, not a repo, unknown ref, timeout) all collapse to False — the prompt falls through to metadata-only, which is the safer default.
+- Default `cwd=None` lets `git` use its own resolution (the calling process's cwd). Pinning this avoids a future "guess via Path.cwd()" change becoming an accidental behavioural shift.
+- Empty path short-circuits without invoking the runner. `git cat-file -e <ref>:` is a directory-tree query that could return rc=0 unexpectedly; the existing `_default_path_exists` already returns False on empty, so the git-tree probe matches.
+- Probe lives in `karasu.adapters` (not `karasu.eventbus.queries`). It is read-side over the workspace, not over the bus; coupling it to PromptBuilder via the same package is the right neighbourhood.
+- `PromptBuilder` itself is unchanged. The injection point landed in PR #59 already; this chunk only supplies the optional implementation.
+
+Impact:
+- Three of the original five queued "Future:" entries now closed (priority helper, fetch_card retry, git-tree probe).
+- No bus mutation, no schema change, no new runtime dependency. Frozen contracts untouched.
+
+Next step:
+- Continue the queue: UI-0 lint script for bare `outline:none` (UI-2 deferred), then UI-9 deferred items (URL-encoded path-traversal test for `/assets/*` + config-aware `EVENT_LOG`).

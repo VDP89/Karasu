@@ -2,33 +2,80 @@
 <!--
     Karasu — canonical crow asset.
 
-    UI-0 §5.6: SVG, monochrome, single path, currentColor.
-    Aesthetic anchor: editorial mark, not pixel-art sprite. The
-    older "32x32 16-bit no anti-aliasing" wording in the earlier
-    sprites_spec.md is superseded by §5.6; see that file for the
-    reconciliation.
+    UI-0 §5.6 reconciled in UI-5: the crow is a single-color
+    silhouette in `currentColor`, but the EDGES are pixelated,
+    not vector-smooth. The earlier "rounded vector" iteration
+    cut against the system's essence — Karasu is a watchtower,
+    not an app mascot. Rounded edges read as friendly /
+    consumer; jagged edges read as instrument.
 
-    Source: adapted from Font Awesome Free 6 ("crow"), licensed
-    under CC BY 4.0 (https://fontawesome.com/license/free).
-    Path data verbatim from the upstream icon; the two subpaths
-    are the crow silhouette (body, head, beak, two perched legs)
-    and the eye cutout, combined under fill-rule="evenodd" so
-    the eye reads as negative space.
+    Grain: 16 × 16 viewBox. "Pixelado intermedio" — coarse
+    enough to read as deliberate craft, fine enough to keep
+    the silhouette legible at 24 px. Render at integer scale
+    multiples for crispness:
 
-    viewBox is the upstream 640x512. The .crow base class sets
-    width-only sizing in CSS so the icon's native aspect ratio
-    is preserved; the SVG centers itself inside its box via the
-    default preserveAspectRatio="xMidYMid meet". Display sizes
-    in UI-3 / UI-5: 24 px header glyph, 96 px hero on the empty
-    state. Both render with currentColor so the four state
-    classes (idle / processing / waiting / error) recolour the
-    glyph in place.
+        24 px header glyph    — 1.5 × the grain (CSS rounding +
+                                shape-rendering="crispEdges"
+                                keeps edges hard).
+        96 px hero            — 6 × the grain (perfectly crisp).
+
+    Minimalism stays in COLOR (single fill, currentColor) and
+    in REPRESENTATION (no detail, no shading, no decorative
+    elements). The body, beak, eye notch, tail spike and two
+    legs are the only signals.
+
+    Drawn by hand on the grid; not adapted from any third-party
+    asset. The eye is a 1-px gap inside the head silhouette
+    (no fill-rule needed — the silhouette is built from
+    explicit filled rectangles on the eye's neighbouring
+    rows and the eye row leaves that pixel uncovered).
+
+    Each <rect> is one horizontal run of filled pixels at
+    width=1 height=1 cells. Reading top-to-bottom:
+
+        y=2:  head top, 2 px
+        y=3:  head, 4 px
+        y=4:  beak going right (5 px) + eye notch at x=8
+        y=5:  beak underside + head, 4 px
+        y=6:  neck, 5 px
+        y=7:  shoulder + back, 7 px
+        y=8:  body widening, 8 px
+        y=9:  body, 9 px
+        y=10: tail spike (1 px at x=1) + body (7 px from x=3)
+        y=11: body bottom, 6 px
+        y=12: leg tops (2-px gap between legs)
+        y=13-14: legs straight down
 -->
 <svg xmlns="http://www.w3.org/2000/svg"
-     viewBox="0 0 640 512"
+     viewBox="0 0 16 16"
+     shape-rendering="crispEdges"
      fill="currentColor"
-     fill-rule="evenodd"
      role="img"
      aria-label="Karasu">
-  <path d="M456 0c-48.6 0-88 39.4-88 88l0 29.2L12.5 390.6c-14 10.8-16.6 30.9-5.9 44.9s30.9 16.6 44.9 5.9L126.1 384l133.1 0 46.6 113.1c5 12.3 19.1 18.1 31.3 13.1s18.1-19.1 13.1-31.3L311.1 384l40.9 0c1.1 0 2.1 0 3.2 0l46.6 113.2c5 12.3 19.1 18.1 31.3 13.1s18.1-19.1 13.1-31.3l-42-102C484.9 354.1 544 280 544 192l0-64 0-8 80.5-20.1c8.6-2.1 13.8-10.8 11.6-19.4C629 52 603.4 32 574 32l-50.1 0C507.7 12.5 483.3 0 456 0zm0 64a24 24 0 1 1 0 48 24 24 0 1 1 0-48z"/>
+  <!-- head (compact ball, 3 rows) -->
+  <rect x="6" y="2" width="3" height="1"/>
+  <rect x="5" y="3" width="5" height="1"/>
+  <!-- eye notch (gap at x=7) + beak protruding clearly right -->
+  <rect x="5" y="4" width="2" height="1"/>
+  <rect x="8" y="4" width="6" height="1"/>
+  <!-- under-head closes (beak does NOT continue here, so the beak
+       reads as a single sharp protrusion not as a wing) -->
+  <rect x="5" y="5" width="4" height="1"/>
+  <!-- neck step in (1 px) -->
+  <rect x="4" y="6" width="4" height="1"/>
+  <!-- shoulder + body (back ascends, belly drops) -->
+  <rect x="3" y="7" width="7" height="1"/>
+  <rect x="2" y="8" width="9" height="1"/>
+  <rect x="2" y="9" width="9" height="1"/>
+  <!-- tail spike continuous with body (x=0..9 unbroken so the
+       tail reads as the bird's back end, not a detached dot) -->
+  <rect x="0" y="10" width="10" height="1"/>
+  <rect x="4" y="11" width="5" height="1"/>
+  <!-- legs (2-px gap between them, 3 rows tall) -->
+  <rect x="4" y="12" width="1" height="1"/>
+  <rect x="7" y="12" width="1" height="1"/>
+  <rect x="4" y="13" width="1" height="1"/>
+  <rect x="7" y="13" width="1" height="1"/>
+  <rect x="4" y="14" width="1" height="1"/>
+  <rect x="7" y="14" width="1" height="1"/>
 </svg>

@@ -122,8 +122,12 @@ well inside the budget without a transcode pass.
 
 ## Provenance
 
-The crow path data is adapted from Font Awesome Free 6
-("crow", solid set), CC BY 4.0. See
-`docs/ui/assets/karasu_sprites_spec.md` § Provenance for the
-attribution rationale and the contract that survives a
-future redraw.
+The crow is a hand-drawn pixel-art silhouette on a 16-unit
+grid; not adapted from any third-party asset. An earlier
+UI-5 iteration adapted Font Awesome's "crow" vector icon
+(CC BY 4.0); that approach was rejected because vector-
+smooth edges read as friendly / consumer-app and cut against
+Karasu's watchtower-as-instrument essence. See
+`docs/ui/assets/karasu_sprites_spec.md` § Provenance for
+the rationale and the contract that survives a future
+pixel-layout swap.

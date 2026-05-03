@@ -2,204 +2,257 @@
 
 ## Goal
 
-**UI-4 — event timeline as editorial beats.**
+**UI-5 — the crow. Sprite asset finalised + state animations.**
 
-Per UI-0 design brief §6, chunk UI-4 turns the empty-state
-canvas (UI-3) into a populated timeline of bus events
-rendered as typographic lines, NOT table rows. The brief is
-explicit: *"Each event is a typographic line, not a table
-row: timestamp (mono), type (display), path / agent (muted).
-Hover and focus states. Connects to `/api/events`; no Live
-Map yet."*
+Per UI-0 design brief §6, UI-5 is *"the chunk that makes the
+'guau' happen"*. The crow stops being a vector silhouette
+placeholder and becomes the canonical asset of the surface.
+Idle breathing in the header, state colour changes against
+real bus events.
 
-UI-4 is the chunk where the operator surface stops being
-empty and starts being **read**. It is the highest-risk
-visual chunk so far: a mistuned scale or a busy hover state
-silently undoes the calm UI-3 just earned.
+UI-5 is the only chunk besides UI-6 (Live Map) that UI-0 §7
+flags as motion-introducing. It ships a `.webm` recording in
+the same PR — **no exception** per the binding rule ChatGPT
+pinned across the UI-3 and UI-4 audits.
 
-## Editorial guidance pinned by ChatGPT (UI-3 audit)
+## Binding constraints from prior reviews
 
-The reviewer flagged the central risk explicitly. Treat the
-following as binding constraints, not suggestions:
+Two binding rules carried forward, both pinned by ChatGPT in
+review verdicts. Treat them as P0 if violated, not as
+guidance.
 
 ```text
-- Timestamp:   mono, small, muted (--font-mono / --fs-12 /
-               --fg-2). Reads as metadata, never the focal
-               point.
-- Type:        display, the typographic accent of the row
-               (--font-display / --fs-16 weight ui or
-               display / --fg-1). Single visual emphasis
-               per row.
-- Path/agent:  muted, secondary metadata
-               (--fg-2 / --fs-14 / --font-mono for paths,
-               --font-display for agent names). Below the
-               type in visual weight, never above.
-- Hover/focus: very contained. Subtle --bg-2 background
-               shift; the design-system focus ring on Tab.
-               No translation, no zoom, no accent flood.
-- The largest risk of UI-4 is filling the air UI-3 just
-  earned too quickly. Generous vertical rhythm, max-width
-  cap on the timeline column, no chrome decoration.
+1. .webm REQUIRED, no exception (ChatGPT UI-3 audit pin).
+   The crow stops being placeholder/ambient and becomes the
+   principal visual asset. Static PNGs alone do NOT close
+   the audit. Recording must be ≤5 s, <500 KB, exercise the
+   relevant transitions (idle → processing → waiting →
+   error → idle), and live under
+   docs/ui/recordings/UI-5-crow.webm.
+
+2. "El crow puede tener vida; la superficie no puede perder
+   calma" (ChatGPT UI-4 audit pin). The crow can carry
+   personality through SVG character + state animations,
+   but the surrounding shell (header chrome, timeline,
+   footer) must NOT inherit any of that personality. The
+   surface stays editorial; only the crow earns motion.
 ```
 
-Anchor those rules in the implementation. If a token /
-spacing decision feels generous, lean generous; if it feels
-tight, walk it back one stop.
-
-## What ships in UI-4
+## What ships in UI-5
 
 ```text
-src/karasu/ui/static/index.html  (extension)
-  - The canvas-stub branch ("UI-4 will render the event
-    timeline here") is replaced by a real <ol class="timeline">
-    rendered into the same main slot. The empty-state branch
-    (zero events) is unchanged from UI-3.
-  - Each event row is a single line:
-      [timestamp mono small muted]
-      [type display 16 fg-1]
-      [path or agent mono / display 14 fg-2]
-    Stacked or in-row depending on viewport; never as a
-    table.
-  - JS gains a tiny renderer that takes the /api/events
-    projection and produces the row DOM. Reuse the existing
-    setInterval from UI-3 (3s poll); no new poll loop.
-  - Latest event on top. The bus is append-only and the
-    operator wants the most recent first.
-  - max-width 720px on the timeline column, centred. The
-    column does NOT span the canvas — air on both sides is
-    a feature.
+src/karasu/ui/static/assets/crow/
+  crow.svg                    NEW canonical crow asset.
+                              Per UI-0 §5.6: SVG, monochrome,
+                              single path where possible.
+                              Sized to render at 16 / 24 /
+                              48 / 96 px without anti-aliasing
+                              jitter; uses currentColor so
+                              CSS state classes recolour the
+                              glyph in place.
 
-src/karasu/ui/static/css/  (optional split, lean: yes)
-  Inline <style> in index.html grew during UI-3. UI-4 is the
-  natural moment to peel timeline-specific rules into
-  static/css/timeline.css and load it from index.html. Keeps
-  index.html under ~250 LOC of style and lets future chunks
-  add their own *.css without bloating the inline block.
+src/karasu/ui/static/css/crow.css   NEW.
+  - .crow base sizing + currentColor binding.
+  - Idle ambient breathing: 1px translate-Y over 4 s,
+    ease-mag both ways. Subliminal — the crow looks alive
+    even at rest.
+  - .crow.processing: --accent + slow pulse (UI-0 §5.6 says
+    "slow pulse"; lean a 1.6 s ease-out scale 1.00 → 1.04
+    cycle, infinite).
+  - .crow.waiting: --warn + asymmetric tilt (a small
+    rotate of 4° held with no return — the crow leans the
+    way the brief describes).
+  - .crow.error: --accent + sharp shake, single beat
+    (translateX -2 / +2 / 0 over 240 ms ease-mag, NOT
+    looping — the operator sees one decisive beat).
+  - prefers-reduced-motion: every keyframe animation
+    clamped to 1 ms via reset.css (the chromatic whitelist
+    keeps colour transitions; transform stops). UI-2's
+    contract holds.
+
+src/karasu/ui/static/index.html  (extension)
+  - Replaces the placeholder ellipse+circle+triangles
+    silhouette with the canonical SVG (inline <svg> or
+    <img src> referencing the asset; lean: inline so
+    currentColor works without css feature detection).
+  - The hero crow on the empty state shares the same path,
+    just at 96 px and with the ambient keyframe attached.
+  - Header glyph keeps the same currentColor recolouring
+    contract from UI-3; UI-5 just swaps the path data.
 
 scripts/ui_screenshots.py  (extension)
-  Add a UI-4 capture plan with at least:
-    00-timeline-default.png        populated bus, default vp
-    01-timeline-hover.png          one row hovered
-    02-timeline-focus.png          one row focused via Tab
-    03-timeline-narrow-viewport.png 720x1024 narrow
+  - UI-5 capture plan with PNGs for each state:
+      00-crow-idle.png         /, populated bus, idle crow
+      01-crow-processing.png   /, populated bus, processing
+      02-crow-waiting.png      /, populated bus, waiting
+      03-crow-error.png        /, populated bus, error
+                                (capture mid-shake or last
+                                 frame, doc both)
+      04-empty-state-with-canonical-crow.png
+                                /, empty bus, hero crow
+                                rendered with the new asset
+  - The crow state is derived by /api/health from the bus
+    tail. To exercise the four states deterministically the
+    capture plan needs synthetic events tailored to each
+    state precedence path (see _crow_state in server.py:
+    error > waiting > processing > idle). Add a per-capture
+    `seed_events` hook — a list of synthetic events that
+    overrides the default 4-event corpus — so each state
+    capture seeds the precedence-winning event tail.
 
-docs/ui/screenshots/UI-4-timeline/  (NEW)
-  REAL PNG screenshots. UI-1 waiver does NOT extend.
+scripts/ui_record.py  (NEW or fold into ui_screenshots)
+  - Records a Playwright video (.webm) of the state
+    transitions. ≤5 s, <500 KB target. Sequence:
+      seed idle → wait 1 s
+      seed processing → wait 1 s
+      seed waiting → wait 1 s
+      seed error → wait 1 s
+      seed idle (recovery) → wait 1 s
+  - Output: docs/ui/recordings/UI-5-crow.webm.
+  - Lean: extend ui_screenshots.py with a `record_video`
+    flag rather than spawning a second script. The
+    Playwright context API supports `record_video_dir`
+    and `record_video_size`; rename the slug-named output
+    to UI-5-crow.webm post-hoc.
+
+docs/ui/screenshots/UI-5-crow/  (NEW)
+  - The 5 PNGs.
+  - README per the UI-2/UI-3/UI-4 pattern, plus a "what to
+    look at in the .webm" section pointing the auditor at
+    the four transitions and the recovery beat.
+
+docs/ui/recordings/UI-5-crow.webm  (NEW)
+  - The recording.
+  - <500 KB. If the raw Playwright output exceeds the
+    budget, transcode with ffmpeg using the codec already
+    referenced in UI-0 §7; document the ffmpeg invocation
+    in the screenshots README so the next motion-introducing
+    chunk can reproduce.
+
+docs/ui/assets/karasu_sprites_spec.md  (UPDATE)
+  - The current placeholder file says "32x32 16-bit style,
+    no anti-aliasing". UI-0 §5.6 says "SVG, monochrome,
+    single path where possible". The two are not
+    compatible; UI-5 reconciles by rewriting the spec file
+    to describe the SVG production decisions made in this
+    chunk (path source, viewBox, the four state classes,
+    the keyframe specs). Anchor the rewrite to UI-0 §5.6 —
+    the brief is the contract.
 ```
 
 ## Surface contract — must respect
 
 ```text
-- UI = read-only sink. UI-4 reads /api/events and renders;
-  no POST routes, no bus mutation.
-- No new bus event types. No projection changes (UI-1
-  already surfaces every chunk-4c field).
-- No new runtime dependency. Stdlib + the woff2 already
-  shipped in UI-2.
-- No build step. Static HTML / CSS / inline JS, same as
-  UI-2 / UI-3.
-- The empty state from UI-3 is the FIRST IMPRESSION when
-  the bus is silent. UI-4 must not change that path; the
-  swap to the populated timeline only happens when
-  events.length > 0.
+- UI = read-only sink. UI-5 only adds GET assets and CSS;
+  no projection change, no bus mutation.
+- No new bus event types. The crow state lives entirely on
+  the client; it derives from /api/health, which is
+  unchanged.
+- No new runtime dependency. Stdlib + the assets shipped
+  in UI-2 / UI-4. Playwright stays dev-only (already used
+  for screenshots; UI-5 adds video).
+- No build step. The SVG is a static asset; the CSS is a
+  static file under static/css/.
 - Frozen contracts: AgentResponse, F3, F7, F8, surface=sink,
   single-worker invariant, scar=stored-correction-only,
-  I-001..I-006, TriggerSource Protocol, bus event schema
-  (additive only via backend chunks; UI-4 does not change
-  it).
+  I-001..I-006, TriggerSource Protocol, bus event schema —
+  none touched.
+- The empty-state hero from UI-3 stays the first impression
+  on a silent bus; UI-5 only changes the SVG path data and
+  the keyframe binding.
 ```
 
 ## Open questions to resolve while implementing
 
 ```text
-1. Latest-first vs earliest-first. Lean: latest on top.
-   The bus is append-only; the operator coming back to the
-   surface wants the most recent context, not the first
-   change of the day.
+1. SVG aesthetic: clean vector vs pixel-art-evoking?
+   docs/ui/assets/karasu_sprites_spec.md says "32x32 16-bit
+   style, no anti-aliasing"; UI-0 §5.6 says "SVG, monochrome,
+   single path where possible". The two read as conflicting
+   intent. Lean: §5.6 wins (clean vector, single or two
+   paths). The sprites spec gets rewritten to match. If the
+   reviewer wants the pixel-art route instead, the SVG
+   redraw is contained.
 
-2. Priority highlighting. priority="high" events could earn
-   a thin --accent left border or an italicised type label.
-   Lean: NO highlighting in UI-4. The brief warned UI-4
-   about filling too fast; layering visual cues on top of
-   the type accent doubles the noise. Defer to a UI-7
-   detail drawer or a UI-N filter chunk if the need
-   surfaces empirically.
+2. Inline SVG vs <img src=...>. currentColor needs the SVG
+   to be in the same DOM as the styled ancestor, which
+   means inline. Lean: inline. <img> with the asset URL
+   would still load fine but loses the recolouring path.
 
-3. Type-to-accent mapping. file_change vs agent_response vs
-   human_decision could each get a dedicated colour. Lean:
-   NO. --fg-1 for the type label across the board. The
-   type word IS the accent (typography over chroma); colour
-   stays reserved for the crow state and --accent stays
-   reserved for affordance / error.
+3. Single asset vs per-state assets. The brief leans single
+   path (§5.6). State changes are colour + transform, not
+   shape morphs. Lean: one SVG, four state classes that
+   apply colour + keyframe. (If a state genuinely needs a
+   shape change later — say a "fly" state for UI-6 — that's
+   when a second asset enters.)
 
-4. Auto-scroll on new events. With latest-on-top + 3 s
-   poll, new rows appear at the top while the operator may
-   be reading older context. Lean: NO auto-scroll. New rows
-   prepend; the scroll position stays anchored to whatever
-   row the operator is reading. Optional UI-9 follow-up:
-   small "n new events" pill that flashes when the top
-   shifts.
+4. Pulse / shake / tilt magnitudes. The brief specifies
+   directions (slow pulse, asymmetric tilt, sharp shake)
+   but not exact values. Lean: small. 1.04× scale on
+   processing pulse, 4° tilt on waiting, ±2 px shake on
+   error. The UI-4 review's "the crow can have life; the
+   surface cannot lose calm" applies here in spades — go
+   smaller than feels exciting in the editor; the audit
+   will catch over-animated.
 
-5. Empty `tail.type` / `tail.timestamp`. The render must
-   degrade gracefully — `'event'` and `'—'` placeholders
-   per the UI-3 footer pattern. Already proven in UI-3.
-
-6. CSS split. UI-2 put fonts/tokens/reset/base under
-   static/css/. UI-3 kept timeline-relevant rules inline.
-   UI-4 should split timeline.css out so index.html stays
-   readable. Lean: yes, split. Inline <style> still owns
-   the shell-header / shell-footer / empty-state rules
-   (those are specific to the shell, not the timeline).
+5. .webm size budget. 500 KB cap. Playwright's default
+   webm encoder is verbose; if the recording overshoots,
+   re-encode with ffmpeg (libvpx-vp9, low CRF) before
+   commit.
 ```
 
 ## Audit cadence reminder
 
-Per UI-0 §7, the UI-4 PR MUST include:
+Per UI-0 §7 + the binding pins:
 
 ```text
-1. Real PNG screenshots under docs/ui/screenshots/UI-4-timeline/.
-2. A "what to look at" note in the PR body pointing the
-   auditor at: type-vs-mono rhythm, vertical density,
-   hover/focus subtlety, narrow-viewport collapse.
-3. The diff itself.
-4. The audit prompt for ChatGPT (same copy-paste flow).
-5. NO motion video required for UI-4 (static-only chunk —
-   timeline transitions, if any, are micro / 120ms colour
-   shifts on hover, already covered by the design system
-   demonstrated in UI-2).
+1. Real PNG screenshots under docs/ui/screenshots/UI-5-crow/
+   for every visible state.
+2. .webm recording at docs/ui/recordings/UI-5-crow.webm
+   (≤5 s, <500 KB). REQUIRED, no exception.
+3. A "what to look at" note covering type/state mapping,
+   keyframe magnitudes, and reduced-motion behaviour.
+4. The diff itself.
+5. The audit prompt for ChatGPT.
+6. Editorial check: "el crow puede tener vida; la superficie
+   no puede perder calma" — the auditor is invited to
+   scrutinise that the surrounding shell did NOT pick up any
+   crow personality.
 ```
 
 ## Pre-reads for next session
 
 ```text
-1. docs/ui/ui-0-design-brief.md §6 UI-4 + §5.2 (typography)
-   + §5.3 (spacing). Type / spacing rules ARE the spec for
-   this chunk.
-2. docs/memory/session-log.md tail (UI-2 + UI-3 closes) —
-   the bug pattern that bit UI-3 ([hidden] specificity) is
-   worth keeping in mind when UI-4 touches the same
-   .empty-state / .canvas-stub toggle.
-3. src/karasu/ui/static/index.html (current shell,
-   post-UI-3) — the canvas-stub branch is what UI-4
-   replaces.
-4. src/karasu/ui/server.py — _project_event already
-   surfaces every field UI-4 needs (timestamp, type, path,
-   agent, classification, priority, controller_resubmit,
-   github_*). No projection change needed.
-5. docs/ui/screenshots/UI-3-shell/README.md — for the
-   "what to look at" note style and the audit-prompt
-   pattern.
+1. docs/ui/ui-0-design-brief.md §5.6 (The Crow) + §6 (UI-5
+   roadmap entry) + §5.5 (motion durations + reduced-motion
+   contract).
+2. docs/ui/assets/karasu_sprites_spec.md — placeholder file
+   that UI-5 will rewrite to match the SVG production
+   decisions.
+3. src/karasu/ui/static/index.html — current placeholder
+   silhouette (ellipse + circle + 2 triangles); UI-5 swaps
+   the path data inline.
+4. src/karasu/ui/static/css/reset.css — the
+   prefers-reduced-motion chromatic whitelist; UI-5 keyframes
+   land under this contract.
+5. src/karasu/ui/server.py — `_crow_state` precedence (error
+   > waiting > processing > idle); UI-5 capture plan needs
+   the precedence-winning seed for each state PNG.
+6. docs/memory/sessions/ — any prior dogfood notes about
+   how the operator perceives the current placeholder; UI-5
+   delivers the "guau" moment the brief promises.
 ```
 
 ## Chunk size estimate
 
 ```text
-Code:    ~200 LOC (HTML extension + new timeline.css + JS
-         renderer)
-Assets:  none (fonts already shipped in UI-2)
-Docs:    ~80 LOC (screenshots README)
-Tests:   none in UI-4; UI-9 owns the test chunk.
-Total:   well under the 400 LOC budget.
+Code:       ~250 LOC (SVG inline + crow.css + index.html
+            extension + ui_screenshots video extension)
+Assets:     1 SVG asset (small), 5 PNGs + 1 webm
+Docs:       ~100 LOC (screenshots README + sprites_spec
+            rewrite)
+Tests:      none in UI-5; UI-9 owns the test chunk.
+Total:      under the 400 LOC code budget.
 ```
 
 ## Do NOT do yet
@@ -207,46 +260,44 @@ Total:   well under the 400 LOC budget.
 ```text
 - Do NOT introduce React / Tailwind / any framework. UI-0
   §4 still binding.
-- Do NOT colour-code event types. The type word is the
-  accent; chroma stays reserved for crow state / affordance
-  / error.
-- Do NOT auto-scroll. New events prepend; operator
-  scrolls.
-- Do NOT add filters / search / pagination in UI-4. UI-9
-  owns the operator-tooling chunk.
-- Do NOT touch /api/events shape. The projection is the
-  canonical contract.
-- Do NOT start UI-5 (crow sprite + state animations) as
-  part of UI-4. UI-5 is its own chunk and ships .webm
-  without exception per the ChatGPT UI-3 review.
-- Do NOT introduce a build step. Vite enters when a chunk
-  needs TypeScript modules; UI-4 is HTML/CSS/inline-JS.
-- Do NOT introduce a Live Map (UI-6) or detail drawer
-  (UI-7).
-- Do NOT render events as cards. The line is the unit;
-  card chrome (rounded background, shadow, padding box,
-  border) reframes the timeline as a dashboard. The
-  brief's "typographic line, not a table row" already
-  rules out the table; this rule rules out the card too.
-  (Pinned by ChatGPT in the PR #71 review of this very
-  document.)
+- Do NOT extend the bus schema for crow state. The state
+  derives from /api/health, which derives from the existing
+  projection; no new fields needed.
+- Do NOT animate anything outside the crow. Header chrome,
+  timeline rows, footer cells, focus rings — all static
+  except for the colour transitions UI-2 already covers.
+  ("La superficie no puede perder calma" applies here
+  literally.)
+- Do NOT loop the error shake. UI-0 §5.6: single beat. A
+  loop reads as alarm fatigue; the design wants one
+  decisive beat per error.
+- Do NOT skip the .webm. Static PNGs are necessary but
+  not sufficient for UI-5.
+- Do NOT introduce the Live Map (UI-6) flight path. UI-5
+  ships idle / processing / waiting / error in the header
+  and hero slots only. Flight is UI-6's job.
+- Do NOT introduce a build step. The SVG and CSS ship
+  static.
+- Do NOT colour-code event types in the timeline (still
+  binding from UI-4). Chroma stays reserved for the crow
+  state, --accent, --error.
 ```
 
 ## Anchor for the previous sessions
 
-- UI-2 (design system + tokens page) merged 2026-05-03
-  via PR #69 (`6ec5203`). One audit round; P0 on
-  `prefers-reduced-motion` (clamp was global, not chromatic-
-  whitelisted) fixed in `ae975f3`.
+- UI-4 (event timeline as editorial beats) merged 2026-05-03
+  via PR #72 (`13e6270`). APPROVED on the first round.
+  ChatGPT added the binding rule "el crow puede tener vida;
+  la superficie no puede perder calma" for UI-5.
 - UI-3 (application shell + `/api/meta`) merged 2026-05-03
   via PR #70 (`a67d729`). APPROVED on the first round.
-  ChatGPT pinned a binding rule: **UI-5 ships `.webm`
-  without exception** because the crow becomes the
-  principal visual asset there.
-- 392/394 pytest on Windows local. The 2 failures
+  ChatGPT pinned the `.webm`-without-exception rule for
+  UI-5 there.
+- 392/394 pytest on Windows local. The two failures
   (`test_git_probe::test_git_tree_path_exists_passes_cwd_through`
   and `test_ui_server::test_valid_asset_under_static_dir_is_served`)
   also fail on `main` — preexisting Windows CRLF / cwd
   quirks. CI Linux green.
-- Karasu HEAD: `a67d729` at session start. UI-4 branches
-  off this commit.
+- Karasu HEAD: `13e6270` at session start. UI-5 branches
+  off this commit (or the docs(memory) sync that lands
+  before it; both are fast-forward).

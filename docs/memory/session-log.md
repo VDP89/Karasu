@@ -962,3 +962,37 @@ Next step:
 Open follow-ups (carried forward from prior sessions):
 - Issue #66 — `fetch_card` opt-in retry on 502/503/504 (P2). Non-blocking.
 - Operator-side: repo rename `Karasu-` → `Karasu`, ChatGPT Codex Connector App uninstall.
+
+---
+
+## 2026-05-03 (later still) — UI-4 closed, timeline as editorial beats on main
+
+What changed:
+- **PR #72 merged** via squash (`13e6270`). The UI-3 canvas-stub branch is gone; populated bus state now renders as a real `<ol class="timeline">` of typographic lines.
+- New `static/css/timeline.css` — first feature-CSS file, split from the inline shell styles per UI-0 §6 anchor and the UI-3 next-session lean. Defines `.timeline` (max-width 720, list reset), `.event-row` (grid timestamp + content, hairline divider, `--bg-2` hover wash), `.event-time` (mono `--fs-12 --fg-2`), `.event-type` (display `--fs-16 --fg-1` — the typographic accent), `.event-meta` (mono `--fs-14 --fg-2`). Narrow-viewport collapses to a single column at 720 px.
+- `static/index.html`: `<ol>` replaces the canvas-stub, inline `<style>` slimmed (defunct `.canvas-stub` rules removed, `.shell-main` switched from flex-centred to flex-column + `.empty-state { margin: auto }` so the empty hero stays vertically centred while the timeline anchors to the top).
+- New JS: `renderTimeline(events)` + `eventMetaLine(e)` helpers. Latest-on-top via `[...events].reverse()`. `tick()` now toggles `empty` vs `timeline`; on a bus truncation it also calls `timeline.replaceChildren()` so a stale render doesn't linger.
+- `scripts/ui_screenshots.py` extended with a UI-4 capture plan, a new `press_tab` step kind (real keyboard-driven focus, not synthetic `.focus()`), and an `_apply_step` reorder so `wait_ms` runs FIRST. UI-4 needs the reorder: rows are JS-rendered after the first poll, so any `hover` / `press_tab` step that targets `.event-row:first-child` would otherwise miss the elements.
+- 4 real PNGs at `docs/ui/screenshots/UI-4-timeline/`: default (1440x900), hover (`--bg-2` wash on first row), focus (`--focus-ring` after one Tab), narrow (720x1024 single column).
+
+Audit cycle:
+- Round 1 → ChatGPT verdict **APPROVED FOR MERGE**. No P0 / no P1 / no P2.
+- Editorial check (the central question of UI-4): the surface still reads as "watchtower", not dashboard. The reviewer confirmed density, hover/focus subtlety, and the narrow-viewport collapse all hold the calm UI-3 earned.
+- Two observations carried forward to UI-5:
+  - Binding editorial constraint: **"el crow puede tener vida; la superficie no puede perder calma"**. UI-5 can give the crow personality but the surrounding surface must stay editorial.
+  - Re-affirmation: **`.webm` for UI-5 without exception**. The crow stops being placeholder/ambient there and becomes the principal visual asset; static PNGs do not suffice.
+
+Decisions:
+- CSS split landed (timeline.css under static/css/). Future features (livemap.css, detail-drawer.css) follow the same pattern; the inline `<style>` in index.html stays scoped to shell-only rules.
+- Latest-on-top on the client (reversed copy) rather than via a server-side order parameter. Server projection stays unchanged; UI-9 may expose a cursor / order param if dogfood metrics surface a need.
+- Re-render-all every tick rather than a key-based diff. The 100-event default page is small enough that the full re-render is invisible at 3 s polling. UI-9 can swap to a keyed diff if dogfood surfaces a perf cliff.
+- No priority highlighting, no type-to-colour mapping, no auto-scroll, no card chrome — every "Do NOT" from the UI-4 next-session plan held in the implementation.
+
+Impact:
+- The operator surface now reads the bus as editorial beats. Three-state lifecycle on the canvas: empty (UI-3 hero), populated (UI-4 timeline), and the `[hidden]` toggle from UI-3 keeps them mutually exclusive.
+- UI = read-only sink intact; `/api/events` projection unchanged; frozen contracts untouched.
+- 392/394 pytest on Windows local; same two preexisting CRLF / cwd quirks that fail on `main`.
+
+Next step:
+- UI-5 — crow sprite + state animations. Brief §5.6 + §6 own the spec; the ChatGPT observations above are binding constraints. `.webm` ships in the same PR; static PNGs alone do NOT close the audit.
+- Eventually: docs(memory) sync PR for UI-4 (this entry plus current-state + next-session updates) before UI-5 starts so the entry point stays accurate.

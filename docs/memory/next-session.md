@@ -2,198 +2,246 @@
 
 ## Goal
 
-**README Fase 3 — PWA + Advanced.** Pick up the UI surface
-that was sketched on the parallel branch ``feat/ui-1-runtime``
-(originally driven by ChatGPT; operator asked Claude Code to
-take over). ChatGPT continues as auditor only.
+**UI-2 — design system primitives + tokens page.**
 
-The backend roadmap (README Fase 1 + Fase 2) is complete.
-Phase 3+ archive (issue #5) closed at the code level. The
-only open phase in the README is the PWA / UI surface.
+Per UI-0 design brief (`docs/ui/ui-0-design-brief.md`),
+chunk UI-2 lands `tokens.css` (every design token from §5
+of the brief), self-hosted woff2 of Inter Display +
+JetBrains Mono, a custom minimal CSS reset (NOT
+normalize.css), and a `/design-system` page that documents
+every token in live code — palette swatches, type scale
+samples, spacing examples, radius samples, focus-ring demo,
+z-index layer demo, motion examples (with reduced-motion
+respected). The page doubles as the visual regression
+baseline for subsequent chunks.
 
-## Why pick up the parallel branch (not start fresh)
+This is the FIRST chunk where new visible state lands. The
+UI-0 audit cadence (§7) mandates real PNG screenshots for
+every UI-N PR (UI-1's one-time waiver does NOT extend).
 
-``feat/ui-1-runtime`` already ships:
+## Operational pre-req: operator on a computer with a browser
 
-```text
-src/karasu/ui/__init__.py           5 LOC
-src/karasu/ui/server.py            95 LOC  ThreadingHTTPServer
-                                            reading events.jsonl,
-                                            /api/events endpoint,
-                                            crow-state derivation
-                                            (idle / processing /
-                                            waiting / error).
-src/karasu/ui/static/index.html    48 LOC  Stub HTML +
-                                            timeline + crow
-                                            state. Black/grey,
-                                            monospace, NOT the
-                                            Win95 mockup yet.
-karasu ui  (CLI subcommand)
-docs/ui/karasu-win95-runtime-mockup.md     415 LOC spec.
-docs/ui/assets/karasu_sprites_spec.md       30 LOC.
+The session running this chunk MUST be on a machine where
+Playwright + Chromium can install. The sandbox that ran
+UI-0 / UI-1 did not have a browser available, which is why
+UI-1 shipped under a one-time screenshot waiver. UI-2 has
+no such waiver path.
+
+If the next session is again sandboxed-without-browser, the
+chunk MUST stop at the code/asset commit boundary; the
+operator (Victor) captures screenshots locally via:
+
+```bash
+pip install playwright
+python -m playwright install chromium
+python scripts/ui_screenshots.py UI-2-tokens
 ```
 
-Throwing this away and starting fresh would lose the operator's
-UX direction (Win95 chrome, crow-as-message metaphor, five-domain
-Live Map). The scaffolding is ~150 LOC of code and ~445 LOC of
-spec — small enough to rebase cleanly, large enough that it
-encodes real design decisions.
+…and commits the PNGs before the audit fires.
 
-## Branch state — needs rebase
+Operator targets Monday for this chunk on a computer.
 
-``feat/ui-1-runtime`` was forked from main BEFORE chunks
-4a / 4b / 4c / cap-impl / fetch / path-fallback / priority-persist
-landed. It is **behind main by approximately 8-9 merged PRs**.
-
-Diff against current main shows 30 files changed because main
-has all the recent additions; the branch has only the UI
-scaffold (+725 LOC) and is missing everything else.
-
-Cleanest pickup path: **cherry-pick the 6 UI commits onto a
-fresh branch from current main** rather than merging the
-divergent state. The 6 UI commits (oldest first):
+## What ships in UI-2
 
 ```text
-20207a5 feat(ui): add UI package
-0b65059 feat(ui): add UI server
-1d5d054 feat(ui): add static UI
-553e5ed feat(ui): add karasu ui command
-1ebfe6e docs(ui): add Win95 Karasu runtime mockup spec
-466e55f assets(ui): add Karasu sprite definitions v1
+src/karasu/ui/static/assets/fonts/
+  inter-display-400.woff2
+  inter-display-500.woff2
+  inter-display-700.woff2
+  jetbrains-mono-400.woff2
+  jetbrains-mono-500.woff2
+  jetbrains-mono-700.woff2
+  Self-hosted, SIL OFL 1.1 both. ~50-100 KB each
+  (~400-600 KB total).
+
+src/karasu/ui/static/css/tokens.css
+  Every token from UI-0 brief §5: --bg-0..2, --fg-1..3,
+  --accent, --error (alias), --ok, --warn, --radius-0..2,
+  --shadow-0..2, --focus-ring, --z-base/sticky/overlay/
+  modal/toast, motion easings, type scale via
+  --font-display / --font-mono / --fs-12..44 / --lh-* /
+  --tracking-display.
+
+src/karasu/ui/static/css/reset.css
+  Custom minimal reset (~30 lines). NOT normalize.css.
+  Box-sizing border-box, body margin reset, button /
+  input typography inheritance, form element resets,
+  ::selection styling against --accent, prefers-reduced-
+  motion media query that clamps non-color transitions
+  to 1ms.
+
+src/karasu/ui/static/css/base.css
+  Body baseline (--bg-0, --fg-1, font-display 16px),
+  scrollbar styling against --bg-1 / --fg-3, focus
+  outline replacement using --focus-ring.
+
+src/karasu/ui/static/index.html
+  Updated to load tokens.css + reset.css + base.css and
+  reference the new fonts. The existing stub timeline +
+  crow-state remain functional; no behavioural change.
+
+src/karasu/ui/static/design-system.html  (NEW)
+  Live documentation of every token. Sections:
+    - Palette: each color swatch with hex + token name +
+      contrast ratio against --bg-0.
+    - Typography: each scale step rendered with a sample
+      sentence; mono samples for code.
+    - Spacing: 4 / 8 / 12 / 16 / 24 / 32 / 48 / 80
+      visualised as flex gaps.
+    - Radius: each --radius-* applied to a sample shape.
+    - Focus ring: a button + input that demonstrate the
+      ring under keyboard focus.
+    - Z-index: stacked panels showing each layer.
+    - Motion: hover-triggered samples for micro / panel /
+      flight / ambient durations. Reduced-motion respected
+      and visually called out.
+
+src/karasu/ui/server.py
+  + Route GET /design-system → serves design-system.html.
+
+scripts/ui_fetch_fonts.sh  (NEW)
+  Downloads the 6 woff2 files from rsms.me (Inter) and
+  github.com/JetBrains/JetBrainsMono. Verifies SIL OFL 1.1
+  license is present in each repo before download. Idempotent
+  (skips if file already present + size matches expected).
+
+docs/ui/screenshots/UI-2-tokens/
+  REAL PNG screenshots:
+    00-design-system-default.png  (full /design-system page)
+    01-design-system-focus.png    (focus ring demo state)
+    02-design-system-motion.png   (motion sample mid-transition,
+                                   may need video instead per
+                                   UI-0 §7)
+    03-index-with-tokens.png     (existing index.html now using
+                                   the design system)
 ```
 
-## Suggested chunk sequence
+## Chunk size estimate
 
 ```text
-chunk UI-1  Cherry-pick the 6 commits onto current main.
-            Run pytest. Assert the existing UI server still
-            serves events.jsonl correctly with the new
-            additive fields (priority, controller_chain_depth,
-            github_* metadata). Open as feat/ui-rebase or
-            similar. Audit + merge.
+Code:    ~150 LOC (CSS + HTML + 1 server route)
+Assets:  ~400-600 KB (6 woff2 files, binary)
+Docs:    ~80 LOC (UI-2 README + screenshots dir README)
+Tests:   none in UI-2; UI-9 owns the test chunk.
+Total:   well under the 400 LOC code budget; assets are
+         binary-large but small in number (6 files).
+```
 
-chunk UI-2  Win95 layout pass: replace the stub index.html
-            with the mockup's panel chrome (title bar, sunken
-            panels, button surfaces). Static assets only;
-            behaviour unchanged. The Win95 mockup spec is at
-            docs/ui/karasu-win95-runtime-mockup.md and the
-            sprites at docs/ui/assets/karasu_sprites_spec.md.
+## Audit cadence reminder
 
-chunk UI-3  Live Map view: render the five-domain graph
-            (User / Karasu / Claude / Codex / GitHub) with
-            the crow as the in-flight message. Use the
-            existing /api/events feed; no schema change.
+Per UI-0 §7, the UI-2 PR MUST include:
 
-chunk UI-4  Detail panel: drill-down on an event shows the
-            full bus event JSON, including the new chunk-4c
-            fields (priority, controller_chain_depth,
-            github_* metadata).
-
-chunk UI-5  Tests for the UI server (HTTP-level, not browser).
-            Pin /api/events shape against the current bus
-            schema so a future schema change surfaces here.
-
-chunk UI-6+ Push notifications, offline (service worker),
-            trust management UI, scar browse/revoke per
-            README Fase 3. Larger; each likely needs its
-            own design pass.
+```text
+1. Real PNG screenshots under docs/ui/screenshots/UI-2-tokens/.
+2. A "what to look at" note in the PR body pointing the
+   auditor at: type scale rhythm, palette swatch contrast,
+   focus ring visibility, motion subtlety with reduced-motion
+   verified.
+3. The diff itself.
+4. The audit prompt for ChatGPT (same copy-paste flow).
+5. NO motion video required for UI-2 (static-only chunk).
 ```
 
 ## Pre-reads for next session
 
 ```text
-1. docs/ui/phase-ui-design.md            (vision)
-2. docs/ui/ui-1-layout.md                (layout v1)
-3. docs/ui/ui-1-runtime-plan.md          (runtime plan v1)
-4. docs/ui/karasu-win95-runtime-mockup.md  (NORTH STAR — only on
-                                            feat/ui-1-runtime)
-5. docs/ui/assets/karasu_sprites_spec.md   (sprites — only on
-                                            feat/ui-1-runtime)
-6. src/karasu/ui/server.py + static/index.html  (current stub
-                                            — only on
-                                            feat/ui-1-runtime)
+1. docs/ui/ui-0-design-brief.md  (NORTH STAR — every token,
+                                  every cadence rule, every
+                                  out-of-scope decision)
+2. src/karasu/ui/server.py       (current projection +
+                                  routing; add /design-system
+                                  here)
+3. src/karasu/ui/static/index.html (existing stub — UI-2
+                                  refactors it to use the
+                                  new tokens, no behavioural
+                                  change)
+4. docs/ui/screenshots/UI-1-rebase/README.md (one-time
+                                  waiver text — for the next
+                                  session to see why UI-2
+                                  needs real screenshots)
+5. scripts/ui_screenshots.py     (capture script — run
+                                  locally on operator
+                                  machine after UI-2 code
+                                  lands)
 ```
 
 ## Surface contract — must respect
 
 ```text
-- UI = surface, not orchestrator. The bus (events.jsonl) is
-  the source of truth; the UI reads but never writes.
-- No new bus event types required. The UI reads existing
-  event types (file_change, agent_response, human_decision,
-  scar_consultation) and renders them.
-- No new dependency on the backend Python code beyond
-  ``import json`` / stdlib HTTP. The UI server lives in
-  ``src/karasu/ui/`` and depends only on the bus file shape.
-- Frozen contracts untouched: AgentResponse, F3, F7, F8,
-  surface=sink (the UI is a NEW surface, additive to
-  Telegram), single-worker invariant,
+- UI = read-only sink (UI-0 §9 frozen contracts).
+- No new bus event types. No bus mutation.
+- No new runtime dependency. Stdlib + the woff2 binary
+  assets only. (Playwright is dev-only for screenshots.)
+- /design-system is a TOOL page — not part of the operator
+  surface. UI-3 (application shell) is the operator entry
+  point; /design-system stays accessible but unlinked from
+  the main surface.
+- Frozen contracts: AgentResponse, F3, F7, F8, surface=sink
+  (the UI is a NEW surface, additive to Telegram and
+  karasu tail), single-worker invariant,
   scar=stored-correction-only, I-001..I-006, TriggerSource
-  Protocol.
-- ``karasu ui`` is read-only in the MVP. No write endpoints
-  (no /api/correct, no /api/scar) in the rebase or layout
-  chunks. Write paths come later with the trust management
-  UI; they MUST go through ScarEngine / human_decision
-  events, not through direct bus mutation.
+  Protocol, bus event schema (additive only via backend
+  chunks).
 ```
 
-## ChatGPT auditor cadence
+## Open questions to resolve while implementing
 
-Same as the backend work: open PR → manual ChatGPT review
-through operator → REQUERIDOS / NICE-TO-HAVE → absorb on
-same branch → merge. This kept REQUERIDO churn low across
-the 12 PRs of this session and the previous one.
+```text
+1. Font weight subset. The brief specified weights 400 /
+   500 / 700 for both fonts. Do we ship all 3 weights for
+   both, or 400 + 700 (simpler) and add 500 only when a
+   chunk explicitly needs it? Lean: ship all 3 to match the
+   brief exactly; ~600 KB total is acceptable for an
+   internal tool.
 
-## Operational item — chunk 4c dogfood (deferred)
+2. /design-system route gating. Does it stay accessible in
+   production builds, or hidden behind a flag? Lean:
+   accessible always, unlinked from main surface. Cheap
+   debug + visual regression target.
 
-Controlled dogfood of chunk 4c on a real GitHub PR with
-``trust_level=1`` requires the operator's computer
-(``karasu serve`` long-running + GitHub webhook + bus
-monitoring). Operator targets Monday. NOT blocking the UI
-work — they are independent.
+3. tokens.css file location. Inside static/css/ or at
+   static/tokens.css? Lean: static/css/ subdirectory so
+   future stylesheets (timeline.css, livemap.css, etc.)
+   have a clean home.
 
-When the dogfood runs:
-- Adapter at ``trust_level=1``.
-- Verify the stderr banner from NICE-TO-HAVE #3 lists the
-  adapter at startup.
-- Drop a review comment on a PR with a fenceable body
-  (e.g. containing ` ``` `).
-- Watch ``events.jsonl`` for the resulting file_change with
-  ``source="github_webhook"``, the dispatched
-  agent_response, and the persisted ``priority`` /
-  ``controller_chain_depth`` fields.
-
-## Anchor for the previous sessions
-
-- Phase 3 closed 2026-05-02 (DOGFOOD-VALIDATED + AUDIT-ACCEPTED).
-- Phase 3+ pre-mortem merged (#48, two audit rounds).
-- ``feat/webhook-receiver`` (chunk 4a) merged after F-WH-6 follow-up.
-- ``feat/a2a-agent-card`` (chunk 4b) merged.
-- ``feat/trust-startup-warning`` (gate 2 of 4c) merged as #54.
-- ``docs/issue-47-cap-shape`` (gate 1 of 4c) merged as #53.
-- ``feat/review-comment-handoff`` (chunk 4c base) merged as #55.
-- ``feat/handoff-hardening`` (chunk 4c hardening) merged as #56.
-- ``feat/cap-shape-impl`` (chain cap implementation) merged
-  as #57. Closes issue #47.
-- ``feat/a2a-fetch-peers`` (chunk 4b outbound discovery)
-  merged as #58.
-- ``feat/handoff-path-fallback`` (F-HANDOFF-6) merged as #59.
-- ``feat/persist-effective-priority`` (Phase 3 audit
-  follow-up) merged as #60.
-- 335/335 pass on main. Frozen contracts intact.
+4. Reduced-motion testing in CI. UI-9 owns the formal test
+   chunk, but UI-2 introduces the first motion. Do we add
+   a smoke test now? Lean: no, pin in UI-9.
+```
 
 ## Do NOT do yet
 
 ```text
-- Do not let the UI mutate bus state. Read-only in the MVP.
-- Do not bypass ScarEngine / human_decision when writes
-  eventually arrive. Same contract as the Telegram surface.
-- Do not change the bus schema as part of UI work. New
-  fields on bus events must justify themselves outside the
-  UI need.
-- Do not start chunk UI-6+ (push, offline, trust mgmt)
-  before chunks UI-1..UI-5 are on main. Each later chunk
-  is large enough to warrant its own design pass.
-- Do not start chunk 4c dogfood from the sandbox; it needs
-  the operator's computer.
+- Do not introduce React / Tailwind / any framework. The
+  brief explicitly excludes them.
+- Do not let the UI mutate bus state. UI-1..UI-9 are
+  read-only.
+- Do not introduce a build step. UI-2 ships static CSS +
+  HTML directly. Vite enters when UI-3 / UI-4 introduce
+  TypeScript modules.
+- Do not start UI-3 / UI-4 / etc. as part of UI-2. Each is
+  its own chunk per the brief.
+- Do not link /design-system from the operator surface.
+  It's a tool / debug page, not a feature.
+- Do not start chunk 4c controlled dogfood from the
+  sandbox; it needs the operator's computer.
 ```
+
+## Anchor for the previous sessions
+
+- Phase 3+ archive (issue #5) closed in code (4 main
+  chunks + 4 follow-ups landed during 2026-05-02).
+- README Fase 1 + Fase 2 complete on main; 335/335 pytest.
+- UI handoff plan landed in PR #61 (memory snapshot,
+  86c1d0e).
+- UI-0 brief sealed in PR #62 (92e2c91).
+- UI-1 rebase + projection expansion landed in PR #63
+  (4819d7b). 5 of 6 cherry-picks from feat/ui-1-runtime
+  applied (the 6th was a placeholder stub and was
+  re-written). Server projection now surfaces the chunk-4c
+  bus schema fields. ONE-TIME screenshot waiver applied
+  to UI-1 only; UI-2+ does NOT inherit it.
+- karasu ui [--host H] [--port P] CLI live; defaults
+  127.0.0.1:8787.
+- Operator on mobile until Monday; UI-2 is the entry
+  point for the Monday session.

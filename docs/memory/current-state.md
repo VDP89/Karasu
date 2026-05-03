@@ -92,31 +92,38 @@ Cap enforcement: 6 `/scar` rapid-fire → exactly 3 resubmits, 3 cap warnings, 0
 
 ```text
 README Fase 1 + Fase 2: COMPLETE.
-README Fase 3 (PWA + Advanced): NOT STARTED.
+README Fase 3 (PWA + Advanced): IN PROGRESS.
 
-Phase 3+ archive (issue #5) is closed in code. All chunks
-(4a / 4b / 4c) and their gates (#53 / #54) merged; chunk 4c
-hardening (#56), issue #47 implementation (#57), chunk 4b
-outbound-discovery (#58), chunk 4c F-HANDOFF-6 path fallback
-(#59), and Phase 3 priority-persist follow-up (#60) all
-merged. 335/335 pass.
+UI surface progress:
+  UI-0 (design brief)     ✔ PR #62 merged (92e2c91).
+  UI-1 (rebase + projection) ✔ PR #63 merged (4819d7b).
+  UI-2 (design system + tokens page)   pending — operator
+                                       computer time
+                                       (Monday target).
+  UI-3..UI-9              pending per UI-0 brief roadmap.
+  UI-10+ (write paths, push, trust mgmt) out of brief
+                                       scope until UI-MVP
+                                       lands.
 
-Next session picks up the UI surface. Parallel branch
-feat/ui-1-runtime (origin) has the scaffolding from a
-ChatGPT-driven session; operator asked Claude Code to take
-over (ChatGPT continues as auditor only). Branch is
-~8-9 PRs behind main; pickup plan is to cherry-pick the 6
-UI commits onto a fresh branch from current main.
+The UI MVP is read-only against the bus. karasu ui
+[--host H] [--port P] (defaults 127.0.0.1:8787) starts a
+ThreadingHTTPServer that serves the static shell + the
+JSON projection at /api/events and /api/health. The
+projection is the canonical contract; UI-2..UI-9 render
+against it.
 
-See docs/memory/next-session.md for the chunk sequence
-(UI-1 rebase, UI-2 Win95 layout, UI-3 Live Map, UI-4 detail
-panel, UI-5 server tests, UI-6+ push / offline / trust mgmt).
+See docs/memory/next-session.md for the next chunk's
+detailed plan (UI-2 design system primitives + tokens page).
 
-Remaining items beyond the UI work:
+Remaining items beyond the UI MVP:
 
 - Dogfood controlado de chunk 4c con un PR real a
-  trust_level=1 — operativo, no código (requiere computadora;
-  operator targets Monday). NOT blocking UI work.
+  trust_level=1 — operativo, no código (requiere
+  computadora; operator targets Monday). NOT blocking UI.
+- UI-9 deferred items: URL-encoded path-traversal test
+  for /assets/*; config-aware EVENT_LOG.
+- UI-2 deferred item: lint script for bare outline:none
+  (UI-0 round-2 NICE-TO-HAVE).
 - Future: git-tree-aware path probe injectable in
   PromptBuilder (audit-noted on PR #59).
 - Future: optional retry on network error in fetch_card

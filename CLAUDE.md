@@ -8,8 +8,11 @@ for the module layout.
 
 - **PR-first.** Open a feature branch + PR for every chunk of work.
   Never push to `main` directly.
-- **Tag `@codex review` on every PR.** Codex acts as the reviewer for
-  this repo via the ChatGPT Codex Connector GitHub App.
+- **Reviews are out-of-band via ChatGPT.** The operator pastes the
+  PR diff and the audit prompt into a ChatGPT conversation and
+  ferries the verdict back. Do NOT tag `@codex review` and do NOT
+  rely on the ChatGPT Codex Connector GitHub App — the operator
+  does not want automated bot reviews on this repo.
 - **Address findings autonomously per `docs/review-loop.md`.** Don't
   escalate to the user for routine review iterations. Close the loop
   yourself unless the policy says to stop.
@@ -23,6 +26,7 @@ architectural decision, or ambiguous finding.
 
 ## When to stop
 
-After `@codex review`, wait up to 5 minutes for the reply. If silence,
-move to another branch and keep working — the webhook will bring you
-back when there's something to act on.
+After requesting a ChatGPT review out-of-band, wait for the
+operator to ferry the verdict back. If they have not replied
+within ~5 minutes, move to another branch and keep working — they
+will return with the audit when ready.

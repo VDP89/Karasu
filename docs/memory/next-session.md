@@ -223,6 +223,13 @@ Total:   well under the 400 LOC budget.
   needs TypeScript modules; UI-4 is HTML/CSS/inline-JS.
 - Do NOT introduce a Live Map (UI-6) or detail drawer
   (UI-7).
+- Do NOT render events as cards. The line is the unit;
+  card chrome (rounded background, shadow, padding box,
+  border) reframes the timeline as a dashboard. The
+  brief's "typographic line, not a table row" already
+  rules out the table; this rule rules out the card too.
+  (Pinned by ChatGPT in the PR #71 review of this very
+  document.)
 ```
 
 ## Anchor for the previous sessions

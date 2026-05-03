@@ -2,246 +2,244 @@
 
 ## Goal
 
-**UI-2 — design system primitives + tokens page.**
+**UI-4 — event timeline as editorial beats.**
 
-Per UI-0 design brief (`docs/ui/ui-0-design-brief.md`),
-chunk UI-2 lands `tokens.css` (every design token from §5
-of the brief), self-hosted woff2 of Inter Display +
-JetBrains Mono, a custom minimal CSS reset (NOT
-normalize.css), and a `/design-system` page that documents
-every token in live code — palette swatches, type scale
-samples, spacing examples, radius samples, focus-ring demo,
-z-index layer demo, motion examples (with reduced-motion
-respected). The page doubles as the visual regression
-baseline for subsequent chunks.
+Per UI-0 design brief §6, chunk UI-4 turns the empty-state
+canvas (UI-3) into a populated timeline of bus events
+rendered as typographic lines, NOT table rows. The brief is
+explicit: *"Each event is a typographic line, not a table
+row: timestamp (mono), type (display), path / agent (muted).
+Hover and focus states. Connects to `/api/events`; no Live
+Map yet."*
 
-This is the FIRST chunk where new visible state lands. The
-UI-0 audit cadence (§7) mandates real PNG screenshots for
-every UI-N PR (UI-1's one-time waiver does NOT extend).
+UI-4 is the chunk where the operator surface stops being
+empty and starts being **read**. It is the highest-risk
+visual chunk so far: a mistuned scale or a busy hover state
+silently undoes the calm UI-3 just earned.
 
-## Operational pre-req: operator on a computer with a browser
+## Editorial guidance pinned by ChatGPT (UI-3 audit)
 
-The session running this chunk MUST be on a machine where
-Playwright + Chromium can install. The sandbox that ran
-UI-0 / UI-1 did not have a browser available, which is why
-UI-1 shipped under a one-time screenshot waiver. UI-2 has
-no such waiver path.
-
-If the next session is again sandboxed-without-browser, the
-chunk MUST stop at the code/asset commit boundary; the
-operator (Victor) captures screenshots locally via:
-
-```bash
-pip install playwright
-python -m playwright install chromium
-python scripts/ui_screenshots.py UI-2-tokens
-```
-
-…and commits the PNGs before the audit fires.
-
-Operator targets Monday for this chunk on a computer.
-
-## What ships in UI-2
+The reviewer flagged the central risk explicitly. Treat the
+following as binding constraints, not suggestions:
 
 ```text
-src/karasu/ui/static/assets/fonts/
-  inter-display-400.woff2
-  inter-display-500.woff2
-  inter-display-700.woff2
-  jetbrains-mono-400.woff2
-  jetbrains-mono-500.woff2
-  jetbrains-mono-700.woff2
-  Self-hosted, SIL OFL 1.1 both. ~50-100 KB each
-  (~400-600 KB total).
-
-src/karasu/ui/static/css/tokens.css
-  Every token from UI-0 brief §5: --bg-0..2, --fg-1..3,
-  --accent, --error (alias), --ok, --warn, --radius-0..2,
-  --shadow-0..2, --focus-ring, --z-base/sticky/overlay/
-  modal/toast, motion easings, type scale via
-  --font-display / --font-mono / --fs-12..44 / --lh-* /
-  --tracking-display.
-
-src/karasu/ui/static/css/reset.css
-  Custom minimal reset (~30 lines). NOT normalize.css.
-  Box-sizing border-box, body margin reset, button /
-  input typography inheritance, form element resets,
-  ::selection styling against --accent, prefers-reduced-
-  motion media query that clamps non-color transitions
-  to 1ms.
-
-src/karasu/ui/static/css/base.css
-  Body baseline (--bg-0, --fg-1, font-display 16px),
-  scrollbar styling against --bg-1 / --fg-3, focus
-  outline replacement using --focus-ring.
-
-src/karasu/ui/static/index.html
-  Updated to load tokens.css + reset.css + base.css and
-  reference the new fonts. The existing stub timeline +
-  crow-state remain functional; no behavioural change.
-
-src/karasu/ui/static/design-system.html  (NEW)
-  Live documentation of every token. Sections:
-    - Palette: each color swatch with hex + token name +
-      contrast ratio against --bg-0.
-    - Typography: each scale step rendered with a sample
-      sentence; mono samples for code.
-    - Spacing: 4 / 8 / 12 / 16 / 24 / 32 / 48 / 80
-      visualised as flex gaps.
-    - Radius: each --radius-* applied to a sample shape.
-    - Focus ring: a button + input that demonstrate the
-      ring under keyboard focus.
-    - Z-index: stacked panels showing each layer.
-    - Motion: hover-triggered samples for micro / panel /
-      flight / ambient durations. Reduced-motion respected
-      and visually called out.
-
-src/karasu/ui/server.py
-  + Route GET /design-system → serves design-system.html.
-
-scripts/ui_fetch_fonts.sh  (NEW)
-  Downloads the 6 woff2 files from rsms.me (Inter) and
-  github.com/JetBrains/JetBrainsMono. Verifies SIL OFL 1.1
-  license is present in each repo before download. Idempotent
-  (skips if file already present + size matches expected).
-
-docs/ui/screenshots/UI-2-tokens/
-  REAL PNG screenshots:
-    00-design-system-default.png  (full /design-system page)
-    01-design-system-focus.png    (focus ring demo state)
-    02-design-system-motion.png   (motion sample mid-transition,
-                                   may need video instead per
-                                   UI-0 §7)
-    03-index-with-tokens.png     (existing index.html now using
-                                   the design system)
+- Timestamp:   mono, small, muted (--font-mono / --fs-12 /
+               --fg-2). Reads as metadata, never the focal
+               point.
+- Type:        display, the typographic accent of the row
+               (--font-display / --fs-16 weight ui or
+               display / --fg-1). Single visual emphasis
+               per row.
+- Path/agent:  muted, secondary metadata
+               (--fg-2 / --fs-14 / --font-mono for paths,
+               --font-display for agent names). Below the
+               type in visual weight, never above.
+- Hover/focus: very contained. Subtle --bg-2 background
+               shift; the design-system focus ring on Tab.
+               No translation, no zoom, no accent flood.
+- The largest risk of UI-4 is filling the air UI-3 just
+  earned too quickly. Generous vertical rhythm, max-width
+  cap on the timeline column, no chrome decoration.
 ```
 
-## Chunk size estimate
+Anchor those rules in the implementation. If a token /
+spacing decision feels generous, lean generous; if it feels
+tight, walk it back one stop.
+
+## What ships in UI-4
 
 ```text
-Code:    ~150 LOC (CSS + HTML + 1 server route)
-Assets:  ~400-600 KB (6 woff2 files, binary)
-Docs:    ~80 LOC (UI-2 README + screenshots dir README)
-Tests:   none in UI-2; UI-9 owns the test chunk.
-Total:   well under the 400 LOC code budget; assets are
-         binary-large but small in number (6 files).
-```
+src/karasu/ui/static/index.html  (extension)
+  - The canvas-stub branch ("UI-4 will render the event
+    timeline here") is replaced by a real <ol class="timeline">
+    rendered into the same main slot. The empty-state branch
+    (zero events) is unchanged from UI-3.
+  - Each event row is a single line:
+      [timestamp mono small muted]
+      [type display 16 fg-1]
+      [path or agent mono / display 14 fg-2]
+    Stacked or in-row depending on viewport; never as a
+    table.
+  - JS gains a tiny renderer that takes the /api/events
+    projection and produces the row DOM. Reuse the existing
+    setInterval from UI-3 (3s poll); no new poll loop.
+  - Latest event on top. The bus is append-only and the
+    operator wants the most recent first.
+  - max-width 720px on the timeline column, centred. The
+    column does NOT span the canvas — air on both sides is
+    a feature.
 
-## Audit cadence reminder
+src/karasu/ui/static/css/  (optional split, lean: yes)
+  Inline <style> in index.html grew during UI-3. UI-4 is the
+  natural moment to peel timeline-specific rules into
+  static/css/timeline.css and load it from index.html. Keeps
+  index.html under ~250 LOC of style and lets future chunks
+  add their own *.css without bloating the inline block.
 
-Per UI-0 §7, the UI-2 PR MUST include:
+scripts/ui_screenshots.py  (extension)
+  Add a UI-4 capture plan with at least:
+    00-timeline-default.png        populated bus, default vp
+    01-timeline-hover.png          one row hovered
+    02-timeline-focus.png          one row focused via Tab
+    03-timeline-narrow-viewport.png 720x1024 narrow
 
-```text
-1. Real PNG screenshots under docs/ui/screenshots/UI-2-tokens/.
-2. A "what to look at" note in the PR body pointing the
-   auditor at: type scale rhythm, palette swatch contrast,
-   focus ring visibility, motion subtlety with reduced-motion
-   verified.
-3. The diff itself.
-4. The audit prompt for ChatGPT (same copy-paste flow).
-5. NO motion video required for UI-2 (static-only chunk).
-```
-
-## Pre-reads for next session
-
-```text
-1. docs/ui/ui-0-design-brief.md  (NORTH STAR — every token,
-                                  every cadence rule, every
-                                  out-of-scope decision)
-2. src/karasu/ui/server.py       (current projection +
-                                  routing; add /design-system
-                                  here)
-3. src/karasu/ui/static/index.html (existing stub — UI-2
-                                  refactors it to use the
-                                  new tokens, no behavioural
-                                  change)
-4. docs/ui/screenshots/UI-1-rebase/README.md (one-time
-                                  waiver text — for the next
-                                  session to see why UI-2
-                                  needs real screenshots)
-5. scripts/ui_screenshots.py     (capture script — run
-                                  locally on operator
-                                  machine after UI-2 code
-                                  lands)
+docs/ui/screenshots/UI-4-timeline/  (NEW)
+  REAL PNG screenshots. UI-1 waiver does NOT extend.
 ```
 
 ## Surface contract — must respect
 
 ```text
-- UI = read-only sink (UI-0 §9 frozen contracts).
-- No new bus event types. No bus mutation.
-- No new runtime dependency. Stdlib + the woff2 binary
-  assets only. (Playwright is dev-only for screenshots.)
-- /design-system is a TOOL page — not part of the operator
-  surface. UI-3 (application shell) is the operator entry
-  point; /design-system stays accessible but unlinked from
-  the main surface.
-- Frozen contracts: AgentResponse, F3, F7, F8, surface=sink
-  (the UI is a NEW surface, additive to Telegram and
-  karasu tail), single-worker invariant,
-  scar=stored-correction-only, I-001..I-006, TriggerSource
-  Protocol, bus event schema (additive only via backend
-  chunks).
+- UI = read-only sink. UI-4 reads /api/events and renders;
+  no POST routes, no bus mutation.
+- No new bus event types. No projection changes (UI-1
+  already surfaces every chunk-4c field).
+- No new runtime dependency. Stdlib + the woff2 already
+  shipped in UI-2.
+- No build step. Static HTML / CSS / inline JS, same as
+  UI-2 / UI-3.
+- The empty state from UI-3 is the FIRST IMPRESSION when
+  the bus is silent. UI-4 must not change that path; the
+  swap to the populated timeline only happens when
+  events.length > 0.
+- Frozen contracts: AgentResponse, F3, F7, F8, surface=sink,
+  single-worker invariant, scar=stored-correction-only,
+  I-001..I-006, TriggerSource Protocol, bus event schema
+  (additive only via backend chunks; UI-4 does not change
+  it).
 ```
 
 ## Open questions to resolve while implementing
 
 ```text
-1. Font weight subset. The brief specified weights 400 /
-   500 / 700 for both fonts. Do we ship all 3 weights for
-   both, or 400 + 700 (simpler) and add 500 only when a
-   chunk explicitly needs it? Lean: ship all 3 to match the
-   brief exactly; ~600 KB total is acceptable for an
-   internal tool.
+1. Latest-first vs earliest-first. Lean: latest on top.
+   The bus is append-only; the operator coming back to the
+   surface wants the most recent context, not the first
+   change of the day.
 
-2. /design-system route gating. Does it stay accessible in
-   production builds, or hidden behind a flag? Lean:
-   accessible always, unlinked from main surface. Cheap
-   debug + visual regression target.
+2. Priority highlighting. priority="high" events could earn
+   a thin --accent left border or an italicised type label.
+   Lean: NO highlighting in UI-4. The brief warned UI-4
+   about filling too fast; layering visual cues on top of
+   the type accent doubles the noise. Defer to a UI-7
+   detail drawer or a UI-N filter chunk if the need
+   surfaces empirically.
 
-3. tokens.css file location. Inside static/css/ or at
-   static/tokens.css? Lean: static/css/ subdirectory so
-   future stylesheets (timeline.css, livemap.css, etc.)
-   have a clean home.
+3. Type-to-accent mapping. file_change vs agent_response vs
+   human_decision could each get a dedicated colour. Lean:
+   NO. --fg-1 for the type label across the board. The
+   type word IS the accent (typography over chroma); colour
+   stays reserved for the crow state and --accent stays
+   reserved for affordance / error.
 
-4. Reduced-motion testing in CI. UI-9 owns the formal test
-   chunk, but UI-2 introduces the first motion. Do we add
-   a smoke test now? Lean: no, pin in UI-9.
+4. Auto-scroll on new events. With latest-on-top + 3 s
+   poll, new rows appear at the top while the operator may
+   be reading older context. Lean: NO auto-scroll. New rows
+   prepend; the scroll position stays anchored to whatever
+   row the operator is reading. Optional UI-9 follow-up:
+   small "n new events" pill that flashes when the top
+   shifts.
+
+5. Empty `tail.type` / `tail.timestamp`. The render must
+   degrade gracefully — `'event'` and `'—'` placeholders
+   per the UI-3 footer pattern. Already proven in UI-3.
+
+6. CSS split. UI-2 put fonts/tokens/reset/base under
+   static/css/. UI-3 kept timeline-relevant rules inline.
+   UI-4 should split timeline.css out so index.html stays
+   readable. Lean: yes, split. Inline <style> still owns
+   the shell-header / shell-footer / empty-state rules
+   (those are specific to the shell, not the timeline).
+```
+
+## Audit cadence reminder
+
+Per UI-0 §7, the UI-4 PR MUST include:
+
+```text
+1. Real PNG screenshots under docs/ui/screenshots/UI-4-timeline/.
+2. A "what to look at" note in the PR body pointing the
+   auditor at: type-vs-mono rhythm, vertical density,
+   hover/focus subtlety, narrow-viewport collapse.
+3. The diff itself.
+4. The audit prompt for ChatGPT (same copy-paste flow).
+5. NO motion video required for UI-4 (static-only chunk —
+   timeline transitions, if any, are micro / 120ms colour
+   shifts on hover, already covered by the design system
+   demonstrated in UI-2).
+```
+
+## Pre-reads for next session
+
+```text
+1. docs/ui/ui-0-design-brief.md §6 UI-4 + §5.2 (typography)
+   + §5.3 (spacing). Type / spacing rules ARE the spec for
+   this chunk.
+2. docs/memory/session-log.md tail (UI-2 + UI-3 closes) —
+   the bug pattern that bit UI-3 ([hidden] specificity) is
+   worth keeping in mind when UI-4 touches the same
+   .empty-state / .canvas-stub toggle.
+3. src/karasu/ui/static/index.html (current shell,
+   post-UI-3) — the canvas-stub branch is what UI-4
+   replaces.
+4. src/karasu/ui/server.py — _project_event already
+   surfaces every field UI-4 needs (timestamp, type, path,
+   agent, classification, priority, controller_resubmit,
+   github_*). No projection change needed.
+5. docs/ui/screenshots/UI-3-shell/README.md — for the
+   "what to look at" note style and the audit-prompt
+   pattern.
+```
+
+## Chunk size estimate
+
+```text
+Code:    ~200 LOC (HTML extension + new timeline.css + JS
+         renderer)
+Assets:  none (fonts already shipped in UI-2)
+Docs:    ~80 LOC (screenshots README)
+Tests:   none in UI-4; UI-9 owns the test chunk.
+Total:   well under the 400 LOC budget.
 ```
 
 ## Do NOT do yet
 
 ```text
-- Do not introduce React / Tailwind / any framework. The
-  brief explicitly excludes them.
-- Do not let the UI mutate bus state. UI-1..UI-9 are
-  read-only.
-- Do not introduce a build step. UI-2 ships static CSS +
-  HTML directly. Vite enters when UI-3 / UI-4 introduce
-  TypeScript modules.
-- Do not start UI-3 / UI-4 / etc. as part of UI-2. Each is
-  its own chunk per the brief.
-- Do not link /design-system from the operator surface.
-  It's a tool / debug page, not a feature.
-- Do not start chunk 4c controlled dogfood from the
-  sandbox; it needs the operator's computer.
+- Do NOT introduce React / Tailwind / any framework. UI-0
+  §4 still binding.
+- Do NOT colour-code event types. The type word is the
+  accent; chroma stays reserved for crow state / affordance
+  / error.
+- Do NOT auto-scroll. New events prepend; operator
+  scrolls.
+- Do NOT add filters / search / pagination in UI-4. UI-9
+  owns the operator-tooling chunk.
+- Do NOT touch /api/events shape. The projection is the
+  canonical contract.
+- Do NOT start UI-5 (crow sprite + state animations) as
+  part of UI-4. UI-5 is its own chunk and ships .webm
+  without exception per the ChatGPT UI-3 review.
+- Do NOT introduce a build step. Vite enters when a chunk
+  needs TypeScript modules; UI-4 is HTML/CSS/inline-JS.
+- Do NOT introduce a Live Map (UI-6) or detail drawer
+  (UI-7).
 ```
 
 ## Anchor for the previous sessions
 
-- Phase 3+ archive (issue #5) closed in code (4 main
-  chunks + 4 follow-ups landed during 2026-05-02).
-- README Fase 1 + Fase 2 complete on main; 335/335 pytest.
-- UI handoff plan landed in PR #61 (memory snapshot,
-  86c1d0e).
-- UI-0 brief sealed in PR #62 (92e2c91).
-- UI-1 rebase + projection expansion landed in PR #63
-  (4819d7b). 5 of 6 cherry-picks from feat/ui-1-runtime
-  applied (the 6th was a placeholder stub and was
-  re-written). Server projection now surfaces the chunk-4c
-  bus schema fields. ONE-TIME screenshot waiver applied
-  to UI-1 only; UI-2+ does NOT inherit it.
-- karasu ui [--host H] [--port P] CLI live; defaults
-  127.0.0.1:8787.
-- Operator on mobile until Monday; UI-2 is the entry
-  point for the Monday session.
+- UI-2 (design system + tokens page) merged 2026-05-03
+  via PR #69 (`6ec5203`). One audit round; P0 on
+  `prefers-reduced-motion` (clamp was global, not chromatic-
+  whitelisted) fixed in `ae975f3`.
+- UI-3 (application shell + `/api/meta`) merged 2026-05-03
+  via PR #70 (`a67d729`). APPROVED on the first round.
+  ChatGPT pinned a binding rule: **UI-5 ships `.webm`
+  without exception** because the crow becomes the
+  principal visual asset there.
+- 392/394 pytest on Windows local. The 2 failures
+  (`test_git_probe::test_git_tree_path_exists_passes_cwd_through`
+  and `test_ui_server::test_valid_asset_under_static_dir_is_served`)
+  also fail on `main` — preexisting Windows CRLF / cwd
+  quirks. CI Linux green.
+- Karasu HEAD: `a67d729` at session start. UI-4 branches
+  off this commit.

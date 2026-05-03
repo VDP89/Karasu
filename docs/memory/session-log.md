@@ -893,3 +893,72 @@ Next step:
 - Operator-side actions that no Claude Code session can do:
   - Repo rename: GitHub → Settings → General → Repository name → `Karasu`.
   - Codex Connector App uninstall: GitHub → Settings → Integrations → Applications → ChatGPT Codex Connector → Uninstall.
+
+---
+
+## 2026-05-03 (later) — UI-2 closed, design system on main
+
+What changed:
+- **PR #69 merged** via squash (`6ec5203`). Design system primitives + the live `/design-system` documentation page on `main`. First chunk under the new ChatGPT-out-of-band review contract (Codex bot retired earlier the same day).
+- `static/css/{tokens,reset,base}.css` — every token from UI-0 §5 in custom properties (palette, type scale 12–44, spacing 4–80, radius 0/2/6, shadow 0/1/2, focus-ring stacked inset/outset, z-index named layers, motion easings + durations).
+- 6 self-hosted woff2 under `static/fonts/`: Inter Display 4.x from rsms.me + JetBrains Mono v2.304 from `JetBrains/JetBrainsMono`. Both SIL OFL 1.1; license texts mirrored alongside the binaries. Total ~616 KB.
+- `static/design-system.html` — live documentation of every token (palette, type scale, spacing, radius, shadow, focus, z-index, motion). Doubles as visual regression baseline for UI-3..UI-9.
+- `static/index.html` — UI-1 stub dressed in the tokens (no behavioural change at this point).
+- `GET /design-system` route in `ui/server.py`, unlinked from the operator surface per UI-0 §6.
+- `scripts/ui_fetch_fonts.sh` — idempotent, woff2 magic-byte verified.
+- `scripts/ui_screenshots.py` — extended with a per-slug capture plan (scroll/focus/hover/wait steps), and switched from `os.chdir` to `ui_server.configure()` so `TemporaryDirectory` cleanup no longer races against the process cwd on Windows.
+- `docs/ui/screenshots/UI-2-tokens/` ships 4 real PNGs.
+
+Audit cycle (first formal one post-Codex):
+- Round 1 → ChatGPT verdict **CHANGES REQUESTED — 1 P0**. The `prefers-reduced-motion` block clamped `transition-duration: 1ms` globally, including color, contradicting UI-0 §5.5 literal ("ALL durations clamped to 1ms EXCEPT color transitions"). The block's own comment described the intended behaviour but the implementation did not match.
+- Fix in commit `ae975f3`: switched approach to `transition-property` whitelist (color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, box-shadow). Color and box-shadow keep their original durations; transform / opacity / filter / size become instant under reduced-motion.
+- Round 2 → ChatGPT verdict **APPROVED FOR MERGE**. Squash + delete-branch; leaf PR, no descendants.
+
+Decisions:
+- Layout flat under `static/` (`static/css/`, `static/fonts/`) rather than `static/assets/css|fonts/`. The `/assets/*` URL namespace is a routing concern; the on-disk layout doesn't need to mirror it. Tests existing on `/assets/foo` → `static/foo` resolution kept passing.
+- All 3 font weights (400 / 500 / 700) shipped per UI-0 §5.2 spec, not the simpler 400 + 700 subset. ~616 KB total is acceptable for an internal tool.
+- `/design-system` accessible always, unlinked from the operator surface. Cheap visual regression target + live doc for future UI-N chunks.
+- Comment-vs-code mismatch flagged by ChatGPT is a generalisable lesson: when a comment promises "via a more specific override" or similar, validate the override exists. The brief is the contract; the comment is not.
+
+Impact:
+- The design system is now the single source of truth for visible tokens. UI-3..UI-9 reference custom properties; no magic literals downstream.
+- `prefers-reduced-motion` contract holds literally; color / focus-ring transitions stay smooth, transform / opacity / size become instant.
+- Post-Codex review contract validated end-to-end: operator-ferried prompt → ChatGPT verdict → fix → re-audit → merge. Latency higher than a webhook bot but verdicts more substantive.
+
+Next step:
+- UI-3 — application shell (header + main canvas + footer + empty state).
+
+---
+
+## 2026-05-03 (still later) — UI-3 closed, application shell on main
+
+What changed:
+- **PR #70 merged** via squash (`a67d729`). Application shell + additive `/api/meta` endpoint on `main`.
+- Server: new `GET /api/meta` returns `{version, bus_path}`. `version` via `importlib.metadata` (stdlib, no new runtime dep) with `"unknown"` fallback if the package is not installed; `bus_path` via `str(EVENT_LOG)`. `/api/events` and `/api/health` shapes unchanged — additive only.
+- `static/index.html` — three-row CSS grid replacing the UI-1/UI-2 stub layout. Sticky header (crow glyph + agent name + bus path right-aligned with ellipsis). Main canvas: empty state (96px hero crow breathing 1px translateY 4s ease-mag, single editorial sentence) when zero events, canvas-stub placeholder ("UI-4 will render the event timeline here" + count + last type + last timestamp) when events exist. Sticky footer: version + last event time + crow state.
+- Crow glyph: vector silhouette placeholder (`ellipse` + `circle` + 2 triangles). UI-5 swaps for the canonical 32x32 16-bit sprite per `docs/ui/assets/karasu_sprites_spec.md`. Header glyph recolours via class swap on `/api/health` state (idle = `--fg-1`, processing/error = `--accent`, waiting = `--warn`).
+- `[hidden] { display: none !important; }` global safety net at the top of the inline stylesheet — caught and fixed in the same diff. UA `[hidden]` rule was outranked by `.empty-state { display: flex }`, so `el.hidden = true` did not actually hide.
+- `scripts/ui_screenshots.py` extended with two per-capture knobs: `seed` (bool — populate or truncate the bus before navigation) and `viewport` (dict — override 1440x900). Fresh Playwright context per capture so viewport overrides don't leak.
+- 3 real PNGs at `docs/ui/screenshots/UI-3-shell/`: empty (1440x900 — the headline target), populated (1440x900 — processing crow), narrow (720x1024 — responsive shell).
+
+Audit cycle:
+- Round 1 → ChatGPT verdict **APPROVED FOR MERGE** with no P0 / no P1 / no P2.
+- ChatGPT explicitly answered the open `.webm` question: not required for UI-3 because the ambient breathing is *subliminal* per UI-0 §5.6. The reviewer added a binding rule for UI-5: **ship `.webm` without exception** because that's where the crow stops being placeholder/ambient and becomes the principal visual asset.
+
+Decisions:
+- `/api/meta` is additive — distinct endpoint rather than extending `/api/health`. Existing consumers (`karasu tail`, the UI-1 projection) keep their contract; tests existing on `/api/health` shape did not need to change.
+- Crow glyph in UI-3 is a vector silhouette placeholder, NOT the canonical sprite. UI-5 owns the canonical 32x32 16-bit asset; UI-3's job is to wire the surface state into a glyph slot that swaps cleanly.
+- The bug fix (`[hidden]` safety net) lands in the same diff. Splitting it into a follow-up would have needed a re-capture cycle and added churn for a 2-line CSS rule with a clear, testable contract.
+- Skipped `.webm` for UI-3. Ambient breathing is documented as subliminal in UI-0 §5.6 and the README in the screenshots dir explained the call. ChatGPT confirmed the call and pinned the rule for UI-5.
+
+Impact:
+- The operator surface now opens "beautifully with zero events on the bus" — UI-0 §6 UI-3 exit condition met.
+- UI = read-only sink intact; `/api/meta` additive; frozen contracts untouched.
+- 392/394 pytest on Windows local. The 2 failures (`test_git_probe::test_git_tree_path_exists_passes_cwd_through`, `test_ui_server::test_valid_asset_under_static_dir_is_served`) also fail on `main` — preexisting Windows CRLF / cwd quirks documented during UI-2.
+
+Next step:
+- UI-4 — event timeline as editorial beats. Per ChatGPT's UI-3 review observation: "timestamp mono pequeño, tipo de evento como acento tipográfico, path/agente como metadata secundaria, y hover/focus muy contenido. El mayor riesgo de UI-4 será llenar demasiado rápido el vacío que UI-3 acaba de ganar." See `docs/memory/next-session.md` for the chunk plan.
+
+Open follow-ups (carried forward from prior sessions):
+- Issue #66 — `fetch_card` opt-in retry on 502/503/504 (P2). Non-blocking.
+- Operator-side: repo rename `Karasu-` → `Karasu`, ChatGPT Codex Connector App uninstall.

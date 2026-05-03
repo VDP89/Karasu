@@ -866,3 +866,30 @@ Future:
 Next step:
 - Operator decides whether to merge PR #65 (manual squash / rebase merge per repo convention).
 - Local items (UI-2 design system + tokens page) still parked until the operator has a computer with browser. Controlled chunk-4c dogfood likewise.
+
+---
+
+## 2026-05-03 (session close) — PR #65 merged, Codex bot retired, issues maintenance
+
+What changed:
+- **PR #65 merged** via squash (`64dc6ad`). All 5 remote-friendly follow-ups + audit-applied hardening landed on `main` in one commit. ChatGPT audit verdict was APPROVED FOR MERGE; Codex bot also gave 👍 in parallel before being retired.
+- **Issue #66 opened** for the P2 `fetch_card(retry_http_statuses=...)` opt-in feature. Detailed scope, decisions to nail down, and test cadence already specified so a future session can pick it up without re-reading PR #65's audit.
+- **Issues #4 / #5 / #6 closed** as completed. Each got a maintenance comment with a table mapping the original concepts to where they actually shipped (Phase 1B observations, archived branch concepts, Phase 1 planning thread). No new work surfaced; pure backlog hygiene.
+- **PR #67 merged** via squash (`cab7d92`). Operator decision to stop using the ChatGPT Codex Connector GitHub App on this repo. `CLAUDE.md` working agreements rewritten ("Reviews are out-of-band via ChatGPT" instead of "Tag `@codex review` on every PR"); `docs/review-loop.md` updated to talk about the operator ferrying verdicts rather than the Codex webhook subscription. Intentional `@codex` references that remain are negative ("Do NOT tag…").
+- **Memory snapshot landed** as a separate PR (this commit). Full session bitácora in `docs/memory/sessions/2026-05-03-remote-followups.md`.
+
+Decisions:
+- Multi-chunk single-PR pattern is OK when the reviewer is patient. With ChatGPT-out-of-band review, asking the operator to ferry 5 separate audits would have been hostile; one PR with one commit per chunk kept the surface small.
+- Codex Connector App uninstall is operator-side. The MCP tool surface in this session does not expose `apps.uninstall_for_repo` or equivalent. Recorded in PR #67's body so the operator has the exact UI path.
+- Repo rename `Karasu-` → `Karasu` is also operator-side. No MCP tool exposes `repos.update.name`. Recorded in this entry so the next session can confirm the canonical name.
+
+Impact:
+- The "Remaining items beyond the UI MVP" list shrinks to just the future-conditional dual `priority_original` / `priority_effective` fields (audit-noted on PR #60, deferred until an analytics consumer surfaces) and the operator-side TODOs (UI-2 / chunk-4c dogfood / repo rename / app uninstall).
+- 394/394 tests pass on `main` post-merge.
+- Frozen contracts untouched throughout the session.
+
+Next step:
+- UI-2 (design system + tokens page) remains the entry point for the next session that runs on a machine with browser. See `docs/memory/next-session.md` (still pointed at the UI-2 plan from before this cleanup session).
+- Operator-side actions that no Claude Code session can do:
+  - Repo rename: GitHub → Settings → General → Repository name → `Karasu`.
+  - Codex Connector App uninstall: GitHub → Settings → Integrations → Applications → ChatGPT Codex Connector → Uninstall.

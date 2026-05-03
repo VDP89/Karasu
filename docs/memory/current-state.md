@@ -119,49 +119,41 @@ Remaining items beyond the UI MVP:
 
 - Dogfood controlado de chunk 4c con un PR real a
   trust_level=1 — operativo, no código (requiere
-  computadora; operator targets Monday). NOT blocking UI.
-- ~~UI-9 deferred items: URL-encoded path-traversal test
-  for /assets/*; config-aware EVENT_LOG~~ — both shipped
-  ahead of UI-9. `karasu.ui.server.configure(event_log)`
-  + `run_ui_server(..., event_log=)` honour
-  `event_bus.path` from `karasu.yaml`; `cmd_ui` wires it.
-  Path-traversal coverage in `tests/test_ui_server.py`
-  pins literal `..`, percent-encoded `%2E%2E`,
-  encoded-slash `%2F`, double-encoded `%252E`, and the
-  "real file outside STATIC_DIR cannot be reached via
-  traversal" boundary.
-- ~~UI-2 deferred item: lint script for bare
-  outline:none (UI-0 round-2 NICE-TO-HAVE)~~ — shipped
-  ahead of UI-2. `scripts/lint_ui_css.py` walks
-  `src/karasu/ui/static/**/*.{css,html}` and flags any
-  rule block that contains `outline: none|0` without a
-  matching `--focus-ring` replacement. Pinned in CI via
-  `tests/test_lint_ui_css.py::test_live_ui_static_tree_is_clean`
-  so a future regression trips automatically — no
-  separate workflow.
-- ~~Future: git-tree-aware path probe injectable in
-  PromptBuilder (audit-noted on PR #59)~~ — shipped as
-  a follow-up. `karasu.adapters.git_tree_path_exists`
-  probes ``git cat-file -e <ref>:<path>`` so the prompt
-  builder can consult committed state instead of working
-  tree state. Wire via
-  `PromptBuilder(path_exists=git_tree_path_exists)`.
-  Failures (no git, not a repo, unknown ref, timeout)
-  return False — falls through to metadata-only handoff,
-  the safer default.
-- ~~Future: optional retry on network error in
-  fetch_card (audit-noted on PR #58)~~ — shipped as a
-  follow-up. `fetch_card(..., retries=N)` and
-  `karasu peers --retries N`. Default retries=0 preserves
-  byte-for-byte the previous single-shot semantics; only
-  URLError triggers a retry (HTTP non-2xx and JSON / shape
-  errors surface immediately).
+  computadora). NOT blocking UI.
 - Future: optional dual priority_original /
   priority_effective fields on agent_response.data if
   analytics surface a need (audit-noted on PR #60). The
-  effective_priority(event) helper itself shipped as a
-  follow-up; the dual fields stay deferred until a
-  consumer needs them.
+  effective_priority(event) helper itself shipped (PR
+  #65); the dual fields stay deferred until a consumer
+  needs them.
+- Future: opt-in retry on transient HTTP statuses
+  (502/503/504) in fetch_card — issue #66, P2. Adds an
+  optional `retry_http_statuses` parameter; default empty
+  set preserves the current "do not retry on HTTP errors"
+  semantics. Not blocking; pick up when revisited.
+
+Closed during 2026-05-03 cleanup session (PR #65,
+squash → 64dc6ad):
+  - effective_priority(event) helper (PR #60 audit).
+  - fetch_card retry on URLError (PR #58 audit).
+  - git-tree-aware path probe (PR #59 audit).
+  - lint script for bare outline:none (UI-0 round-2).
+  - config-aware EVENT_LOG + path-traversal coverage
+    (UI-9 deferred).
+  - Three P3 hardening items applied during the same
+    audit cycle (commit 295b481).
+
+Operator-side TODOs no Claude Code session can perform
+from this MCP surface:
+  - Rename repo: GitHub → Settings → General →
+    Repository name → `Karasu` (current name `Karasu-`
+    is a typo).
+  - Uninstall the ChatGPT Codex Connector GitHub App
+    from the repo: GitHub → Settings → Integrations →
+    Applications → ChatGPT Codex Connector →
+    Uninstall. PR #67 (squash → cab7d92) already
+    retired the Codex bot from working agreements;
+    the App uninstall closes the loop physically.
 ```
 
 ## Do NOT do yet

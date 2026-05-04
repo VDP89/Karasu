@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="/assets/css/base.css">
 <link rel="stylesheet" href="/assets/css/timeline.css">
 <link rel="stylesheet" href="/assets/css/crow.css">
+<link rel="stylesheet" href="/assets/css/map.css">
 <style>
 /* index.html — application shell rules.
  *
@@ -217,8 +218,83 @@
                 the next change lands here.
             </p>
         </div>
-        <ol class="timeline" id="timeline" hidden
-            aria-label="Bus event timeline, latest first"></ol>
+        <div class="shell-main--with-map" id="events-view" hidden>
+            <!-- UI-6 Live Map. Five domain nodes positioned in
+                 viewBox units (0..800 horizontal, 0..480 vertical):
+
+                   user     ( 80, 240)   left edge
+                   karasu   (400, 240)   centre
+                   claude   (640, 140)   upper-right
+                   codex    (640, 340)   lower-right
+                   github   (400,  80)   top centre
+
+                 Coordinates are kept stable in the viewBox space
+                 so the JS arc-path layer can compute flight curves
+                 by reading the data-x / data-y on each node. The
+                 node container itself is editorially still per
+                 audit pin #2; only .crow-flight ever transforms.
+            -->
+            <section class="live-map" aria-label="Karasu Live Map — five domain nodes">
+                <svg class="live-map-svg" viewBox="0 0 800 480"
+                     preserveAspectRatio="xMidYMid meet"
+                     role="img" aria-label="Five domain nodes connected by hairline edges">
+                    <!-- Hairline scaffolding. The visible edges
+                         are decorative; flight arcs are computed
+                         independently by the JS layer below. -->
+                    <g class="map-edges">
+                        <line class="map-edge" x1="80"  y1="240" x2="400" y2="240"/>
+                        <line class="map-edge" x1="400" y1="240" x2="640" y2="140"/>
+                        <line class="map-edge" x1="400" y1="240" x2="640" y2="340"/>
+                        <line class="map-edge" x1="400" y1="240" x2="400" y2="80"/>
+                    </g>
+                    <!-- Nodes. Each carries data-node = the
+                         identifier _flight_route projects on the
+                         wire (user / karasu / claude / codex /
+                         github). Hover earns a colour shift only
+                         per UI-2's chromatic whitelist. -->
+                    <g class="map-node" data-node="user"
+                       transform="translate(80,240)" tabindex="0">
+                        <circle class="map-node-dot" r="8"/>
+                        <text class="map-node-label" y="32">user</text>
+                    </g>
+                    <g class="map-node" data-node="karasu"
+                       transform="translate(400,240)" tabindex="0">
+                        <circle class="map-node-dot" r="10"/>
+                        <text class="map-node-label" y="34">karasu</text>
+                    </g>
+                    <g class="map-node" data-node="claude"
+                       transform="translate(640,140)" tabindex="0">
+                        <circle class="map-node-dot" r="8"/>
+                        <text class="map-node-label" y="32">claude</text>
+                    </g>
+                    <g class="map-node" data-node="codex"
+                       transform="translate(640,340)" tabindex="0">
+                        <circle class="map-node-dot" r="8"/>
+                        <text class="map-node-label" y="32">codex</text>
+                    </g>
+                    <g class="map-node" data-node="github"
+                       transform="translate(400,80)" tabindex="0">
+                        <circle class="map-node-dot" r="8"/>
+                        <text class="map-node-label" y="-16">github</text>
+                    </g>
+                </svg>
+                <!-- Crow in flight. Single inline copy of
+                     crow-flight.svg geometry so currentColor +
+                     state classes work without an external <use>
+                     reference. Hidden by default; the JS layer
+                     un-hides on the first /api/health response
+                     that returns a non-null flight projection.
+                     Source of truth: static/assets/crow/crow-flight.svg. -->
+                <svg class="crow-flight" id="crow-flight" hidden
+                     viewBox="0 0 512 512"
+                     fill="currentColor"
+                     role="img" aria-label="Karasu crow in flight">
+                    <path d="M270.713 12.61c6.643 39.436 26.262 70.82 50.46 104.41-26.216-22.16-49.542-51.885-66.99-85.893 1.347 33.463 14.174 58.902 30.5 85.467-18.768-14.65-35.86-33.73-47.558-57.805 5.06 30.615 24.262 60.356 40.176 83.886-14.308-11.715-33.218-31.112-47.34-46.424 16.406 28.247 21.683 48.16 21.634 63.977 7.965 6.568 16.083 13.796 24.334 21.596 16.744 15.827 30.91 36.685 43.49 58.51-7.446-10.075-16.69-20.75-27.95-32.012h-.003c-30.543-30.543-77.793-54.475-116.057-70.408-26.277-34.84-39.484-73.923-52.322-119.918l-9.713 39.732L85.12 27.71l2.65 40.614-33.995-11.916 11.48 34.432-40.175-3.09 30.902 27.37-41.498 10.603c41.23 14.726 84.974 23.305 119.118 48.482 15.908 38.907 40.43 88.373 72.02 119.963 9.87 9.867 19.278 18.166 28.237 25.086-20.32-11.927-39.594-25.195-54.88-40.48-8.6-8.6-16.3-16.744-23.142-24.5-15.544-.32-35.038-5.788-62.29-21.616 15.314 14.12 34.712 33.033 46.43 47.342-23.534-15.914-53.277-35.118-83.898-40.178 24.08 11.698 43.16 28.79 57.813 47.557-26.566-16.326-52.006-29.152-85.47-30.5 34.01 17.45 63.736 40.777 85.897 66.995-33.59-24.2-64.975-43.82-104.414-50.465 68.028 50.728 136.373 93.22 188 172.06 69.836 106.64 132.95 16.87 88.62-13.396-51.68-35.28-36.602-84.41-2.993-86.83 5.078 1.163 9.893 1.72 14.438 1.705.137.04.27.073.407.114l-.117-.12c4.32-.036 8.394-.586 12.22-1.604 1.428 9.75 6.59 20.066 15.143 28.62 10.646 10.645 24.022 16.04 35.64 15.52l43.376 17.862-17.824-43.274c.578-11.653-4.816-25.1-15.51-35.793-8.562-8.563-18.892-13.726-28.652-15.148 1.01-3.81 1.552-7.865 1.588-12.166l.12.118c-.04-.136-.074-.27-.114-.406.014-4.542-.54-9.355-1.703-14.43 2.412-33.615 51.544-48.698 86.828 2.985 30.266 44.33 120.04-18.788 13.397-88.622C363.934 148.98 321.44 80.635 270.713 12.61zm139.043 350.73-.006.008.012.01-.006-.018zm.006.017 18.36 67.55-67.58-18.35c19.076 18.56 60.155 34.722 92.632 43.425-9.707-36.232-23.735-74.074-43.412-92.625z"/>
+                </svg>
+            </section>
+            <ol class="timeline" id="timeline"
+                aria-label="Bus event timeline, latest first"></ol>
+        </div>
     </main>
 
     <footer class="shell-footer">
@@ -298,9 +374,138 @@ function renderTimeline(events) {
     }
 }
 
+/* UI-6 — Live Map flight rendering.
+ *
+ * Node coordinates in the SVG viewBox (0..800, 0..480). Mirrors
+ * the inline <svg> markup above; declared here so the JS layer
+ * does not depend on querying the DOM for transforms (keeps the
+ * arc maths independent of any future SVG rewrite).
+ *
+ * The map can also be queried directly via getBoundingClientRect
+ * on each .map-node to project to the container percentage space;
+ * the explicit table is faster, deterministic across browsers,
+ * and makes the unit tests in test_ui_server.py the authoritative
+ * specification of what each node IS. */
+const NODE_POSITIONS = {
+    user:    { x:  80, y: 240 },
+    karasu:  { x: 400, y: 240 },
+    claude:  { x: 640, y: 140 },
+    codex:   { x: 640, y: 340 },
+    github:  { x: 400, y:  80 },
+};
+
+const VIEWBOX_W = 800;
+const VIEWBOX_H = 480;
+const FLIGHT_ARC_LIFT = 70;        /* viewBox units the arc lifts above the chord midpoint */
+
+function nodePct(name) {
+    /* Convert a node id to (left%, top%) inside the .live-map
+     * container box. The CSS aspect-ratio guarantees the SVG
+     * viewBox maps proportionally to the container, so a viewBox
+     * point becomes a % of the container without DPI maths. */
+    const p = NODE_POSITIONS[name];
+    if (!p) return null;
+    return { x: (p.x / VIEWBOX_W) * 100, y: (p.y / VIEWBOX_H) * 100 };
+}
+
+function flightHeadingDeg(source, target) {
+    /* atan2(dy, dx) per Codex pin #4 — beak leads the path
+     * tangent. For a single mid-rotate (no per-frame interpolation
+     * yet), we sample the chord direction; the arc lift makes the
+     * actual tangent shift slightly during the transition, but the
+     * magnitude stays restrained per the editorial pin (no barrel
+     * rolls). */
+    const a = NODE_POSITIONS[source];
+    const b = NODE_POSITIONS[target];
+    if (!a || !b) return 0;
+    const dy = b.y - a.y;
+    const dx = b.x - a.x;
+    return Math.atan2(dy, dx) * 180 / Math.PI;
+}
+
+function reducedMotionActive() {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function applyFlight(crowFlight, flight, nodes) {
+    /* Drive the crow's position + rotation from the projection.
+     *
+     * flight=null    → hide crow, clear node accent classes.
+     * reduced motion → instant relocate to target (no transition).
+     * otherwise      → set --fx/--fy + --flight-heading; CSS
+     *                  transition does the 600ms ease-mag arc.
+     *
+     * The "instant relocate to target" branch is the reduced-motion
+     * contract documented in next-session.md: the operator still
+     * sees the state change without the flight transition. */
+    /* SVG elements descend from SVGElement, not HTMLElement, so
+     * the IDL ``hidden`` property is NOT defined on them — setting
+     * crowFlight.hidden=false on a <svg> creates a non-reflecting
+     * expando instead of removing the attribute, and the
+     * [hidden] CSS guard keeps the crow invisible forever. The
+     * caught-by-screenshots fix uses removeAttribute /
+     * setAttribute('hidden', '') which work on every Element. */
+    if (!flight) {
+        crowFlight.setAttribute('hidden', '');
+        for (const node of nodes) {
+            node.classList.remove('map-node--source', 'map-node--target');
+        }
+        return;
+    }
+    const sourcePct = nodePct(flight.source);
+    const targetPct = nodePct(flight.target);
+    if (!sourcePct || !targetPct) {
+        crowFlight.setAttribute('hidden', '');
+        return;
+    }
+    crowFlight.removeAttribute('hidden');
+
+    /* Highlight the source / target node dots for the duration of
+     * the flight. Only colour shifts (UI-2 chromatic whitelist) —
+     * the dots themselves stay the same size, no motion. */
+    for (const node of nodes) {
+        node.classList.remove('map-node--source', 'map-node--target');
+        const id = node.dataset.node;
+        if (id === flight.source) node.classList.add('map-node--source');
+        if (id === flight.target) node.classList.add('map-node--target');
+    }
+
+    if (reducedMotionActive()) {
+        /* No transition — snap to target. The asset swap that the
+         * brief proposes (perched ↔ flight) is implicit here:
+         * crow-flight.svg is the only flight-state asset, and the
+         * snap pattern reads as a state change without simulating
+         * motion the operator opted out of. */
+        crowFlight.style.setProperty('--fx', targetPct.x + '%');
+        crowFlight.style.setProperty('--fy', targetPct.y + '%');
+        crowFlight.style.setProperty(
+            '--flight-heading', flightHeadingDeg(flight.source, flight.target) + 'deg'
+        );
+        return;
+    }
+
+    /* Two-phase relocate so the CSS transition runs from the
+     * source → target chord. First place at source instantly,
+     * then on the next animation frame set the target position
+     * so the transition fires. */
+    crowFlight.style.transition = 'none';
+    crowFlight.style.setProperty('--fx', sourcePct.x + '%');
+    crowFlight.style.setProperty('--fy', sourcePct.y + '%');
+    crowFlight.style.setProperty(
+        '--flight-heading', flightHeadingDeg(flight.source, flight.target) + 'deg'
+    );
+    /* Force a layout flush so the source position lands before
+     * the transition turns back on. */
+    void crowFlight.getBoundingClientRect();
+    crowFlight.style.transition = '';
+    crowFlight.style.setProperty('--fx', targetPct.x + '%');
+    crowFlight.style.setProperty('--fy', targetPct.y + '%');
+}
+
 async function tick() {
     let events = [];
     let crow = 'idle';
+    let flight = null;
     try {
         const [eventsRes, healthRes] = await Promise.all([
             fetch('/api/events'),
@@ -310,27 +515,40 @@ async function tick() {
             events = (await eventsRes.json()).events || [];
         }
         if (healthRes.ok) {
-            crow = (await healthRes.json()).crow || 'idle';
+            const health = await healthRes.json();
+            crow = health.crow || 'idle';
+            /* /api/health.flight is null when the bus is silent
+             * or the projection has no mapped pair; otherwise
+             * {source, target}. */
+            flight = health.flight || null;
         }
     } catch { /* network blip — leave the surface as-is */ }
 
     const empty = document.getElementById('empty-state');
+    const eventsView = document.getElementById('events-view');
     const timeline = document.getElementById('timeline');
     const lastEvent = document.getElementById('footer-last-event');
     const footerCrow = document.getElementById('footer-crow');
     const glyph = document.getElementById('crow-glyph');
+    const crowFlight = document.getElementById('crow-flight');
+    const mapNodes = Array.from(document.querySelectorAll('.map-node'));
 
     if (events.length === 0) {
+        /* Empty state stays the first impression on a silent bus
+         * — pin from UI-3 / UI-5 carried forward to UI-6. The map
+         * appears once events populate the projection. */
         empty.hidden = false;
-        timeline.hidden = true;
+        eventsView.hidden = true;
         timeline.replaceChildren();
         lastEvent.textContent = 'no events yet';
+        applyFlight(crowFlight, null, mapNodes);
     } else {
         empty.hidden = true;
-        timeline.hidden = false;
+        eventsView.hidden = false;
         renderTimeline(events);
         const tail = events[events.length - 1];
         lastEvent.textContent = 'last event ' + (tail.timestamp || '—');
+        applyFlight(crowFlight, flight, mapNodes);
     }
     footerCrow.textContent = 'crow: ' + crow;
     glyph.classList.remove('processing', 'waiting', 'error');

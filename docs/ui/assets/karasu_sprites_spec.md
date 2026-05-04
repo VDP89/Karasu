@@ -192,23 +192,208 @@ Final approach (OpenMoji-adapted) was selected because it:
 Per UI-0 §6, the following ship in later chunks:
 
 ```text
-flight (UI-6)        SVG arc-path between two Live Map nodes;
-                     600 ms ease-mag with the crow rotating
-                     along the tangent so its beak leads.
-                     Will need a SECOND asset
-                     (crow-flight.svg, wings extended). The
-                     perched silhouette in this file does NOT
-                     animate convincingly under flight — wings
-                     are folded; rotating the perched crow
-                     reads as "tossed by the air", not flying.
-                     Source plan for the flight asset: same
-                     hunt pattern as UI-5 (OpenMoji /
-                     Wikimedia / heraldic raven displayed,
-                     CC-licensed).
 out-of-signal (UI-8) PWA offline-page easter-egg pose. Same
                      base asset, custom CSS class for any pose
                      change.
 ```
 
 UI-5 covers idle / processing / waiting / error in the header
-and hero slots only.
+and hero slots only. UI-6 adds the flight pose as a SECOND
+canonical asset — see below.
+
+---
+
+# Karasu Crow in Flight — UI-6 Asset
+
+> The wings-extended counterpart to `crow.svg`. Painted on the
+> Live Map only during a flight transition between two domain
+> nodes; swapped back to `crow.svg` when the flight settles.
+
+## Format
+
+```text
+Source asset:    src/karasu/ui/static/assets/crow/crow-flight.svg
+Markup:          inline SVG in static/index.html (single <path>
+                 inside the .live-map container; currentColor
+                 propagates from the .crow-flight class set in
+                 static/css/map.css)
+Format:          SVG, single <path>:
+                  - 1× <path>      — full body silhouette with
+                                     wings extended + tail
+                                     feathers, unified under
+                                     currentColor.
+                 No <rect>, <circle> or stroke detail. The flight
+                 pose carries less anatomical detail than the
+                 perched UI-5 asset on purpose — the crow is in
+                 motion, the operator's eye reads the silhouette
+                 from afar, not the eye notch up close.
+viewBox:         0 0 512 512   (game-icons.net native)
+shape-rendering: default (vector smooth — no crispEdges)
+Aesthetic:       wings extended, asymmetric body curve, tail
+                 wedge trailing — a corvid in motion, not in
+                 pose. The natural orientation has the head /
+                 beak pointing UP; rotation to the path tangent
+                 is applied via CSS at render time so the asset
+                 can swap without touching JS.
+```
+
+## Display sizes
+
+```text
+Live Map flight  32 × 32 px  (CSS box; SVG centres inside via
+                              the inline viewBox 512×512). The
+                              size is small enough to read as a
+                              messenger and large enough that the
+                              wings-spread silhouette stays
+                              legible against the map's hairline
+                              edges.
+```
+
+## Rotation contract
+
+The flight asset's natural orientation places the head / beak
+toward the TOP of the viewBox (path starts at y ≈ 12.6 inside
+the 0..512 space and the body radiates downward). The Live Map
+needs the beak to lead the path tangent (pin #4: BEAK-LEADING
+along path tangent, restrained rotation), so the rendered
+rotation is the sum of two pieces:
+
+```text
+final rotation = atan2(target.y − source.y, target.x − source.x)
+               + asset_offset
+
+asset_offset = 90deg   (compensates the asset's UP-pointing
+                        natural orientation; rotating +90°
+                        aligns the head to the +x axis)
+```
+
+Decoupling the asset offset from the dynamic heading means a
+future asset swap (different natural orientation) updates one
+CSS variable (`--flight-asset-offset` on `.crow-flight`) instead
+of touching JS. The current value is documented in
+`static/css/map.css` next to the `.crow-flight` rule.
+
+## Reduced motion
+
+Per UI-2's chromatic whitelist (kept in `static/css/reset.css`),
+all transform / opacity / size transitions clamp to 1 ms under
+`prefers-reduced-motion: reduce`. The flight transition therefore
+becomes an instant relocate from source to target — the crow
+still appears at the target position with the source/target
+nodes flagged in the accent colour, just without the 600 ms arc.
+The state change stays legible without simulating motion the
+operator opted out of.
+
+The JS layer in `static/index.html` (`applyFlight`) checks
+`window.matchMedia('(prefers-reduced-motion: reduce)').matches`
+and uses a single-shot relocate when active; otherwise it kicks
+off the two-phase relocate (place at source instantly, force a
+layout flush, set target on the next animation frame so the CSS
+transition runs).
+
+## Provenance
+
+The single body silhouette path is **adapted from "Crow dive"
+by Lorc on Game-icons.net**, licensed under
+**Creative Commons Attribution 3.0 (CC BY 3.0)**. Source:
+
+```text
+https://game-icons.net/1x1/lorc/crow-dive.html
+License: https://creativecommons.org/licenses/by/3.0/
+```
+
+Karasu's adaptation:
+
+```text
+- Strips the original black background <rect> (Lorc's icon
+  ships with a 512×512 black square so the white-on-black
+  preview reads on the index page; Karasu needs the silhouette
+  alone so it can recolour through currentColor against the
+  --bg-1 map canvas).
+- Strips the explicit fill="#fff" from the body path so it
+  inherits currentColor from the SVG root.
+- No path geometry is altered. The dive pose is preserved
+  verbatim: wings extended, tail trailing, claws splayed.
+- Karasu adds NO new geometry (no eye notch, no extra rect /
+  circle), unlike the UI-5 perched asset. At 32-px display
+  the perched asset's eye notch reads cleanly because the
+  body is folded and dense; the flight asset's silhouette
+  is already busy with wing + tail detail, and an additional
+  notch would over-detail the in-motion mark.
+```
+
+Game-icons.net is open-source and CC BY 3.0 propagates compatibly
+with Karasu's posture. Attribution lives in this file and inside
+`crow-flight.svg` as a comment block. A swap to a different
+flight asset (e.g. a future heraldic-displayed silhouette traced
+from a CC0 source) is a path replacement plus an
+`--flight-asset-offset` review; the contract documented above
+(currentColor recolouring, beak-leading rotation, reduced-motion
+snap, single canonical asset) survives the swap.
+
+### Iteration history (UI-6 PR #N)
+
+Six asset directions were evaluated before landing on the
+game-icons crow-dive adaptation:
+
+```text
+1. Wikimedia Heraldic_Raven.svg (Lokal_Profil, CC BY-SA 2.5)
+   500×500. Multi-path with red feet / beak fills + grey eye.
+   Wings folded / perched stance — does NOT carry the flight
+   pose. Editorially aligned (austere, classical) but unfit for
+   the wings-extended contract UI-6 needs.
+
+2. Wikimedia Corneille_essorant.svg (Jacques63, CC BY-SA 4.0)
+   580×630. Heraldic "essorant" pose (= in flight, wings
+   displayed) — pose correct, license correct. Construction
+   wrong: 6 polygons referencing a defs block with extensive
+   radial / linear gradients, ~1000 lines of XML, no clean
+   currentColor uplift path. Adapting it would mean re-drawing
+   the figure to a single fill, defeating the "use a CC asset
+   instead of tracing" pattern.
+
+3. Wikimedia White-fronted_tern_volant.svg (Fvasconcellos, CC0)
+   131×115 (mm). Wings spread, tern silhouette. License is
+   the strongest candidate (CC0 = public domain). Construction
+   is 21 paths + 1 ellipse + 1 circle with grey / white / black
+   solid fills — adaptable, but the tern's anatomy (marine bird
+   with thin pointed wings, hooked beak) reads as not-corvid at
+   32 px. UI-6 wants a CROW shape specifically.
+
+4. game-icons.net "raven" (Lorc, CC BY 3.0). 512×512, single
+   path. Same construction quality as the chosen asset, but
+   wings folded / perched stance — same disqualification as the
+   Wikimedia heraldic raven.
+
+5. Wikimedia Coa_Illustration_Elements_Animal_Raven.svg
+   (Fox-Davies / Johnston, public domain via 1909 publication).
+   Auto-traced line-art line-by-line, perched. Off-brief — the
+   feather lines pull the figure toward "naturalist illustration"
+   rather than the editorial-instrument silhouette UI-0 §5.6
+   pinned.
+
+6. game-icons.net "crow-dive" (Lorc, CC BY 3.0). 512×512,
+   single path silhouette, wings AND tail extended,
+   recognisable corvid anatomy at 32 px. Adapts cleanly to
+   currentColor by stripping the background <rect> and the
+   explicit white fill on the body path. CHOSEN.
+```
+
+The dive pose carries a slightly more dynamic feel than a
+heraldic-displayed silhouette would have. Codex may observe
+this on audit; the swap path is the single-CSS-variable +
+single-path-replacement contract documented above. If a future
+operator-vetted heraldic asset surfaces, this spec stays valid
+and only the `crow-flight.svg` body path + provenance block
+update.
+
+## Sprite state table — combined
+
+| State        | Asset             | Slot                  | Motion                        |
+|--------------|-------------------|-----------------------|-------------------------------|
+| idle         | crow.svg          | header glyph + hero   | ambient breathing 4 s loop    |
+| processing   | crow.svg          | header glyph          | slow pulse 1.6 s (accent)     |
+| waiting      | crow.svg          | header glyph          | asymmetric tilt 480 ms forwards (warn) |
+| error        | crow.svg          | header glyph          | sharp shake 240 ms × 1 (accent) |
+| flight       | crow-flight.svg   | live-map overlay      | arc relocate 600 ms ease-mag (accent) |
+| out-of-signal (UI-8) | TBD       | offline page          | TBD (later chunk)             |

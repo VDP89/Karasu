@@ -401,3 +401,304 @@ def test_crow_state_processing_when_latest_is_file_change_after_completed() -> N
         _file_change(2),
     ]
     assert ui_server._crow_state(events) == "processing"
+
+
+# ---------------------------------------------------------------------------
+# _flight_route precedence (UI-6 — Live Map projection)
+# ---------------------------------------------------------------------------
+#
+# Binding decisions confirmed by the operator before UI-6 implementation:
+#
+#   - Project the LATEST meaningful event. NO memory of older events.
+#     NO invented recovery / delivery flight.
+#   - file_change watcher / git_hook / git_event       → user → karasu
+#   - file_change with controller_resubmit=true        → user → karasu
+#     (operator scar; semantically User even though the controller
+#     mechanically emits the resubmit)
+#   - file_change with github_event / source=github_webhook
+#                                                      → github → karasu
+#   - file_change with router-assigned agent in flight
+#     (dispatch.agent set + dispatch.status pending|dispatched)
+#                                                      → karasu → <agent>
+#   - agent_response (completed OR failed)             → <agent> → karasu
+#   - human_decision                                   → user → karasu
+#   - unknown / unmapped event types                   → None (parked)
+#   - empty events                                     → None (parked)
+#
+# Pin #7 (Codex, UI-5 audit re-iteration): every visual state
+# derived from /api/health MUST be covered by unit tests BEFORE
+# the visual code lands. UI-5 shipped _crow_state without these
+# and Codex caught the bug visually instead of structurally; UI-6
+# pins the precedence here so the same regression cannot happen.
+
+
+def _file_change_dispatch(
+    idx: int = 1,
+    *,
+    agent: str | None = None,
+    status: str | None = None,
+    source: str = "watcher",
+    controller_resubmit: bool = False,
+    github_event: str | None = None,
+) -> dict:
+    """Build a projected file_change event for _flight_route tests.
+
+    Mirrors ``_project_event``'s output shape so the tests exercise
+    the same view model the projection feeds the UI."""
+    return {
+        "id": f"fc-{idx:03d}",
+        "type": "file_change",
+        "source": source,
+        "path": f"src/foo_{idx}.py",
+        "controller_resubmit": controller_resubmit,
+        "github_event": github_event,
+        "agent": agent,
+        "status": status,
+    }
+
+
+def _agent_response_dispatch(
+    idx: int = 1,
+    *,
+    agent: str | None = "claude_code",
+    status: str = "completed",
+    requires_human: bool = False,
+) -> dict:
+    return {
+        "id": f"ar-{idx:03d}",
+        "type": "agent_response",
+        "agent": agent,
+        "status": status,
+        "requires_human": requires_human,
+    }
+
+
+def test_flight_route_empty_events_is_none() -> None:
+    """No events on the bus → no flight. Surface parks the crow."""
+    assert ui_server._flight_route([]) is None
+
+
+def test_flight_route_latest_file_change_watcher_is_user_to_karasu() -> None:
+    """A bare watcher file_change is the user editing the working
+    tree. Crow flies into the watchtower from the user node."""
+    events = [_file_change_dispatch(1, source="watcher")]
+    assert ui_server._flight_route(events) == ("user", "karasu")
+
+
+def test_flight_route_latest_file_change_git_hook_is_user_to_karasu() -> None:
+    """Git-hook source still routes from user — the operator drove
+    the commit / push that fired the hook."""
+    events = [_file_change_dispatch(1, source="git_hook")]
+    assert ui_server._flight_route(events) == ("user", "karasu")
+
+
+def test_flight_route_latest_file_change_with_pending_dispatch_to_claude() -> None:
+    """The router has assigned claude_code and the dispatch is
+    pending. Outbound leg: karasu → claude."""
+    events = [
+        _file_change_dispatch(1, agent="claude_code", status="pending"),
+    ]
+    assert ui_server._flight_route(events) == ("karasu", "claude")
+
+
+def test_flight_route_latest_file_change_with_dispatched_to_codex() -> None:
+    """Same outbound leg semantics for the codex agent. Status
+    ``dispatched`` (already on the wire) also counts as in-flight."""
+    events = [
+        _file_change_dispatch(1, agent="codex", status="dispatched"),
+    ]
+    assert ui_server._flight_route(events) == ("karasu", "codex")
+
+
+def test_flight_route_file_change_with_completed_dispatch_falls_back_to_user() -> None:
+    """A file_change carrying a dispatch.status="completed" should
+    not fly outbound — the agent_response is the canonical inbound
+    leg. Defensive: bus consumers that mirror the dispatch status
+    onto the originating event must not flip the flight direction."""
+    events = [
+        _file_change_dispatch(1, agent="claude_code", status="completed"),
+    ]
+    assert ui_server._flight_route(events) == ("user", "karasu")
+
+
+def test_flight_route_file_change_with_unknown_agent_falls_back_to_user() -> None:
+    """Unknown agent → no Karasu→agent route is invented. The
+    file_change still routes user → karasu (the inbound is real)."""
+    events = [
+        _file_change_dispatch(1, agent="some_future_agent", status="pending"),
+    ]
+    assert ui_server._flight_route(events) == ("user", "karasu")
+
+
+def test_flight_route_latest_agent_response_claude_is_claude_to_karasu() -> None:
+    """A response from claude_code lands as inbound: claude → karasu."""
+    events = [_agent_response_dispatch(1, agent="claude_code")]
+    assert ui_server._flight_route(events) == ("claude", "karasu")
+
+
+def test_flight_route_latest_agent_response_codex_is_codex_to_karasu() -> None:
+    events = [_agent_response_dispatch(1, agent="codex")]
+    assert ui_server._flight_route(events) == ("codex", "karasu")
+
+
+def test_flight_route_latest_agent_response_failed_still_routes_agent_to_karasu() -> None:
+    """Failed responses still walk Agent → Karasu. Outcome is colour
+    (_crow_state's job), not direction."""
+    events = [
+        _agent_response_dispatch(1, agent="claude_code", status="failed"),
+    ]
+    assert ui_server._flight_route(events) == ("claude", "karasu")
+
+
+def test_flight_route_latest_agent_response_no_agent_is_none() -> None:
+    """An agent_response without dispatch.agent (an edge case the
+    bus shouldn't really produce) returns None rather than guessing."""
+    events = [_agent_response_dispatch(1, agent=None)]
+    assert ui_server._flight_route(events) is None
+
+
+def test_flight_route_latest_agent_response_unknown_agent_is_none() -> None:
+    """Unmapped agent identifier → no route invented."""
+    events = [_agent_response_dispatch(1, agent="future_agent")]
+    assert ui_server._flight_route(events) is None
+
+
+def test_flight_route_latest_github_webhook_via_source_is_github_to_karasu() -> None:
+    """source=github_webhook is enough to identify the inbound leg
+    even if github_event is not populated on the projection."""
+    events = [
+        _file_change_dispatch(1, source="github_webhook"),
+    ]
+    assert ui_server._flight_route(events) == ("github", "karasu")
+
+
+def test_flight_route_latest_github_webhook_via_github_event_field() -> None:
+    """github_event presence is the canonical webhook marker.
+    Tested independently of source so future bus refactors that
+    move source labels do not silently break the projection."""
+    events = [
+        _file_change_dispatch(
+            1, source="watcher", github_event="pull_request_review_comment"
+        ),
+    ]
+    assert ui_server._flight_route(events) == ("github", "karasu")
+
+
+def test_flight_route_latest_controller_resubmit_is_user_to_karasu() -> None:
+    """Operator scar resubmit. Mechanically the controller emits;
+    semantically the User. The map must show human intent entering
+    the system, not a self-loop."""
+    events = [
+        _file_change_dispatch(
+            1, source="controller", controller_resubmit=True
+        ),
+    ]
+    assert ui_server._flight_route(events) == ("user", "karasu")
+
+
+def test_flight_route_latest_human_decision_is_user_to_karasu() -> None:
+    events = [
+        {"id": "hd-001", "type": "human_decision", "source": "telegram_chat"},
+    ]
+    assert ui_server._flight_route(events) == ("user", "karasu")
+
+
+def test_flight_route_latest_git_event_is_user_to_karasu() -> None:
+    events = [
+        {"id": "ge-001", "type": "git_event", "source": "git_hook"},
+    ]
+    assert ui_server._flight_route(events) == ("user", "karasu")
+
+
+def test_flight_route_latest_unknown_event_type_is_none() -> None:
+    """A future event type the projection does not know yet returns
+    None. The crow stays parked rather than mis-routed."""
+    events = [
+        {"id": "x-001", "type": "future_event_type", "source": "watcher"},
+    ]
+    assert ui_server._flight_route(events) is None
+
+
+def test_flight_route_only_consults_latest_event_no_memory() -> None:
+    """A file_change followed by an agent_response → the inbound
+    leg wins because the LATEST event is the response. The older
+    file_change does NOT contaminate the route. This is the UI-5
+    bug pattern (older event leaking into projection) pinned for
+    UI-6."""
+    events = [
+        _file_change_dispatch(1, agent="claude_code", status="dispatched"),
+        _agent_response_dispatch(1, agent="claude_code", status="completed"),
+    ]
+    assert ui_server._flight_route(events) == ("claude", "karasu")
+
+
+def test_flight_route_new_file_change_after_completed_response() -> None:
+    """A fresh file_change after a completed response → outbound
+    leg again. The projection follows the latest event without
+    stickiness."""
+    events = [
+        _agent_response_dispatch(1, agent="claude_code", status="completed"),
+        _file_change_dispatch(2, agent="codex", status="pending"),
+    ]
+    assert ui_server._flight_route(events) == ("karasu", "codex")
+
+
+def test_flight_route_resubmit_overrides_dispatch_assignment() -> None:
+    """A controller_resubmit file_change that ALSO carries a router
+    dispatch must show user → karasu. The operator-intent leg is
+    the meaningful one to surface; the outbound leg appears on the
+    next event when the dispatch actually fires its own update."""
+    events = [
+        _file_change_dispatch(
+            1,
+            source="controller",
+            controller_resubmit=True,
+            agent="claude_code",
+            status="dispatched",
+        ),
+    ]
+    assert ui_server._flight_route(events) == ("user", "karasu")
+
+
+# ---------------------------------------------------------------------------
+# /api/health surfaces _flight_route (UI-6 — additive field)
+# ---------------------------------------------------------------------------
+
+
+def test_api_health_includes_flight_field_when_events_present(
+    ui_http: tuple[str, int]
+) -> None:
+    """The flight projection must reach the wire as
+    ``{"source": ..., "target": ...}`` for the surface JS to pick
+    up. Pinned end-to-end so a future projection change that
+    forgets to expose ``flight`` regresses here, not visually."""
+    host, port = ui_http
+    event = {
+        "id": "fc-001",
+        "timestamp": "2026-05-04T10:00:00Z",
+        "type": "file_change",
+        "source": "watcher",
+        "data": {"path": "src/foo.py", "classification": "code_change"},
+        "dispatch": {},
+        "response": {},
+    }
+    ui_server.EVENT_LOG.parent.mkdir(parents=True, exist_ok=True)
+    ui_server.EVENT_LOG.write_text(json.dumps(event) + "\n")
+
+    status, body = _get(host, port, "/api/health")
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["flight"] == {"source": "user", "target": "karasu"}
+
+
+def test_api_health_flight_is_null_on_empty_bus(
+    ui_http: tuple[str, int]
+) -> None:
+    """An empty bus returns ``flight: null`` — the surface uses
+    null to park the crow rather than render a phantom route."""
+    host, port = ui_http
+    assert not ui_server.EVENT_LOG.exists()
+    status, body = _get(host, port, "/api/health")
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["flight"] is None

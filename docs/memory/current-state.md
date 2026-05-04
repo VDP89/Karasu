@@ -13,7 +13,8 @@ UI surface progress (PWA roadmap):
 - UI-2 (design system + tokens) ✔ PR #69 merged (`6ec5203`). One audit round (P0 on `prefers-reduced-motion`); fix in `ae975f3` switched to `transition-property` chromatic whitelist.
 - UI-3 (application shell)    ✔ PR #70 merged (`a67d729`). APPROVED on the first round, no P0/P1/P2. ChatGPT pinned a binding rule for UI-5: ship `.webm` without exception because the crow becomes the principal visual asset there.
 - UI-4 (event timeline)       ✔ PR #72 merged (`13e6270`). APPROVED on the first round. ChatGPT added a binding editorial constraint for UI-5: *"el crow puede tener vida; la superficie no puede perder calma"*.
-- UI-5..UI-9 pending per UI-0 §6 roadmap.
+- UI-5 (canonical crow + state animations) ✔ PR #74 merged (`904111a`). Three audit rounds: (1) initial pass shipped Font Awesome vector adaptation, operator rejected as consumer-mascot. (2) Mid-PR pivot to 16x16 pixel-art with `crispEdges`; Codex P0 — pixel-grid contradicts UI-0 §5.6. (3) Audit-response returned to vector via OpenMoji "Black Bird" adaptation (CC-BY-SA 4.0, attributed) + operator-added leg `<rect>`s and eye `<circle>` (canvas-coloured negative space). (4) Re-audit Codex caught a separate state-projection P0 in `_crow_state` (loop set processing on any tail file_change; completed agent_response tail therefore mis-rendered as processing instead of idle); fix re-checks LATEST event explicitly + 7 unit tests pin the precedence. Final verdict APPROVED with observations; P2 (root NOTICE for OpenMoji licence trail) deferred as a follow-up issue.
+- UI-6..UI-9 pending per UI-0 §6 roadmap.
 
 ## System status
 
@@ -50,6 +51,10 @@ UI surface progress (PWA roadmap):
 - `scripts/ui_fetch_fonts.sh` ✔ — idempotent, woff2 magic-byte verified.
 - `scripts/ui_screenshots.py` ✔ — per-slug capture plan; per-capture `seed` (populate/truncate the bus) and `viewport` (override 1440x900) knobs; per-capture `press_tab` step (real keyboard-driven focus, not synthetic `.focus()`); `_apply_step` runs `wait_ms` first so JS-rendered targets exist before hover / press_tab fire; fresh Playwright context per capture so viewport overrides don't leak; bus seeded via `ui_server.configure(...)` instead of `os.chdir` (Windows tempdir cleanup race fixed).
 - UI event timeline ✔ (UI-4) — `static/css/timeline.css` (first feature CSS split). `.timeline` is a `<ol>` with max-width 720 px, centred. Each row is a single typographic line: `<time>` mono `--fs-12 --fg-2`, type display `--fs-16 --fg-1` (the only accent), meta mono `--fs-14 --fg-2`. Hairline `--fg-3` between rows; `--bg-2` hover wash; design-system `--focus-ring` on Tab via `.event-row[tabindex=0]`. Latest-on-top via reversed copy; full re-render every 3 s tick. Narrow viewport (≤720 px) collapses to a single column. Empty-state branch from UI-3 is unchanged.
+- UI canonical crow asset ✔ (UI-5) — `src/karasu/ui/static/assets/crow/crow.svg` adapted from OpenMoji "Black Bird" (1F426 200D 2B1B), CC-BY-SA 4.0. Two body fill paths unified under `currentColor`, plus operator-added 2× `<rect>` legs (currentColor) and 1× `<circle>` eye notch (`var(--bg-0)`, acts as negative space against the body recolour). viewBox 72×72, no `shape-rendering="crispEdges"` — vector smooth at all sizes. Renders cleanly at 24 px header glyph and 96 px hero (4× viewBox grain). Provenance + iteration history (FA vector → 2× pixel-art → 2× hand-drawn vector → OpenMoji-adapted) in `docs/ui/assets/karasu_sprites_spec.md`.
+- UI crow state animations ✔ (UI-5) — `src/karasu/ui/static/css/crow.css` defines `.crow` base (currentColor + ambient breathing 4 s loop, translateY 1 px ease-mag) plus four state classes: `.crow.processing` (--accent + slow pulse, scale 1.04 over 1.6 s, infinite); `.crow.waiting` (--warn + 4° asymmetric tilt, forwards-fill — leans and holds); `.crow.error` (--accent + sharp shake, ±2 px translateX over 240 ms, single beat — looping reads as alarm fatigue). Reduced-motion: keyframes clamp to 1 ms via `reset.css` chromatic whitelist; only colour transitions remain. Motion lives ONLY on `.crow` per UI-4 audit pin "el crow puede tener vida; la superficie no puede perder calma".
+- `_crow_state` precedence (UI-5 audit fix) ✔ — `src/karasu/ui/server.py::_crow_state` walks events reverse-chronologically and returns at the first match: error (most-recent failed) > waiting (most-recent requires_human=True) > processing (LATEST event is file_change) > idle. The earlier implementation set state="processing" on any tail file_change and continued, which mis-resolved a completed-agent_response tail to processing. Codex P0 on re-audit caught the bug; fix re-checks the LATEST event explicitly. Pinned by 7 unit tests in `tests/test_ui_server.py` (empty events, latest file_change, completed-after-file_change, failed anywhere, requires_human anywhere, most-recent-trigger-wins error/waiting, new file_change after completed).
+- `scripts/ui_screenshots.py` extended (UI-5) — per-state `STATE_CORPORA` so each PNG seeds the precedence-winning event for `_crow_state`; `--record-video` flag walks idle → processing → waiting → error → idle inside one Playwright context (1024×640 viewport, ~5 s total, ~112 KB output, no ffmpeg transcode needed); cross-drive `shutil.move` for Windows temp-dir → repo-dir handoff; `eval_js` step for the deliberate frozen-frame error PNG (`translateX(-2px)` pinned because the 240 ms one-shot beat is non-deterministic to capture mid-animation; motion truth lives in the `.webm`).
 
 ## Verified behavior (Phase 1C closed)
 
@@ -114,21 +119,32 @@ UI surface progress:
   UI-2 (design system + tokens) ✔ PR #69 merged (6ec5203).
   UI-3 (application shell)    ✔ PR #70 merged (a67d729).
   UI-4 (event timeline)       ✔ PR #72 merged (13e6270).
-  UI-5 (crow sprite + state animations)   <-- next.
-                                              .webm
-                                              required, no
-                                              exception
-                                              (ChatGPT
-                                              UI-3 pin).
-                                              "El crow
-                                              puede tener
-                                              vida; la
-                                              superficie
-                                              no puede
-                                              perder calma"
-                                              (ChatGPT
-                                              UI-4 pin).
-  UI-6..UI-9                  pending per UI-0 brief
+  UI-5 (canonical crow + state animations) ✔ PR #74 merged (904111a).
+  UI-6 (Live Map + crow flight)   <-- next.
+                                              Five domain
+                                              nodes (User /
+                                              Karasu /
+                                              Claude /
+                                              Codex /
+                                              GitHub). Crow
+                                              flies between
+                                              nodes per
+                                              latest event.
+                                              Arc-path SVG;
+                                              600 ms
+                                              ease-mag.
+                                              SECOND asset
+                                              required:
+                                              crow-flight
+                                              .svg (wings
+                                              extended).
+                                              Do NOT rotate
+                                              the perched
+                                              crow and call
+                                              it flight
+                                              (Codex UI-5
+                                              pin).
+  UI-7..UI-9                  pending per UI-0 brief
                                               roadmap.
   UI-10+ (write paths, push, trust mgmt) out of brief
                                        scope until UI-MVP
@@ -141,9 +157,9 @@ JSON projection at /api/events and /api/health (and the
 new /api/meta from UI-3). The projection is the canonical
 contract; UI-4..UI-9 render against it.
 
-See docs/memory/next-session.md for UI-5's detailed plan
-and the binding editorial guidance ChatGPT pinned across
-the UI-3 / UI-4 audits.
+See docs/memory/next-session.md for UI-6's detailed plan
+and the seven binding constraints Codex pinned across
+UI-3 / UI-4 / UI-5 audits.
 
 Remaining items beyond the UI MVP:
 

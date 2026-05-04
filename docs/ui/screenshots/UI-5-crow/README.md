@@ -117,22 +117,57 @@ mv UI-5-crow.transcoded.webm UI-5-crow.webm
 
 CRF 35 with VP9 typically halves the size of Playwright's
 default VP8 output for this kind of static-shell-with-small-
-animated-element content. The current capture (~105 KB) sits
+animated-element content. The current capture (~161 KB) sits
 well inside the budget without a transcode pass.
+
+## Legibility at the two display scales (P2 from Codex audit)
+
+```text
+24 px header glyph   The 72-unit viewBox renders into a 24 px
+                     square. The bird silhouette occupies ~85 %
+                     of the box; head + beak + body + 2 legs
+                     all read at this scale. The eye notch
+                     becomes a sub-pixel dark spot — visible
+                     enough to confirm the head's centre but
+                     does not dominate.
+                     See: 00-crow-idle.png header strip.
+
+96 px hero           4× the header scale. Full anatomy reads
+                     cleanly: distinct head ball, sharp beak
+                     up-right, eye notch as deliberate negative
+                     space, two legs anchored inside the body
+                     fill, tail wedge curving back. The vector
+                     scales smoothly — no staircase artefacts
+                     on the curves, which the earlier pixel-
+                     grid pass introduced at 96 px.
+                     See: 04-empty-state-with-canonical-crow.png.
+```
+
+If the auditor wants a side-by-side comparison composite, both
+scales appear together in `00-crow-idle.png` (header strip +
+populated timeline) and `04-empty-state-with-canonical-crow.png`
+(hero only) — opening both side by side proves the asset
+holds at both ends.
 
 ## Provenance
 
-The crow is a hand-drawn pixel-art silhouette on a 16-unit
-grid; not adapted from any third-party asset. The vertical-
-posture / head-on-top / tail-down-back anatomy is cross-
-validated against two existing 16×16 raven sprites on
-OpenGameArt:
+The crow body silhouette is **adapted from OpenMoji "Black
+Bird" emoji** (`1F426 200D 2B1B`), licensed under CC-BY-SA 4.0:
+
+- [OpenMoji — Black Bird (CC-BY-SA 4.0)](https://openmoji.org/library/emoji-1F426-200D-2B1B/)
+
+Karasu strips upstream's stroke-detail elements, unifies the
+two grey-tone fills under `currentColor`, and adds two leg
+rectangles + one eye notch as operator-added elements.
+
+See `docs/ui/assets/karasu_sprites_spec.md` § Provenance for
+the full design history (FA vector → 2 pixel-art passes →
+2 hand-drawn vector attempts → OpenMoji-adapted final) and
+the contract that survives a future asset swap.
+
+The two earlier OpenGameArt 16×16 raven references that
+informed the rejected pixel-art passes are also recorded
+there for posterity:
 
 - [Pixel Raven (CC0)](https://opengameart.org/content/pixel-raven)
 - [Owl and Raven Sprites (CC-BY-SA 3.0)](https://opengameart.org/content/owl-and-raven-sprites)
-
-See `docs/ui/assets/karasu_sprites_spec.md` § Provenance for
-the design history (Font Awesome vector → first pixel-art
-pass that read as kiwi → reference-anchored redesign that
-ships) and the contract that survives a future pixel-layout
-swap.

@@ -2,100 +2,42 @@
 <!--
     Karasu — canonical crow asset.
 
-    UI-0 §5.6 reconciled in UI-5: the crow is a single-color
-    silhouette in `currentColor`, but the EDGES are pixelated,
-    not vector-smooth. Karasu is a watchtower; the mark is an
-    instrument, not an app mascot. Vector-rounded silhouettes
-    were rejected during UI-5 design — they cut against the
-    system's essence.
+    UI-0 §5.6 contract: SVG, monochrome, currentColor, scales
+    beyond. Audit-corrected after Codex's UI-5 P0 finding (the
+    pixel-grid pass cut against §5.6 even with the right
+    anatomy).
 
-    Grain: 16 × 16 viewBox. "Pixelado intermedio" — coarse
-    enough to read as deliberate craft, fine enough to keep
-    the silhouette legible at 24 px. Render at integer scale
-    multiples for crispness:
+    Composition:
+      - Two body paths adapted from OpenMoji "Black Bird"
+        (1F426 200D 2B1B), CC-BY-SA 4.0. Stroke detail
+        omitted; both fills unified under currentColor.
+      - Two leg rects added in currentColor — they recolour
+        with the four state classes alongside the body.
+      - One eye notch as a small circle filled with the
+        canvas colour (--bg-0 inline; #0a0a0b in the
+        standalone file). Acts as negative space against
+        the body fill so the head reads alert.
 
-        24 px header glyph    — 1.5 × the grain (CSS rounding +
-                                shape-rendering="crispEdges"
-                                keeps edges hard).
-        96 px hero            — 6 × the grain (perfectly crisp).
-
-    Anatomy (perched crow, profile facing right):
-
-        - VERTICAL posture. The bird stands erect — head high,
-          body teardropping down to the legs. A horizontal-low
-          posture reads as kiwi/duck/penguin; this rejects all
-          three.
-        - HEAD as a distinct ball at the TOP of the silhouette,
-          set forward over the body's leading edge.
-        - BEAK is a SHORT horizontal protrusion (3 px) from the
-          head's leading face, separated from the body by the
-          neck step below. Long beaks read as kiwi or
-          woodpecker; short beaks at head level read as crow.
-        - EYE as a 1-px notch (negative space) inside the head
-          ball.
-        - TAIL is a WEDGE extending DOWN AND BACK from the
-          body's rear, not a horizontal spike at body height.
-          The tail's diagonal is what carries the silhouette
-          into "crow at rest".
-        - LEGS as two thin verticals under the body's centre,
-          short, with a 1-px gap.
-
-    The pattern is cross-validated against two CC0/CC-BY-SA
-    16x16 raven sprites on OpenGameArt
-    (`/content/pixel-raven` CC0 and `/content/owl-and-raven-
-    sprites` CC-BY-SA 3.0). Both artists converged on this
-    vertical-posture / head-ball / tail-wedge pattern after
-    rejecting earlier passes that "looked like pigeons". This
-    asset is a hand-drawn 16-unit interpretation of the same
-    conventions, not a copy of either sprite — Karasu's
-    rectangle runs, eye placement and leg spacing are the
-    operator's editorial choices for this surface.
-
-    Reading top-to-bottom (each <rect> is one horizontal run
-    of filled pixels at width=1, height=1):
-
-        y=1:  head crown, 2 px
-        y=2:  head expanding, 5 px
-        y=3:  head with eye notch (gap at x=8) + beak (3 px
-              extending right from x=10..12)
-        y=4:  head bottom, 5 px
-        y=5:  neck/shoulder transition, 6 px
-        y=6:  body widening, 7 px
-        y=7:  body widest, 8 px
-        y=8:  body, 8 px (back curving toward the tail)
-        y=9:  body+tail beginning, 8 px (continues left)
-        y=10: tail wedge extending down-back, 7 px from x=0..6
-        y=11: body bottom (legs anchor), 3 px under x=4..6
-        y=12-13: two legs (1 px each, at x=4 and x=6)
+    Provenance: adapted from OpenMoji
+    https://openmoji.org/library/emoji-1F426-200D-2B1B/
+    Licensed under CC-BY-SA 4.0. Karasu's leg rects and
+    eye dot are operator-added — not part of upstream.
 -->
 <svg xmlns="http://www.w3.org/2000/svg"
-     viewBox="0 0 16 16"
-     shape-rendering="crispEdges"
+     viewBox="0 0 72 72"
      fill="currentColor"
      role="img"
      aria-label="Karasu">
-  <!-- head crown -->
-  <rect x="7" y="1" width="2" height="1"/>
-  <rect x="6" y="2" width="5" height="1"/>
-  <!-- head with eye notch (gap at x=8) + beak protrusion -->
-  <rect x="6" y="3" width="2" height="1"/>
-  <rect x="9" y="3" width="4" height="1"/>
-  <!-- head bottom -->
-  <rect x="6" y="4" width="5" height="1"/>
-  <!-- neck/shoulder -->
-  <rect x="5" y="5" width="6" height="1"/>
-  <!-- body widening -->
-  <rect x="4" y="6" width="7" height="1"/>
-  <rect x="3" y="7" width="8" height="1"/>
-  <rect x="2" y="8" width="8" height="1"/>
-  <rect x="1" y="9" width="8" height="1"/>
-  <!-- tail wedge extending down-back -->
-  <rect x="0" y="10" width="7" height="1"/>
-  <!-- body bottom (legs anchor) -->
-  <rect x="4" y="11" width="3" height="1"/>
-  <!-- two legs (gap at x=5) -->
-  <rect x="4" y="12" width="1" height="1"/>
-  <rect x="6" y="12" width="1" height="1"/>
-  <rect x="4" y="13" width="1" height="1"/>
-  <rect x="6" y="13" width="1" height="1"/>
+  <!-- head + upper body -->
+  <path d="m40.203,22s3.1218-9,11.4467-4c0,0,8.585.75,8.9753,3.375,0,0-7.9346,1.625-10.0159,5.625s3.1218,7-5.3331,15.625c0,0-4.0324,4.375-10.276,4.375,0,0-22,3-25,0"/>
+  <!-- lower body / wing -->
+  <path d="m10.125,46.875s24.875-22.875,32.875-21.875,2,13.25-5.5,17.625-27.375,4.25-27.375,4.25Z"/>
+  <!-- two legs hanging from the body bottom (moved inward + up
+       so both anchors land inside the body fill, not outside it) -->
+  <rect x="22" y="45" width="2" height="10"/>
+  <rect x="28" y="45" width="2" height="10"/>
+  <!-- eye notch — canvas-colour dot inside the head, sized so it
+       reads at 24 px header glyph (1.8 r at viewBox 72 → ~0.6 px
+       at header scale, ~2.4 px at hero scale) -->
+  <circle cx="49" cy="24" r="1.8" fill="#0a0a0b"/>
 </svg>

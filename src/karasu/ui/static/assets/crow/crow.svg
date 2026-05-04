@@ -4,10 +4,10 @@
 
     UI-0 §5.6 reconciled in UI-5: the crow is a single-color
     silhouette in `currentColor`, but the EDGES are pixelated,
-    not vector-smooth. The earlier "rounded vector" iteration
-    cut against the system's essence — Karasu is a watchtower,
-    not an app mascot. Rounded edges read as friendly /
-    consumer; jagged edges read as instrument.
+    not vector-smooth. Karasu is a watchtower; the mark is an
+    instrument, not an app mascot. Vector-rounded silhouettes
+    were rejected during UI-5 design — they cut against the
+    system's essence.
 
     Grain: 16 × 16 viewBox. "Pixelado intermedio" — coarse
     enough to read as deliberate craft, fine enough to keep
@@ -19,32 +19,54 @@
                                 keeps edges hard).
         96 px hero            — 6 × the grain (perfectly crisp).
 
-    Minimalism stays in COLOR (single fill, currentColor) and
-    in REPRESENTATION (no detail, no shading, no decorative
-    elements). The body, beak, eye notch, tail spike and two
-    legs are the only signals.
+    Anatomy (perched crow, profile facing right):
 
-    Drawn by hand on the grid; not adapted from any third-party
-    asset. The eye is a 1-px gap inside the head silhouette
-    (no fill-rule needed — the silhouette is built from
-    explicit filled rectangles on the eye's neighbouring
-    rows and the eye row leaves that pixel uncovered).
+        - VERTICAL posture. The bird stands erect — head high,
+          body teardropping down to the legs. A horizontal-low
+          posture reads as kiwi/duck/penguin; this rejects all
+          three.
+        - HEAD as a distinct ball at the TOP of the silhouette,
+          set forward over the body's leading edge.
+        - BEAK is a SHORT horizontal protrusion (3 px) from the
+          head's leading face, separated from the body by the
+          neck step below. Long beaks read as kiwi or
+          woodpecker; short beaks at head level read as crow.
+        - EYE as a 1-px notch (negative space) inside the head
+          ball.
+        - TAIL is a WEDGE extending DOWN AND BACK from the
+          body's rear, not a horizontal spike at body height.
+          The tail's diagonal is what carries the silhouette
+          into "crow at rest".
+        - LEGS as two thin verticals under the body's centre,
+          short, with a 1-px gap.
 
-    Each <rect> is one horizontal run of filled pixels at
-    width=1 height=1 cells. Reading top-to-bottom:
+    The pattern is cross-validated against two CC0/CC-BY-SA
+    16x16 raven sprites on OpenGameArt
+    (`/content/pixel-raven` CC0 and `/content/owl-and-raven-
+    sprites` CC-BY-SA 3.0). Both artists converged on this
+    vertical-posture / head-ball / tail-wedge pattern after
+    rejecting earlier passes that "looked like pigeons". This
+    asset is a hand-drawn 16-unit interpretation of the same
+    conventions, not a copy of either sprite — Karasu's
+    rectangle runs, eye placement and leg spacing are the
+    operator's editorial choices for this surface.
 
-        y=2:  head top, 2 px
-        y=3:  head, 4 px
-        y=4:  beak going right (5 px) + eye notch at x=8
-        y=5:  beak underside + head, 4 px
-        y=6:  neck, 5 px
-        y=7:  shoulder + back, 7 px
-        y=8:  body widening, 8 px
-        y=9:  body, 9 px
-        y=10: tail spike (1 px at x=1) + body (7 px from x=3)
-        y=11: body bottom, 6 px
-        y=12: leg tops (2-px gap between legs)
-        y=13-14: legs straight down
+    Reading top-to-bottom (each <rect> is one horizontal run
+    of filled pixels at width=1, height=1):
+
+        y=1:  head crown, 2 px
+        y=2:  head expanding, 5 px
+        y=3:  head with eye notch (gap at x=8) + beak (3 px
+              extending right from x=10..12)
+        y=4:  head bottom, 5 px
+        y=5:  neck/shoulder transition, 6 px
+        y=6:  body widening, 7 px
+        y=7:  body widest, 8 px
+        y=8:  body, 8 px (back curving toward the tail)
+        y=9:  body+tail beginning, 8 px (continues left)
+        y=10: tail wedge extending down-back, 7 px from x=0..6
+        y=11: body bottom (legs anchor), 3 px under x=4..6
+        y=12-13: two legs (1 px each, at x=4 and x=6)
 -->
 <svg xmlns="http://www.w3.org/2000/svg"
      viewBox="0 0 16 16"
@@ -52,30 +74,28 @@
      fill="currentColor"
      role="img"
      aria-label="Karasu">
-  <!-- head (compact ball, 3 rows) -->
-  <rect x="6" y="2" width="3" height="1"/>
-  <rect x="5" y="3" width="5" height="1"/>
-  <!-- eye notch (gap at x=7) + beak protruding clearly right -->
-  <rect x="5" y="4" width="2" height="1"/>
-  <rect x="8" y="4" width="6" height="1"/>
-  <!-- under-head closes (beak does NOT continue here, so the beak
-       reads as a single sharp protrusion not as a wing) -->
-  <rect x="5" y="5" width="4" height="1"/>
-  <!-- neck step in (1 px) -->
-  <rect x="4" y="6" width="4" height="1"/>
-  <!-- shoulder + body (back ascends, belly drops) -->
-  <rect x="3" y="7" width="7" height="1"/>
-  <rect x="2" y="8" width="9" height="1"/>
-  <rect x="2" y="9" width="9" height="1"/>
-  <!-- tail spike continuous with body (x=0..9 unbroken so the
-       tail reads as the bird's back end, not a detached dot) -->
-  <rect x="0" y="10" width="10" height="1"/>
-  <rect x="4" y="11" width="5" height="1"/>
-  <!-- legs (2-px gap between them, 3 rows tall) -->
+  <!-- head crown -->
+  <rect x="7" y="1" width="2" height="1"/>
+  <rect x="6" y="2" width="5" height="1"/>
+  <!-- head with eye notch (gap at x=8) + beak protrusion -->
+  <rect x="6" y="3" width="2" height="1"/>
+  <rect x="9" y="3" width="4" height="1"/>
+  <!-- head bottom -->
+  <rect x="6" y="4" width="5" height="1"/>
+  <!-- neck/shoulder -->
+  <rect x="5" y="5" width="6" height="1"/>
+  <!-- body widening -->
+  <rect x="4" y="6" width="7" height="1"/>
+  <rect x="3" y="7" width="8" height="1"/>
+  <rect x="2" y="8" width="8" height="1"/>
+  <rect x="1" y="9" width="8" height="1"/>
+  <!-- tail wedge extending down-back -->
+  <rect x="0" y="10" width="7" height="1"/>
+  <!-- body bottom (legs anchor) -->
+  <rect x="4" y="11" width="3" height="1"/>
+  <!-- two legs (gap at x=5) -->
   <rect x="4" y="12" width="1" height="1"/>
-  <rect x="7" y="12" width="1" height="1"/>
+  <rect x="6" y="12" width="1" height="1"/>
   <rect x="4" y="13" width="1" height="1"/>
-  <rect x="7" y="13" width="1" height="1"/>
-  <rect x="4" y="14" width="1" height="1"/>
-  <rect x="7" y="14" width="1" height="1"/>
+  <rect x="6" y="13" width="1" height="1"/>
 </svg>

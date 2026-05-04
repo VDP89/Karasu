@@ -53,43 +53,72 @@ sizes.
 ```
 0  1  2  3  4  5  6  7  8  9  10 11 12 13 14 15
 .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .   y=0
-.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .   y=1
-.  .  .  .  .  .  X  X  X  .  .  .  .  .  .  .   y=2  head top
-.  .  .  .  .  X  X  X  X  X  .  .  .  .  .  .   y=3  head ball
-.  .  .  .  .  X  X  .  X  X  X  X  X  X  .  .   y=4  eye notch + beak
-.  .  .  .  .  X  X  X  X  .  .  .  .  .  .  .   y=5  head bottom
-.  .  .  .  X  X  X  X  .  .  .  .  .  .  .  .   y=6  neck step
-.  .  .  X  X  X  X  X  X  X  .  .  .  .  .  .   y=7  shoulder
-.  .  X  X  X  X  X  X  X  X  X  .  .  .  .  .   y=8  body
-.  .  X  X  X  X  X  X  X  X  X  .  .  .  .  .   y=9  body
-X  X  X  X  X  X  X  X  X  X  .  .  .  .  .  .   y=10 tail-spike + body, continuous
-.  .  .  .  X  X  X  X  X  .  .  .  .  .  .  .   y=11 body bottom
-.  .  .  .  X  .  .  X  .  .  .  .  .  .  .  .   y=12 legs (2-px gap)
-.  .  .  .  X  .  .  X  .  .  .  .  .  .  .  .   y=13 legs
-.  .  .  .  X  .  .  X  .  .  .  .  .  .  .  .   y=14 feet
+.  .  .  .  .  .  .  X  X  .  .  .  .  .  .  .   y=1  head crown
+.  .  .  .  .  .  X  X  X  X  X  .  .  .  .  .   y=2  head expanding
+.  .  .  .  .  .  X  X  .  X  X  X  X  .  .  .   y=3  eye notch + beak
+.  .  .  .  .  .  X  X  X  X  X  .  .  .  .  .   y=4  head bottom
+.  .  .  .  .  X  X  X  X  X  X  .  .  .  .  .   y=5  neck/shoulder
+.  .  .  .  X  X  X  X  X  X  X  .  .  .  .  .   y=6  body widening
+.  .  .  X  X  X  X  X  X  X  X  .  .  .  .  .   y=7  body widest
+.  .  X  X  X  X  X  X  X  X  .  .  .  .  .  .   y=8  body, back curving
+.  X  X  X  X  X  X  X  X  .  .  .  .  .  .  .   y=9  body+tail beginning
+X  X  X  X  X  X  X  .  .  .  .  .  .  .  .  .   y=10 tail wedge down-back
+.  .  .  .  X  X  X  .  .  .  .  .  .  .  .  .   y=11 body bottom (legs anchor)
+.  .  .  .  X  .  X  .  .  .  .  .  .  .  .  .   y=12 legs (1-px gap)
+.  .  .  .  X  .  X  .  .  .  .  .  .  .  .  .   y=13 feet
+.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .   y=14
 .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .   y=15
 ```
+
+The anatomy is **vertical-posture perched crow, profile facing
+right**. The earlier pass on this PR shipped a horizontal-low
+silhouette that the operator read as kiwi; the redesign rotates
+the bird's centre of gravity 90° so the head sits high above
+the body and the tail extends DOWN-BACK from the body's rear.
 
 Every visible signal earns its pixels:
 
 ```text
-beak          y=4, x=8..13   six-pixel run protruding right
-              from the head ball, separated by an empty pixel
-              above (y=3 stops at x=9) and the head's natural
-              edge below (y=5 stops at x=8). The gap on three
-              sides is what makes the beak read as a beak and
-              not as a wing or a misaligned body cell.
-eye           y=4, x=7       a single empty cell INSIDE the
-              filled head silhouette. Negative space — no
-              fill-rule needed because the surrounding rows
-              don't cover it.
-tail spike    y=10, x=0..1   the bird's back-most extent.
-              Continuous with the body run (x=0..9 unbroken on
-              y=10) so it reads as the tail end, not a
-              detached dot.
-two legs      x=4 and x=7,   thin one-pixel legs with a 2-pixel
-              y=12..14       gap. At 6× scale (96 px hero) each
-              leg is 6 device pixels wide — clearly visible.
+head ball     y=1..4, x=6..10    a compact 5×4 head sitting on
+                                 top of the body. The head is
+                                 the silhouette's leading mass;
+                                 the body teardrops down from
+                                 it.
+beak          y=3, x=9..12       three-pixel horizontal stub
+                                 protruding right from the
+                                 head's mid-row. SHORT — long
+                                 beaks read as kiwi or wood-
+                                 pecker. Separated from the
+                                 body by the head-bottom row
+                                 (y=4) and the empty pixel at
+                                 (x=8, y=3) which is also the
+                                 eye notch.
+eye           y=3, x=8           a single empty cell inside the
+                                 filled head silhouette,
+                                 immediately left of the beak.
+                                 Negative space — no fill-rule
+                                 needed because the surrounding
+                                 rows don't cover it.
+body          y=5..9             teardrop expanding from a 6-px
+                                 neck (y=5) to an 8-px widest
+                                 row (y=7..8) and then narrow-
+                                 ing back to the legs anchor.
+tail wedge    y=9..10, x=0..6    the body's back curve continues
+                                 into a tail that drops DOWN
+                                 AND BACK from the body's rear.
+                                 The tail's diagonal (back at
+                                 y=10 reaches x=0; body's
+                                 leading edge at the same row
+                                 ends at x=6) is what carries
+                                 the silhouette into "perched
+                                 crow at rest" rather than
+                                 "horizontal kiwi blob".
+two legs      x=4 and x=6,       thin one-pixel legs with a
+              y=12..13           1-px gap, anchored under the
+                                 body's centre (not under the
+                                 tail). At 6× scale (96 px
+                                 hero) each leg is 6 device
+                                 pixels wide — clearly visible.
 ```
 
 ## State classes
@@ -140,19 +169,57 @@ carries through unchanged; no crow-specific guard is needed.
 ## Provenance
 
 The pixel layout is hand-drawn on the 16-unit grid for UI-5.
-Not adapted from any third-party asset. An earlier UI-5
-iteration adapted Font Awesome's "crow" vector icon
-(CC BY 4.0); that approach was rejected by the operator on
-two grounds:
+Not adapted from any third-party asset. The anatomy
+conventions (vertical posture, head ball on top, short
+horizontal beak, tail wedge down-back) are cross-validated
+against two existing 16×16 raven sprites on OpenGameArt:
 
 ```text
-1. Vector-smooth edges read as friendly / consumer-app and
-   cut against Karasu's watchtower-as-instrument essence.
-2. The mark needed enough deliberate craft to not blur into
-   the Claude Code mascot or any other generic editorial
-   bird icon. Pixel art at 16 × 16 grain, jagged edges,
-   single colour signals "designed for THIS surface" without
-   reaching for ornament.
+- Pixel Raven (CC0)
+  https://opengameart.org/content/pixel-raven
+  Reference for: vertical posture, distinct head ball, short
+  beak. The artist's own notes record their iteration: the
+  first idle sprite "looked too much like pigeons", and the
+  redesign that converged on this pattern is what shipped.
+  Karasu's first UI-5 pass made the same mistake (operator
+  read it as kiwi); studying this sprite is what corrected
+  the redesign.
+
+- Owl and Raven Sprites (CC-BY-SA 3.0)
+  https://opengameart.org/content/owl-and-raven-sprites
+  Cross-validation. Independent artist converging on the
+  same vertical-posture / head-on-top / tail-down-back
+  conventions.
+```
+
+Both references show that 16×16 perched crow legibility hinges
+on three signals working together: (1) distinct head ball
+sitting ON TOP of the body, not fused into a horizontal blob;
+(2) short horizontal beak protruding from the head, not a long
+beak (which reads kiwi/woodpecker); (3) tail extending DOWN
+AND BACK from the body's rear, not a horizontal spike at body
+height (which reads kingfisher / generic perched bird).
+
+Karasu's rectangle runs, eye placement, leg spacing and
+overall composition are the operator's editorial choices on
+the same 16-unit grid; this asset is a hand-drawn
+interpretation of the convention, not a copy of either
+sprite.
+
+Earlier UI-5 iterations on this branch:
+
+```text
+- Font Awesome "crow" vector adaptation (CC BY 4.0).
+  Rejected: vector-smooth edges read as friendly /
+  consumer-app and cut against Karasu's watchtower-as-
+  instrument essence.
+
+- First pixel-art pass (horizontal-low body, head fused
+  with body front, tail as horizontal back-spike).
+  Rejected: read as kiwi/duck. Root cause was insufficient
+  reference-research before designing — corrected on the
+  redesign by studying the two OpenGameArt sprites above
+  and converging on the cross-validated conventions.
 ```
 
 Future custom redraws are welcome — the contract this file

@@ -123,11 +123,16 @@ well inside the budget without a transcode pass.
 ## Provenance
 
 The crow is a hand-drawn pixel-art silhouette on a 16-unit
-grid; not adapted from any third-party asset. An earlier
-UI-5 iteration adapted Font Awesome's "crow" vector icon
-(CC BY 4.0); that approach was rejected because vector-
-smooth edges read as friendly / consumer-app and cut against
-Karasu's watchtower-as-instrument essence. See
-`docs/ui/assets/karasu_sprites_spec.md` § Provenance for
-the rationale and the contract that survives a future
-pixel-layout swap.
+grid; not adapted from any third-party asset. The vertical-
+posture / head-on-top / tail-down-back anatomy is cross-
+validated against two existing 16×16 raven sprites on
+OpenGameArt:
+
+- [Pixel Raven (CC0)](https://opengameart.org/content/pixel-raven)
+- [Owl and Raven Sprites (CC-BY-SA 3.0)](https://opengameart.org/content/owl-and-raven-sprites)
+
+See `docs/ui/assets/karasu_sprites_spec.md` § Provenance for
+the design history (Font Awesome vector → first pixel-art
+pass that read as kiwi → reference-anchored redesign that
+ships) and the contract that survives a future pixel-layout
+swap.

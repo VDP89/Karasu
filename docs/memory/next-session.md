@@ -16,6 +16,27 @@ single beat*.
 
 ## Binding constraints carried forward (P0)
 
+UI-6 audit added FIVE additional pins for UI-7+ (Codex,
+2026-05-04, PR #78 APPROVED-with-observations). Verbatim:
+
+```text
+A. The Live Map is now an orientation layer, not a simulation
+   layer.
+B. UI-7 must not add motion to nodes, edges, timeline rows,
+   header, footer, or map chrome unless a new audited chunk
+   explicitly earns it.
+C. Any new /api/health-derived visual state must ship with
+   tests before screenshots.
+D. Keep latest-event semantics for flight unless a future PR
+   explicitly introduces stateful route memory and tests it.
+E. Do not let the detail drawer or inspector compete with the
+   crow/map; the surface remains editorial, not dashboard.
+```
+
+Pin E is the immediately load-bearing one for UI-7: the drawer
+must NOT borrow the visual weight of the crow or the map. Slide
+in, present JSON, slide out. No icons, no chrome, no badges.
+
 The seven Codex pins from UI-3 / UI-4 / UI-5 / UI-6 audits stay
 binding. The new chunk introduces motion (a drawer panel slides
 in) so several pins re-fire:

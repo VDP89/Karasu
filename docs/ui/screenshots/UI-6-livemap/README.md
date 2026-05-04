@@ -111,9 +111,12 @@ checks them against.
    axis. Magnitudes restrained — no barrel rolls.
 
 5. .webm shows full-shell context.
-   Recording viewport is 1024×640; the auditor sees the header,
-   the map, the timeline beside it AND the footer in a single
-   frame. NOT cropped to the flying crow alone.
+   Recording viewport is 1024×640; the auditor sees full-shell
+   context — header, map, timeline context and footer — without
+   cropping to the flying crow alone. Note: 1024 px is BELOW the
+   1280 px split breakpoint, so the timeline renders stacked
+   below the map in this recording (the side-by-side layout
+   shows in PNG 02 et al at the default 1440×900 viewport).
 
 6. Map nodes / edges do NOT pulse, bounce, glow, or perform.
    Only the source / target dots shift fill to --accent for the

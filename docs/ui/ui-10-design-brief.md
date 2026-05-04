@@ -118,7 +118,7 @@ C) Authentication:
 D) Bus event schema for revoke:
    New event type? NO. Reuse `human_decision` with:
      data.action       = "scar_revoke"
-     data.scar_id      = <id from ScarEngine>
+     data.scar_id      = id from ScarEngine
      data.reason       = <optional free-text>
    This stays additive (no schema break for UI-1..UI-9
    consumers) and matches the existing `/correct`+`/scar`
@@ -126,14 +126,25 @@ D) Bus event schema for revoke:
    [CONFIRMED 2026-05-04]
 
 E) Server endpoint for revoke:
-   POST /api/scars/<scar_id>/revoke → emits the
-   human_decision event + returns 204. The endpoint is
-   the SECOND write path on the server (the first is
-   /api/github/webhook); it sits behind the same SW
-   network-only contract from UI-8 (Codex pin #3 from UI-7
-   audit). No cache.
-   GET /api/scars → list current scars + their stored
+   `POST /api/scars/{scar_id}/revoke` → emits the
+   human_decision event + returns **204 with no body** (by
+   design). The endpoint is the SECOND write path on the
+   server (the first is /api/github/webhook); it sits
+   behind the same SW network-only contract from UI-8
+   (Codex pin #3 from UI-7 audit). No cache.
+
+   `GET /api/scars` → list current scars + their stored
    correction text. Read-only, additive.
+
+   POST→GET split: the 204 is intentionally empty; post-
+   revoke annotation is derived from (a) re-fetching
+   `/api/scars` where available, plus (b) the known
+   `scar_id` + `reason` from the request context the UI
+   already holds, plus (c) the subsequent
+   `human_decision` event the bus emits (visible on the
+   next `/api/events` tick). The drawer does NOT depend
+   on POST response data to render the annotated state.
+   Codex P1 binding from PR #83 audit.
    [CONFIRMED 2026-05-04]
 
 F) Single revoke or batch:
@@ -228,9 +239,22 @@ The `--danger` token aliases to the same hex as `--accent`
 because the editorial palette is bound. The DIFFERENCE is in
 the rule that gates it: `--danger` only appears on
 **destructive confirmation buttons in modals**, never on
-non-destructive action surfaces. A future operator could split
-the alias if dogfood asks for it (e.g. `--danger: #c63a30`,
-slightly more saturated); the contract is the alias today.
+non-destructive action surfaces.
+
+**Scope discipline (Codex P2 binding from PR #83 audit):**
+`--danger` MUST NOT be used for generic error states, warning
+surfaces, accent emphasis, or any non-destructive CTA. Those
+keep their existing tokens (`--error` alias for error,
+`--warn` for warning, `--accent` for emphasis). `--danger` is
+reserved for destructive confirmation buttons inside modals
+only. A regression that paints a warning banner with
+`--danger` is a P2 audit finding even if the colour is the
+same hex — the semantic alias IS the contract.
+
+A future operator could split the alias if dogfood asks for
+it (e.g. `--danger: #c63a30`, slightly more saturated); the
+contract is the alias today, the scope discipline is binding
+regardless of the underlying hex.
 
 ### 5.2 · New primitive: modal dialog
 
@@ -300,7 +324,7 @@ tests. Every chunk **ships something visible and functional**.
 ```text
 UI-10   Scar revoke. The first write path. Adds:
           - GET /api/scars  (list)
-          - POST /api/scars/<id>/revoke
+          - `POST /api/scars/{scar_id}/revoke`
           - .modal primitive in CSS
           - Drawer extension for human_decision events with a
             recorded scar: shows the scar text + a "Revoke"
@@ -410,7 +434,7 @@ All six pre-implementation decisions confirmed binding.
    id if one already exists; otherwise derive deterministic
    hash from the correction content + timestamp/origin
    canonical.
-   URL pattern: /api/scars/<scar_id>/revoke
+   URL pattern: `/api/scars/{scar_id}/revoke`
    Allowed character set: [A-Za-z0-9._:-]+ (no /, no ? or #)
    so the path segment is URL-safe without percent-encoding.
    The HTTP shape lock in test_ui_server_http.py pins the
@@ -449,17 +473,30 @@ All six pre-implementation decisions confirmed binding.
    [CONFIRMED 2026-05-04]
 
 5. /api/scars list shape lock.
-   {scars: [{id, correction_text, created_at, applied_count,
-            last_applied_at}]}
+   `{scars: [{id, correction_text, created_at,
+              applied_count, last_applied_at}]}`
    Plus, IF AND ONLY IF the ScarEngine already exposes them
    naturally (no new ScarEngine work):
-     status        ("active" | "revoked")
-     revoked_at    (ISO-8601 timestamp or null)
+     `status`        ("active" | "revoked")
+     `revoked_at`    (ISO-8601 timestamp or null)
    If those two fields would require new ScarEngine
    plumbing, defer them to a UI-10 follow-up — do NOT widen
    UI-10 scope. The HTTP shape lock pins whichever subset
    ships: implementation reads ScarEngine's public surface,
    tests assert what's actually returned.
+
+   **Annotation guarantee (Codex P1 binding from PR #83
+   audit):** UI-10 implementation must guarantee post-revoke
+   annotation in the drawer EVEN IF `/api/scars` only returns
+   active scars (i.e. the just-revoked scar disappears from
+   the list). If ScarEngine cannot expose `status` /
+   `revoked_at` naturally, the UI annotates the just-revoked
+   scar from the successful POST request context (the
+   `scar_id` + `reason` the operator already submitted) plus
+   the emitted `human_decision` event — without widening
+   `/api/scars`. The operator-facing contract from §10.4
+   ("must SEE the revocation, not infer it") is preserved
+   without scope creep on the server side.
    [CONFIRMED 2026-05-04]
 
 6. Modal close UX with Esc.
@@ -487,17 +524,50 @@ runs against.
   (not on every event — the visual surface stays calm).
 - The new POST endpoint has a Playwright regression test
   for cancel + confirm paths.
-- HTTP shape locks for /api/scars + /api/scars/<id>/revoke.
+- HTTP shape locks for `/api/scars` + `/api/scars/{scar_id}/revoke`.
 - docs/event-schema.md updated with the additive
   human_decision fields.
 - A .webm walking the full flow under
   docs/ui/recordings/UI-10-revoke.webm.
 - PNGs for: drawer with revoke button visible, modal default,
-  modal hover, modal reduced-motion, post-revoke surface.
+  modal reduced-motion, post-revoke surface, AND optionally
+  modal hover for the destructive button state. The
+  reduced-motion PNG is mandatory (mirrors §7); the hover
+  PNG is encouraged but not blocking — `--danger` button
+  state pinning is useful for future regression checks.
 - Lighthouse re-run after the chunk lands; thresholds
   unchanged from UI-9.1 (Performance 85 / 95 / 95 / 90).
 - Codex audit returns APPROVED or APPROVED-with-observations.
 ```
+
+## 11.6 · Implementation pins (UI-10 chunk only)
+
+Six pins Codex set on the UI-10 brief audit (PR #83) bind the
+UI-10 implementation chunk specifically. Verbatim:
+
+```text
+1. Revoke lives only inside the existing detail drawer.
+2. Modal confirmation is mandatory; no inline shortcut.
+3. POST /api/scars/{scar_id}/revoke is local-only,
+   single-scar, network-only, and returns 204.
+4. Post-revoke UI must visibly annotate the revoked scar
+   even if /api/scars cannot naturally expose
+   status / revoked_at.
+5. Cancel closes only the modal; first Esc closes modal,
+   second Esc closes drawer.
+6. The implementation .webm must read as deliberate
+   ScarEngine action, not settings-panel management.
+```
+
+Pin #1 + #2 are the surface contracts (no toolbar, no
+inline confirm shortcut). Pin #3 is the network surface
+contract (single-scar POST, 204 no body, network-only).
+Pin #4 is the §3.5 operator-feel pin enforced at the
+annotation level: the operator MUST see the revocation,
+even when ScarEngine cannot expose post-revoke state
+naturally — the UI synthesises the annotation from request
+context. Pin #5 is the keyboard contract. Pin #6 is the
+audit gate on the implementation PR's `.webm`.
 
 After UI-10, the operator can revoke a scar from the surface
 without touching Telegram. UI-11+ chunks add trust adjust + push
@@ -519,16 +589,16 @@ explicit operator-feel check derived from the §3.5 pin:
 ## 12 · Status
 
 ```text
-Brief status:        CONFIRMED — operator sign-off recorded
-                     2026-05-04 (six §3 + six §10 + one §3.5
-                     pin all confirmed).
-Operator sign-off:   COMPLETE.
-Codex audit:         PENDING — design-review pre-implementation
-                     gate (same pattern as UI-8 design review
-                     locked in commit 1f7266d on PR #79).
-Implementation:      BLOCKED on this brief merging.
+Brief status:        APPROVED-with-observations (Codex,
+                     2026-05-04, PR #83). Two P1 + three P2
+                     applied as in-branch follow-up; six
+                     UI-10 implementation pins propagated to
+                     §11.6.
+Operator sign-off:   COMPLETE (2026-05-04).
+Codex audit:         APPROVED-with-observations + non-blocking
+                     follow-up applied. Mergeable.
+Implementation:      UNBLOCKED once this brief merges.
 ```
 
-Once Codex audits this brief, it merges to main and UI-10
-implementation can open against it. The merge sequence for the
-UI MVP (#78–#82) is independent and can land in parallel.
+The brief is mergeable. Merge sequence for the UI MVP (#78–#82)
+is independent and can land in parallel.

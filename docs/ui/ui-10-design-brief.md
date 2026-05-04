@@ -91,14 +91,13 @@ component-library chrome remain forbidden (UI-0 §4 holds).
 
 ## 3 · Confirmed decisions (operator sign-off, 2026-05-04)
 
-Some decisions are leaned in this draft and need the operator's
-explicit sign-off before merge. Marked **[OPERATOR-CONFIRM]**.
+All six decisions confirmed binding by Victor on 2026-05-04.
 
 ```text
 A) Surface for the revoke affordance:
    The UI-7 drawer (existing). NO new pane, NO new tab, NO
    header toolbar.
-   [LEANED — needs OPERATOR-CONFIRM]
+   [CONFIRMED 2026-05-04]
 
 B) Confirmation flow:
    Modal overlay using --shadow-2 (the elevation token UI-0
@@ -107,14 +106,14 @@ B) Confirmation flow:
    scar's stored correction text + two buttons (Cancel /
    Revoke). NOT a two-step inline; the modal is the friction
    that prevents accidental destructive actions.
-   [LEANED — needs OPERATOR-CONFIRM]
+   [CONFIRMED 2026-05-04]
 
 C) Authentication:
    None for UI-10. The Karasu UI is operator-local (127.0.0.1)
    and the operator is the human running the process. A
    future deployed-on-server surface (UI-12+) earns its own
    auth design.
-   [LEANED — needs OPERATOR-CONFIRM]
+   [CONFIRMED 2026-05-04]
 
 D) Bus event schema for revoke:
    New event type? NO. Reuse `human_decision` with:
@@ -124,7 +123,7 @@ D) Bus event schema for revoke:
    This stays additive (no schema break for UI-1..UI-9
    consumers) and matches the existing `/correct`+`/scar`
    Telegram inbound pattern.
-   [LEANED — needs OPERATOR-CONFIRM]
+   [CONFIRMED 2026-05-04]
 
 E) Server endpoint for revoke:
    POST /api/scars/<scar_id>/revoke → emits the
@@ -135,13 +134,49 @@ E) Server endpoint for revoke:
    audit). No cache.
    GET /api/scars → list current scars + their stored
    correction text. Read-only, additive.
-   [LEANED — needs OPERATOR-CONFIRM]
+   [CONFIRMED 2026-05-04]
 
 F) Single revoke or batch:
    Single. Batch revokes are a UI-12+ concern; UI-10 ships
    one-scar-at-a-time only. Each revoke is one click +
    modal + one POST.
-   [LEANED — needs OPERATOR-CONFIRM]
+   [CONFIRMED 2026-05-04]
+```
+
+## 3.5 · Operator pin (binding, added 2026-05-04)
+
+Victor added one editorial pin alongside the six §3 confirms.
+Treat as P0 for UI-10+ chunks:
+
+```text
+Write-path UX must make mutation explicit, reversible only if
+the backend supports it, and visually quieter than the
+read-only watchtower. The operator should feel: "I am revoking
+a scar," not "I am managing a dashboard."
+```
+
+How this pin shapes UI-10 implementation:
+
+```text
+- "Mutation explicit" → the modal is non-skippable. No
+  inline-confirm shortcut, no keyboard accelerator that
+  bypasses the modal in UI-10. The friction IS the design.
+- "Reversible only if the backend supports it" → UI-10 does
+  NOT ship undo. Revoke is final from the UI side; if the
+  ScarEngine grows a re-apply / un-revoke path later, that
+  earns its own affordance. The brief is honest about
+  irreversibility.
+- "Visually quieter than the read-only watchtower" → the
+  revoke button is NOT --accent (the existing surface accent).
+  It is --danger (semantic alias to the same hex; see §5.1).
+  The modal is single-column, single-sentence above the
+  scar quote, two buttons. No icons, no badges, no chrome
+  beyond the existing tokens.
+- The operator-feel test: when Victor (or any operator) hits
+  Revoke on a real scar in dogfood, the click should feel
+  like a deliberate action against ScarEngine, not like
+  ticking a checkbox in a settings panel. Codex audit on
+  the implementation chunk verifies this against the .webm.
 ```
 
 ## 4 · Tech stack (delta vs UI-0 §4)
@@ -365,50 +400,82 @@ required, PLUS:
   UI-13+.
 ```
 
-## 10 · Open questions to resolve before UI-10 opens
+## 10 · Open questions resolved (operator sign-off, 2026-05-04)
+
+All six pre-implementation decisions confirmed binding.
 
 ```text
-1. Scar id format. ScarEngine currently identifies scars by
-   <correction-text-hash>? <uuid>? Operator confirms before
-   POST /api/scars/<id>/revoke can land.
+1. Scar id format.
+   STABLE HASH STRING. NOT UUID. Use the existing ScarEngine
+   id if one already exists; otherwise derive deterministic
+   hash from the correction content + timestamp/origin
+   canonical.
+   URL pattern: /api/scars/<scar_id>/revoke
+   Allowed character set: [A-Za-z0-9._:-]+ (no /, no ? or #)
+   so the path segment is URL-safe without percent-encoding.
+   The HTTP shape lock in test_ui_server_http.py pins the
+   character set: any id outside the regex is a server-side
+   bug, not a UI input concern.
+   [CONFIRMED 2026-05-04]
 
-2. Revoke reason — required or optional?
-   Lean: optional. The bus event carries `data.reason`; the
-   modal renders an optional textarea. If empty, the field is
-   omitted from data (no "" sentinel).
+2. Revoke reason — optional.
+   Modal renders an optional textarea below the scar quote.
+   The text is trim()ed before send; if the trimmed result
+   is empty, the field is omitted from the bus event payload
+   (NOT serialised as "" sentinel, NOT serialised as null).
+   Empty reason MUST NOT block the revoke — the modal's
+   Revoke button stays enabled regardless.
+   [CONFIRMED 2026-05-04]
 
-3. Cancel button — does it close ONLY the modal, or also the
-   underlying drawer?
-   Lean: ONLY the modal. The drawer stays open at the same
-   row / node so the operator can re-attempt or move on
-   without losing context.
+3. Cancel button — closes ONLY the modal.
+   The underlying drawer stays open at the same row / node
+   so the operator can re-attempt or move on without losing
+   context. Cancel is purely a "back out of this revoke"
+   action, NOT a "close the inspection" action.
+   [CONFIRMED 2026-05-04]
 
-4. Post-revoke drawer behaviour. After a successful revoke,
-   does the drawer:
-     a) close
-     b) refresh against the new event the bus emitted
-     c) stay on the same event, now annotated as "revoked"
-   Lean: (b) — refresh against the most recent
-   human_decision event the operator just produced. The
-   timeline gains the new event; the drawer follows.
+4. Post-revoke drawer behaviour — refresh AND annotate.
+   After a successful revoke:
+     a) Drawer does NOT close.
+     b) Drawer body refreshes to reflect the scar's new
+        revoked state (timestamp, optional reason).
+     c) The annotation must make the revocation visible —
+        the operator should SEE that the scar is now
+        revoked, not have to infer it from the timeline.
+   Implementation note: the drawer reads from /api/scars on
+   open; after a successful POST, the drawer re-fetches and
+   re-renders. The new human_decision event the bus emitted
+   also lands on the timeline by the next /api/events tick.
+   [CONFIRMED 2026-05-04]
 
-5. /api/scars list endpoint shape. Mirror /api/events
-   projection?
-   Lean: dedicated shape — {scars: [{id, correction_text,
-   created_at, applied_count, last_applied_at}]}. The shape
-   is a contract this brief locks; the test_ui_server_http.py
-   shape lock pins it.
+5. /api/scars list shape lock.
+   {scars: [{id, correction_text, created_at, applied_count,
+            last_applied_at}]}
+   Plus, IF AND ONLY IF the ScarEngine already exposes them
+   naturally (no new ScarEngine work):
+     status        ("active" | "revoked")
+     revoked_at    (ISO-8601 timestamp or null)
+   If those two fields would require new ScarEngine
+   plumbing, defer them to a UI-10 follow-up — do NOT widen
+   UI-10 scope. The HTTP shape lock pins whichever subset
+   ships: implementation reads ScarEngine's public surface,
+   tests assert what's actually returned.
+   [CONFIRMED 2026-05-04]
 
-6. Modal close UX. Does Esc close the modal, the drawer, or
-   both?
-   Lean: Esc closes only the modal (the topmost layer); a
-   second Esc closes the drawer (mirrors UI-7's contract).
+6. Modal close UX with Esc.
+   First Esc closes the modal. Second Esc closes the drawer.
+   The modal has focus priority — when open, all keyboard
+   events (Esc, Tab, Enter on Cancel/Revoke) target the
+   modal first. Click-outside the modal also closes it
+   (modal backdrop click); click-outside the drawer (when
+   modal is closed) closes the drawer per UI-7's existing
+   contract.
+   [CONFIRMED 2026-05-04]
 ```
 
-These are operator-decisions that block UI-10 opening. They
-are NOT P0 audit findings; they are pre-implementation
-decisions the brief surfaces so the audit can verify each
-choice was conscious.
+These six decisions + the §3 (A-F) confirms + the §3.5
+operator pin are the binding contract UI-10 implementation
+runs against.
 
 ## 11 · Definition of "done" for UI-10
 
@@ -436,20 +503,32 @@ After UI-10, the operator can revoke a scar from the surface
 without touching Telegram. UI-11+ chunks add trust adjust + push
 notifications, each with their own brief.
 
+## 11.5 · Operator pin reinforced in Definition of done
+
+The UI-10 implementation chunk's audit cadence (§7) carries an
+explicit operator-feel check derived from the §3.5 pin:
+
+```text
+- Codex audit on UI-10 PR verifies the .webm against the
+  question: "does the click → modal → confirm flow read as a
+  deliberate action against ScarEngine, or as ticking a
+  checkbox in a settings panel?" If it reads as the latter,
+  that is a P0 — the editorial pin is binding.
+```
+
 ## 12 · Status
 
 ```text
-Brief status:        DRAFT (this PR).
-Operator sign-off:   PENDING — six decisions in §3 (A-F)
-                     marked [OPERATOR-CONFIRM] need explicit
-                     yes/adjust before this brief merges.
+Brief status:        CONFIRMED — operator sign-off recorded
+                     2026-05-04 (six §3 + six §10 + one §3.5
+                     pin all confirmed).
+Operator sign-off:   COMPLETE.
 Codex audit:         PENDING — design-review pre-implementation
                      gate (same pattern as UI-8 design review
                      locked in commit 1f7266d on PR #79).
 Implementation:      BLOCKED on this brief merging.
 ```
 
-Once the operator confirms §3 (A-F) and Codex audits this
-brief, the brief merges to main and UI-10 implementation can
-open against it. The merge sequence for the UI MVP (#78–#82)
-is independent and can land in parallel.
+Once Codex audits this brief, it merges to main and UI-10
+implementation can open against it. The merge sequence for the
+UI MVP (#78–#82) is independent and can land in parallel.

@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="/assets/css/reset.css">
 <link rel="stylesheet" href="/assets/css/base.css">
 <link rel="stylesheet" href="/assets/css/timeline.css">
+<link rel="stylesheet" href="/assets/css/crow.css">
 <style>
 /* index.html — application shell rules.
  *
@@ -60,17 +61,11 @@
     color: var(--fg-1);
 }
 
-.crow-glyph {
-    width: 24px;
-    height: 24px;
-    color: var(--fg-1);
-    display: block;
-    transition: color var(--duration-micro) var(--ease-out);
-}
-
-.crow-glyph.processing { color: var(--accent); }
-.crow-glyph.waiting    { color: var(--warn); }
-.crow-glyph.error      { color: var(--accent); }
+/* Sizing only. Color, transition, ambient breathing and the
+ * four state classes (idle / processing / waiting / error)
+ * live in static/css/crow.css so both crow slots share one
+ * source of truth. */
+.crow-glyph { width: 24px; height: 24px; }
 
 .bus-path {
     font-family: var(--font-mono);
@@ -117,22 +112,10 @@
     margin: auto;
 }
 
-.crow-hero {
-    width: 96px;
-    height: 96px;
-    color: var(--fg-1);
-    display: block;
-    /* Ambient breathing — 1px translateY both ways across the
-     * 4s loop, ease-mag. Reduced-motion clamps animations to
-     * 1ms via reset.css, so the crow visibly stops without a
-     * dedicated guard here. */
-    animation: crow-ambient var(--duration-ambient) var(--ease-mag) infinite;
-}
-
-@keyframes crow-ambient {
-    0%, 100% { transform: translateY(0); }
-    50%      { transform: translateY(-1px); }
-}
+/* Sizing only. The 96px hero shares the .crow base class with
+ * the 24px header glyph; ambient breathing and state classes
+ * live in static/css/crow.css. */
+.crow-hero { width: 96px; height: 96px; }
 
 .empty-line {
     margin: 0;
@@ -184,18 +167,26 @@
 
     <header class="shell-header">
         <div class="brand">
-            <!-- Placeholder vector silhouette. UI-5 swaps this for
-                 the canonical 32x32 16-bit sprite per
-                 docs/ui/assets/karasu_sprites_spec.md. The
-                 currentColor binding lets the crow's display
-                 state recolour the glyph in place. -->
-            <svg class="crow-glyph" id="crow-glyph"
-                 viewBox="0 0 32 32" fill="currentColor"
-                 aria-label="Karasu crow">
-                <ellipse cx="14" cy="20" rx="9" ry="5"/>
-                <circle cx="22" cy="14" r="5"/>
-                <path d="M27 13 L31 13 L27 16 Z"/>
-                <path d="M5 16 L1 22 L7 22 Z"/>
+            <!-- Canonical crow (UI-5). Pixel-art at 16x16 grain
+                 with shape-rendering="crispEdges" so the edges
+                 stay jagged at every render scale. Inlined so
+                 currentColor + state classes work without an
+                 external <use> reference. The .crow base class
+                 (static/css/crow.css) binds color, ambient
+                 breathing and the four state animations
+                 (idle / processing / waiting / error).
+                 Source of truth: static/assets/crow/crow.svg —
+                 see that file for the per-row pixel layout
+                 documentation. -->
+            <svg class="crow crow-glyph" id="crow-glyph"
+                 viewBox="0 0 72 72"
+                 fill="currentColor"
+                 role="img" aria-label="Karasu">
+                <path d="m40.203,22s3.1218-9,11.4467-4c0,0,8.585.75,8.9753,3.375,0,0-7.9346,1.625-10.0159,5.625s3.1218,7-5.3331,15.625c0,0-4.0324,4.375-10.276,4.375,0,0-22,3-25,0"/>
+                <path d="m10.125,46.875s24.875-22.875,32.875-21.875,2,13.25-5.5,17.625-27.375,4.25-27.375,4.25Z"/>
+                <rect x="22" y="45" width="2" height="10"/>
+                <rect x="28" y="45" width="2" height="10"/>
+                <circle cx="49" cy="24" r="1.8" fill="var(--bg-0)"/>
             </svg>
             <span class="brand-name">Karasu</span>
         </div>
@@ -206,12 +197,20 @@
 
     <main class="shell-main">
         <div class="empty-state" id="empty-state">
-            <svg class="crow-hero" viewBox="0 0 32 32"
-                 fill="currentColor" aria-hidden="true">
-                <ellipse cx="14" cy="20" rx="9" ry="5"/>
-                <circle cx="22" cy="14" r="5"/>
-                <path d="M27 13 L31 13 L27 16 Z"/>
-                <path d="M5 16 L1 22 L7 22 Z"/>
+            <!-- Hero crow on the empty state. Same pixel
+                 grid as the header glyph; only the display
+                 size differs (96 px = 6× the 16-unit grain,
+                 perfectly crisp). No id — only the header
+                 glyph carries state, the hero stays in the
+                 editorial idle. -->
+            <svg class="crow crow-hero" viewBox="0 0 72 72"
+                 fill="currentColor"
+                 aria-hidden="true">
+                <path d="m40.203,22s3.1218-9,11.4467-4c0,0,8.585.75,8.9753,3.375,0,0-7.9346,1.625-10.0159,5.625s3.1218,7-5.3331,15.625c0,0-4.0324,4.375-10.276,4.375,0,0-22,3-25,0"/>
+                <path d="m10.125,46.875s24.875-22.875,32.875-21.875,2,13.25-5.5,17.625-27.375,4.25-27.375,4.25Z"/>
+                <rect x="22" y="45" width="2" height="10"/>
+                <rect x="28" y="45" width="2" height="10"/>
+                <circle cx="49" cy="24" r="1.8" fill="var(--bg-0)"/>
             </svg>
             <p class="empty-line">
                 The bus is silent. Karasu watches the working tree;

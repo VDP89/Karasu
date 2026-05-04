@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import http.server
 import json
+import shutil
 import socket
 import sys
 import tempfile
@@ -29,6 +30,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCREENSHOTS_ROOT = REPO_ROOT / "docs" / "ui" / "screenshots"
+RECORDINGS_ROOT = REPO_ROOT / "docs" / "ui" / "recordings"
 
 # Synthetic events that exercise the surface; mirror the chunk-4c
 # bus schema so the UI projection has all fields populated.
@@ -103,12 +105,124 @@ SYNTHETIC_EVENTS = [
     },
 ]
 
+# UI-5 — per-state synthetic event corpora.
+#
+# ``_crow_state`` in ``src/karasu/ui/server.py`` derives the crow's
+# display state from the event tail with precedence:
+#
+#   error      any event with status="failed"
+#   waiting    any event with requires_human=True
+#   processing the latest event is a file_change
+#   idle       otherwise
+#
+# Each corpus below is built so that the precedence path lands on
+# the named state. The four corpora share a small file_change
+# baseline so the timeline stays populated (the audit needs to
+# see the editorial shell behind the crow, not an empty surface).
+def _ui5_event(idx: int, **overrides):
+    """Build a UI-5 synthetic event with sensible defaults."""
+    base = {
+        "id": f"ui5-{idx:03d}",
+        "timestamp": f"2026-05-03T11:00:{idx:02d}Z",
+        "type": "file_change",
+        "source": "watcher",
+        "data": {
+            "path": "src/karasu/example.py",
+            "change_type": "modified",
+            "classification": "code_change",
+            "priority": "normal",
+        },
+        "dispatch": {},
+        "response": {},
+    }
+    base.update(overrides)
+    return base
+
+
+_BASELINE = [
+    _ui5_event(1),
+    _ui5_event(
+        2,
+        type="agent_response",
+        source="adapter",
+        data={
+            "correlates": "ui5-001",
+            "path": "src/karasu/example.py",
+            "priority": "normal",
+        },
+        dispatch={
+            "agent": "claude_code",
+            "status": "completed",
+            "trust_level": 1,
+        },
+        response={"content": "ok", "requires_human": False},
+    ),
+]
+
+STATE_CORPORA: dict[str, list[dict]] = {
+    "idle": _BASELINE,
+    "processing": _BASELINE
+    + [
+        _ui5_event(3, timestamp="2026-05-03T11:00:10Z"),
+    ],
+    "waiting": _BASELINE
+    + [
+        _ui5_event(
+            4,
+            timestamp="2026-05-03T11:00:15Z",
+            type="agent_response",
+            source="adapter",
+            data={
+                "correlates": "ui5-001",
+                "path": "src/karasu/example.py",
+                "priority": "normal",
+            },
+            dispatch={
+                "agent": "claude_code",
+                "status": "completed",
+                "trust_level": 1,
+            },
+            response={
+                "content": "I need a human decision before continuing.",
+                "requires_human": True,
+            },
+        ),
+    ],
+    "error": _BASELINE
+    + [
+        _ui5_event(
+            5,
+            timestamp="2026-05-03T11:00:20Z",
+            type="agent_response",
+            source="adapter",
+            data={
+                "correlates": "ui5-001",
+                "path": "src/karasu/example.py",
+                "priority": "normal",
+            },
+            dispatch={
+                "agent": "claude_code",
+                "status": "failed",
+                "trust_level": 1,
+            },
+            response={"content": "adapter error", "requires_human": False},
+        ),
+    ],
+}
+
 # Capture plan per slug. Each entry is a sequence of screenshots
 # to take. Optional steps:
 #   ``seed``        — true (default) seeds the synthetic 4-event
 #                     bus before navigating; false truncates the
 #                     bus file so the page renders the empty state
 #                     (UI-3 entry condition).
+#   ``seed_events`` — name of a STATE_CORPORA entry. Overrides
+#                     the default 4-event corpus with a state-
+#                     specific one whose tail wins the
+#                     ``_crow_state`` precedence path. UI-5
+#                     uses this so each crow PNG seeds the
+#                     event the crow's display state derives
+#                     from. Implies ``seed=True``.
 #   ``viewport``    — {"width": W, "height": H} overrides the
 #                     default 1440x900 for that single capture.
 #   ``scroll_to``   — bring a section into view via locator.
@@ -117,6 +231,12 @@ SYNTHETIC_EVENTS = [
 #   ``hover``       — trigger a mouse-over state.
 #   ``wait_ms``     — sleep inside the page (used for animation
 #                     mid-frames or to let setInterval poll once).
+#   ``eval_js``     — string of JavaScript run via page.evaluate
+#                     after the seed/wait/etc. steps. UI-5 uses
+#                     this on the error PNG to freeze the shake
+#                     keyframe at its leftmost extreme so the
+#                     posed still is deterministic; the moving
+#                     truth lives in the .webm.
 CAPTURES: dict[str, list[dict]] = {
     "UI-1-rebase": [
         {"name": "00-index-default.png", "url": "/", "full_page": True},
@@ -206,6 +326,91 @@ CAPTURES: dict[str, list[dict]] = {
             "full_page": True,
         },
     ],
+    "UI-5-crow": [
+        {
+            "name": "00-crow-idle.png",
+            "url": "/",
+            "seed_events": "idle",
+            "wait_ms": 3500,
+            "full_page": False,
+        },
+        {
+            "name": "01-crow-processing.png",
+            "url": "/",
+            "seed_events": "processing",
+            "wait_ms": 3500,
+            "full_page": False,
+        },
+        {
+            "name": "02-crow-waiting.png",
+            "url": "/",
+            "seed_events": "waiting",
+            "wait_ms": 3500,
+            "full_page": False,
+        },
+        {
+            # Frozen-frame intentional. The error keyframe is a
+            # 240ms one-shot beat (no loop) and capturing it mid-
+            # animation is non-deterministic. We seed the error
+            # bus, let the surface settle into the .error class
+            # via the regular polling tick, then pin the transform
+            # to the keyframe's 25 % position (translateX -2 px,
+            # the leftmost shake) so the posed still shows the
+            # beat's visible signature. The moving truth lives
+            # in UI-5-crow.webm. The screenshots README explains
+            # this contract for the auditor.
+            "name": "03-crow-error.png",
+            "url": "/",
+            "seed_events": "error",
+            "wait_ms": 3500,
+            "eval_js": (
+                "const g = document.getElementById('crow-glyph');"
+                "g.style.animation = 'none';"
+                "g.style.transform = 'translateX(-2px)';"
+            ),
+            "full_page": False,
+        },
+        {
+            # The hero crow on the empty state — same path data
+            # as the header glyph at 96 px, breathing the ambient
+            # 4 s loop. Demonstrates the canonical asset at its
+            # largest documented display size.
+            "name": "04-empty-state-with-canonical-crow.png",
+            "url": "/",
+            "seed": False,
+            "wait_ms": 3500,
+            "full_page": False,
+        },
+    ],
+}
+
+# Recording plan per slug. Each entry is a single video capture:
+# one Playwright context with ``record_video_dir`` set, walking
+# through a sequence of state seeds inside the same page. The
+# .webm is renamed post-hoc from Playwright's auto-generated
+# filename to ``<slug>.webm`` under ``RECORDINGS_ROOT``.
+#
+# UI-5 uses a 1024x640 viewport to keep the raw VP8/VP9 output
+# under the 500 KB cap without depending on ffmpeg. The frame
+# sequence covers all four states plus a recovery beat; total
+# wall time ~5 s.
+#
+# Each frame entry mirrors the screenshot step vocabulary
+# (``seed_events``, ``wait_ms``, ``eval_js``); ``_record_video``
+# applies them in order between the page.goto and the context
+# close.
+RECORDINGS: dict[str, dict] = {
+    "UI-5-crow": {
+        "viewport": {"width": 1024, "height": 640},
+        "url": "/",
+        "frames": [
+            {"seed_events": "idle", "wait_ms": 800},
+            {"seed_events": "processing", "wait_ms": 1000},
+            {"seed_events": "waiting", "wait_ms": 1000},
+            {"seed_events": "error", "wait_ms": 1000},
+            {"seed_events": "idle", "wait_ms": 800},
+        ],
+    },
 }
 
 
@@ -235,21 +440,52 @@ def _start_server(workdir: Path, port: int) -> http.server.ThreadingHTTPServer:
     return srv
 
 
-def _seed_workdir(workdir: Path, populate: bool = True) -> None:
+def _seed_workdir(
+    workdir: Path,
+    populate: bool = True,
+    events: list[dict] | None = None,
+) -> None:
     """Reset the synthetic bus before each capture.
 
     ``populate=True`` writes the four-event corpus; ``populate=
     False`` clears the file so the page renders against an
-    empty bus (the UI-3 empty state). Re-running the helper
-    between captures keeps the surface deterministic without
-    relying on the previous capture's cleanup.
+    empty bus (the UI-3 empty state). When ``events`` is
+    provided it overrides the default corpus regardless of
+    ``populate`` — UI-5 uses this to seed a state-specific
+    event tail so the precedence-winning ``_crow_state`` lands
+    on the desired display state. Re-running the helper between
+    captures keeps the surface deterministic without relying on
+    the previous capture's cleanup.
     """
     bus = workdir / ".karasu" / "events.jsonl"
     bus.parent.mkdir(parents=True, exist_ok=True)
     with bus.open("w", encoding="utf-8") as fh:
-        if populate:
+        if events is not None:
+            for event in events:
+                fh.write(json.dumps(event) + "\n")
+        elif populate:
             for event in SYNTHETIC_EVENTS:
                 fh.write(json.dumps(event) + "\n")
+
+
+def _resolve_seed_events(plan: dict) -> list[dict] | None:
+    """Translate a plan's ``seed_events`` (a STATE_CORPORA key,
+    or a literal list) into the events to write to the bus.
+    ``None`` means use the plan's ``seed`` field instead.
+    """
+    spec = plan.get("seed_events")
+    if spec is None:
+        return None
+    if isinstance(spec, str):
+        if spec not in STATE_CORPORA:
+            raise ValueError(
+                f"seed_events {spec!r} not in STATE_CORPORA "
+                f"(known: {sorted(STATE_CORPORA)})"
+            )
+        return STATE_CORPORA[spec]
+    if isinstance(spec, list):
+        return spec
+    raise TypeError(f"seed_events must be str or list, got {type(spec).__name__}")
 
 
 def _apply_step(page, plan: dict) -> None:
@@ -276,6 +512,8 @@ def _apply_step(page, plan: dict) -> None:
     if "press_tab" in plan:
         for _ in range(int(plan["press_tab"])):
             page.keyboard.press("Tab")
+    if "eval_js" in plan:
+        page.evaluate(plan["eval_js"])
 
 
 def _capture(slug: str, port: int, out_dir: Path, workdir: Path) -> None:
@@ -319,7 +557,12 @@ def _capture(slug: str, port: int, out_dir: Path, workdir: Path) -> None:
             context = browser.new_context(viewport=viewport)
             page = context.new_page()
             try:
-                _seed_workdir(workdir, populate=plan.get("seed", True))
+                seed_events = _resolve_seed_events(plan)
+                _seed_workdir(
+                    workdir,
+                    populate=plan.get("seed", True),
+                    events=seed_events,
+                )
                 page.goto(f"http://127.0.0.1:{port}{plan['url']}")
                 page.wait_for_load_state("networkidle")
                 _apply_step(page, plan)
@@ -334,11 +577,142 @@ def _capture(slug: str, port: int, out_dir: Path, workdir: Path) -> None:
     print(f"wrote {len(plans)} screenshots to {out_dir}")
 
 
+def _record_video(slug: str, port: int, workdir: Path) -> None:
+    """Record a single .webm walking through a state-transition
+    sequence inside ONE Playwright context.
+
+    Playwright auto-names the recording inside ``record_video_dir``
+    (the page id with a ``.webm`` suffix). We rename it post-hoc
+    to ``<slug>.webm`` under ``RECORDINGS_ROOT`` so the audit
+    artifact has a stable path.
+
+    The state seed between frames is performed by writing to the
+    bus file and then calling ``tick()`` in the page so the
+    ``/api/health`` poll is forced immediately rather than waiting
+    for the natural 3 s ``setInterval``. This keeps the recording
+    inside the 5 s budget without lowering the production poll
+    rate (option (b)) or skipping the server-driven path (option
+    (c)) — the choice noted in the planning conversation.
+    """
+    plan = RECORDINGS.get(slug)
+    if plan is None:
+        print(
+            f"error: no recording plan for slug {slug!r}.\n"
+            f"  known slugs: {', '.join(sorted(RECORDINGS))}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print(
+            "error: playwright is not installed.\n"
+            "  pip install playwright\n"
+            "  python -m playwright install chromium",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    RECORDINGS_ROOT.mkdir(parents=True, exist_ok=True)
+    final_path = RECORDINGS_ROOT / f"{slug}.webm"
+    if final_path.exists():
+        final_path.unlink()
+
+    with tempfile.TemporaryDirectory() as raw_dir:
+        raw_path = Path(raw_dir)
+        viewport = plan.get("viewport", {"width": 1024, "height": 640})
+        with sync_playwright() as p:
+            try:
+                browser = p.chromium.launch()
+            except Exception as exc:
+                print(
+                    f"error: could not launch chromium: {exc}\n"
+                    "  python -m playwright install chromium",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+            context = browser.new_context(
+                viewport=viewport,
+                record_video_dir=str(raw_path),
+                record_video_size=viewport,
+            )
+            page = context.new_page()
+            try:
+                # Boot frame: the page renders against whatever the
+                # server sees on the bus right now. We seed the
+                # first frame's events BEFORE goto so the page's
+                # initial fetch already lands on the desired state
+                # — no perceptible class swap on first paint.
+                first = plan["frames"][0]
+                _seed_workdir(
+                    workdir, events=_resolve_seed_events(first)
+                )
+                page.goto(f"http://127.0.0.1:{port}{plan['url']}")
+                page.wait_for_load_state("networkidle")
+                page.wait_for_timeout(first.get("wait_ms", 800))
+
+                for frame in plan["frames"][1:]:
+                    seed_events = _resolve_seed_events(frame)
+                    if seed_events is not None:
+                        _seed_workdir(workdir, events=seed_events)
+                        # Force an immediate /api/health + /api/events
+                        # round-trip so the next CSS class swap fires
+                        # without waiting for the 3 s polling tick.
+                        # ``tick`` is a top-level async function in
+                        # the page script.
+                        page.evaluate("async () => { await tick(); }")
+                    if "eval_js" in frame:
+                        page.evaluate(frame["eval_js"])
+                    page.wait_for_timeout(frame.get("wait_ms", 1000))
+            finally:
+                context.close()  # finalises the .webm
+                browser.close()
+
+        # Find the auto-named webm and rename to the audit path.
+        produced = sorted(raw_path.glob("*.webm"))
+        if not produced:
+            print(
+                f"error: playwright did not emit a .webm under {raw_path}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        if len(produced) > 1:
+            print(
+                f"warning: more than one .webm under {raw_path}, "
+                f"picking {produced[0].name}",
+                file=sys.stderr,
+            )
+        # ``shutil.move`` handles cross-drive moves on Windows
+        # (temp dir on C:, repo on D:); ``Path.replace`` is
+        # ``os.replace`` which raises WinError 17 across volumes.
+        shutil.move(str(produced[0]), str(final_path))
+
+    size_kb = final_path.stat().st_size / 1024
+    print(f"wrote {final_path} ({size_kb:.1f} KB)")
+    if size_kb > 500:
+        print(
+            f"warning: {final_path.name} exceeds the 500 KB audit "
+            "budget; transcode with ffmpeg before commit (libvpx-vp9, "
+            "low CRF). See docs/ui/screenshots/UI-5-crow/README.md.",
+            file=sys.stderr,
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "slug",
         help="chunk slug (e.g. UI-2-tokens). Becomes the screenshot dir name.",
+    )
+    parser.add_argument(
+        "--record-video",
+        action="store_true",
+        help=(
+            "Record a .webm walking through the slug's RECORDINGS "
+            "frame plan instead of taking screenshots. Output goes "
+            "to docs/ui/recordings/<slug>.webm."
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -347,12 +721,16 @@ def main(argv: list[str] | None = None) -> int:
     with tempfile.TemporaryDirectory() as tmp:
         workdir = Path(tmp)
         # Seed once up front so the server boots against a real
-        # bus path; per-capture reseeding inside ``_capture``
-        # picks the right state for each shot.
+        # bus path; per-capture reseeding inside ``_capture`` /
+        # ``_record_video`` picks the right state for each shot
+        # or frame.
         _seed_workdir(workdir, populate=True)
         srv = _start_server(workdir, port)
         try:
-            _capture(args.slug, port, out_dir, workdir)
+            if args.record_video:
+                _record_video(args.slug, port, workdir)
+            else:
+                _capture(args.slug, port, out_dir, workdir)
         finally:
             srv.shutdown()
     return 0

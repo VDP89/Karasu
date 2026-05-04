@@ -114,21 +114,38 @@ def _read_events(limit: int = DEFAULT_EVENT_LIMIT) -> list[dict[str, Any]]:
 def _crow_state(events: list[dict[str, Any]]) -> str:
     """Derive the crow's display state from the event tail.
 
-    Precedence (most-recent wins):
-      error      any event with status="failed" OR success=False.
-      waiting    any event with requires_human=True.
-      processing the latest event is a file_change.
-      idle       otherwise.
+    Precedence — the loop walks events in reverse-chronological
+    order and returns at the first match:
+
+      error      most-recent event with status="failed".
+      waiting    most-recent event with requires_human=True.
+                 (If the SAME event triggers both, error wins
+                 because it is checked first per iteration.)
+      processing the LATEST event is a file_change. Checked
+                 only after the error/waiting scan finishes
+                 without a match.
+      idle       otherwise — including the case where the
+                 latest event is a completed agent_response
+                 that closed an older file_change.
+
+    Earlier implementations set ``state = "processing"`` on any
+    file_change in the loop and continued — that resolved a
+    completed-agent_response tail with an older file_change to
+    "processing", contradicting the documented "latest event is
+    a file_change" rule and miscolouring the idle PNG. Caught
+    by Codex on PR #74 re-audit; fix re-checks the LATEST event
+    explicitly after the error/waiting scan.
     """
-    state = "idle"
+    if not events:
+        return "idle"
     for ev in reversed(events):
         if ev.get("status") == "failed":
             return "error"
         if ev.get("requires_human") is True:
             return "waiting"
-        if ev.get("type") == "file_change":
-            state = "processing"
-    return state
+    if events[-1].get("type") == "file_change":
+        return "processing"
+    return "idle"
 
 
 def _package_version() -> str:

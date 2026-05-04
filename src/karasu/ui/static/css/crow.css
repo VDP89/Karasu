@@ -1,0 +1,97 @@
+/* crow.css — UI-5.
+ *
+ * Per UI-0 §5.6, the crow is the only element on the surface
+ * that earns motion. Every keyframe here belongs to one of the
+ * four states (idle / processing / waiting / error); nothing
+ * else on the page animates beyond what UI-2 already covers
+ * (color and box-shadow transitions in the design tokens).
+ *
+ * Editorial constraint pinned by ChatGPT in the UI-4 audit:
+ *   "El crow puede tener vida; la superficie no puede perder
+ *    calma."
+ * Magnitudes are deliberately small. The pulse, tilt and shake
+ * read as restrained when seen in the editor and decisive when
+ * seen in context. Bigger numbers turn the watchtower into an
+ * app trying to entertain.
+ *
+ * Reduced-motion: reset.css clamps every animation-duration to
+ * 1ms and overrides transition-property to a chromatic
+ * whitelist. The crow's transforms therefore stop, but the
+ * color transitions between states keep their own duration
+ * intact. UI-2's contract carries through unchanged; no
+ * crow-specific guard is needed here.
+ */
+
+/* --- base ------------------------------------------------------ */
+
+/* Both crow slots (header glyph 24px, empty-state hero 96px) get
+ * the ambient breathing loop. The hero already had this on
+ * .crow-hero from UI-3; the rule moves to .crow so the header
+ * glyph inherits the same subliminal aliveness. */
+.crow {
+    color: var(--fg-1);
+    display: block;
+    transition: color var(--duration-micro) var(--ease-out);
+    animation: crow-ambient var(--duration-ambient) var(--ease-mag) infinite;
+}
+
+@keyframes crow-ambient {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-1px); }
+}
+
+/* --- state: processing ----------------------------------------- */
+
+/* Slow pulse per §5.6. Scale 1.04 ceiling — small enough to
+ * read as breath, large enough to register against the static
+ * shell. Composes with the ambient translate via the same
+ * transform property: the keyframe declares both. */
+.crow.processing {
+    color: var(--accent);
+    animation: crow-processing 1600ms var(--ease-mag) infinite;
+}
+
+@keyframes crow-processing {
+    0%, 100% { transform: translateY(0)    scale(1); }
+    50%      { transform: translateY(-1px) scale(1.04); }
+}
+
+/* --- state: waiting -------------------------------------------- */
+
+/* Asymmetric tilt: the crow leans 4° and holds, no return. The
+ * brief calls this out explicitly — the lean IS the waiting
+ * signal. Once the operator's attention is engaged, the crow
+ * stays leaned until the bus state changes. */
+.crow.waiting {
+    color: var(--warn);
+    animation: crow-waiting 480ms var(--ease-out) forwards;
+}
+
+@keyframes crow-waiting {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(4deg); }
+}
+
+/* --- state: error ---------------------------------------------- */
+
+/* Sharp shake, single beat. iteration-count: 1 is non-negotiable
+ * per §5.6 — looping this would read as alarm fatigue. The
+ * keyframe runs once on class add and the crow returns to its
+ * resting position, with the accent colour persisting until the
+ * bus state moves on.
+ *
+ * forwards retains the final transform (translateX 0) so the
+ * crow does not snap back mid-frame if the browser ever pauses
+ * the animation; the ambient loop is replaced for the duration
+ * and resumes on its own once the .error class is removed. */
+.crow.error {
+    color: var(--accent);
+    animation: crow-error 240ms var(--ease-mag) 1 forwards;
+}
+
+@keyframes crow-error {
+    0%   { transform: translateX(0); }
+    25%  { transform: translateX(-2px); }
+    75%  { transform: translateX(2px); }
+    100% { transform: translateX(0); }
+}

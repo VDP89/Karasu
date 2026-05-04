@@ -292,3 +292,112 @@ def test_run_ui_server_kwarg_calls_configure(
     target = tmp_path / "custom.jsonl"
     ui_server.run_ui_server(host="127.0.0.1", port=0, event_log=target)
     assert captured["path"] == target
+
+
+# ---------------------------------------------------------------------------
+# _crow_state precedence (UI-5 — bug caught by Codex on PR #74 re-audit)
+# ---------------------------------------------------------------------------
+#
+# The earlier implementation set ``state = "processing"`` on any
+# file_change in the loop and continued; a completed agent_response
+# tail with an older file_change therefore resolved to "processing"
+# instead of "idle", contradicting the documented "latest event is
+# a file_change" rule and miscolouring 00-crow-idle.png. These tests
+# pin the corrected precedence so a future refactor cannot regress
+# the projection.
+
+
+def _file_change(idx: int = 1) -> dict:
+    return {
+        "id": f"fc-{idx:03d}",
+        "type": "file_change",
+        "data": {"path": f"src/foo_{idx}.py"},
+    }
+
+
+def _agent_response(
+    idx: int = 1, *, status: str = "completed", requires_human: bool = False
+) -> dict:
+    return {
+        "id": f"ar-{idx:03d}",
+        "type": "agent_response",
+        "status": status,
+        "requires_human": requires_human,
+        "data": {"path": f"src/foo_{idx}.py"},
+    }
+
+
+def test_crow_state_empty_events_is_idle() -> None:
+    assert ui_server._crow_state([]) == "idle"
+
+
+def test_crow_state_latest_file_change_is_processing() -> None:
+    assert ui_server._crow_state([_file_change(1)]) == "processing"
+
+
+def test_crow_state_latest_completed_after_file_change_is_idle() -> None:
+    """The bug: file_change followed by a completed agent_response
+    used to return "processing" because the loop set state on the
+    older file_change and continued. Should be idle — the most
+    recent dispatch closed."""
+    events = [_file_change(1), _agent_response(1)]
+    assert ui_server._crow_state(events) == "idle"
+
+
+def test_crow_state_failed_anywhere_is_error() -> None:
+    """error wins over a later completed agent_response and over
+    processing. Operator must see the failure."""
+    events = [
+        _file_change(1),
+        _agent_response(1, status="failed"),
+        _agent_response(2, status="completed"),
+    ]
+    assert ui_server._crow_state(events) == "error"
+
+
+def test_crow_state_requires_human_anywhere_is_waiting() -> None:
+    """waiting wins over a later completed response and over
+    processing, but loses to error."""
+    events = [
+        _file_change(1),
+        _agent_response(1, status="completed", requires_human=True),
+        _agent_response(2, status="completed"),
+    ]
+    assert ui_server._crow_state(events) == "waiting"
+
+
+def test_crow_state_most_recent_trigger_wins() -> None:
+    """When error and waiting come from DIFFERENT events, the
+    most-recent event determines the state. Operator sees the
+    current condition, not historical noise. (When the same
+    event triggers both, error wins — checked first per
+    iteration.)"""
+    # waiting at the tail (most-recent)
+    events_waiting_tail = [
+        _agent_response(1, status="failed"),
+        _agent_response(2, status="completed", requires_human=True),
+    ]
+    assert ui_server._crow_state(events_waiting_tail) == "waiting"
+
+    # error at the tail (most-recent)
+    events_error_tail = [
+        _agent_response(1, status="completed", requires_human=True),
+        _agent_response(2, status="failed"),
+    ]
+    assert ui_server._crow_state(events_error_tail) == "error"
+
+    # same event triggers both → error wins (status checked first)
+    same_event = [
+        _agent_response(1, status="failed", requires_human=True),
+    ]
+    assert ui_server._crow_state(same_event) == "error"
+
+
+def test_crow_state_processing_when_latest_is_file_change_after_completed() -> None:
+    """A new file_change AFTER a completed agent_response means a
+    fresh dispatch is in flight — back to processing."""
+    events = [
+        _agent_response(1, status="completed"),
+        _file_change(2),
+    ]
+    assert ui_server._crow_state(events) == "processing"

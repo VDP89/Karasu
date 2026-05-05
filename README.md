@@ -93,6 +93,14 @@ supernatural messengers — they cross between worlds and carry word
 back. The project takes its name from that role: a messenger between
 agents.
 
+## Third-party notices
+
+Karasu's UI ships a small number of third-party assets — the
+crow silhouette adapted from OpenMoji's "Black Bird" emoji
+(CC-BY-SA 4.0), Inter Display, and JetBrains Mono (both SIL
+OFL 1.1). Full attributions, licence terms, and the list of
+modifications live in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## Built by
 
 [DG Ingeniería SRL](mailto:info@dgingenieriasrl.com) — an infrastructure

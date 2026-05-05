@@ -402,6 +402,51 @@
                 type="button">Revoke</button>
     </div>
 </div>
+
+<!-- UI-11b - Trust adjust modal. Same .modal primitive as UI-10,
+     but the body is a constrained radio gradient: no free-form
+     trust value, no settings page, no live adapter mutation copy. -->
+<div class="modal" id="trust-modal" hidden role="dialog" aria-modal="true"
+     aria-labelledby="trust-modal-title" aria-describedby="trust-modal-lede">
+    <h2 class="modal-title" id="trust-modal-title">Adjust trust?</h2>
+    <p class="modal-lede" id="trust-modal-lede">
+        Recorded intent. Applies after watch restart.
+    </p>
+    <pre class="modal-quote" id="trust-modal-summary"></pre>
+    <fieldset class="modal-trust-options" id="trust-modal-options"
+              aria-label="Trust level">
+        <label class="modal-trust-option">
+            <input type="radio" name="trust-level" value="0">
+            <span class="modal-trust-level">0</span>
+            <span class="modal-trust-description">
+                quarantined / approval required
+            </span>
+        </label>
+        <label class="modal-trust-option">
+            <input type="radio" name="trust-level" value="1">
+            <span class="modal-trust-level">1</span>
+            <span class="modal-trust-description">assistive</span>
+        </label>
+        <label class="modal-trust-option">
+            <input type="radio" name="trust-level" value="2">
+            <span class="modal-trust-level">2</span>
+            <span class="modal-trust-description">
+                autonomous mutation
+            </span>
+        </label>
+    </fieldset>
+    <label class="modal-reason-label" for="trust-modal-reason">
+        Reason (optional)
+    </label>
+    <textarea class="modal-reason" id="trust-modal-reason"
+              maxlength="3500"></textarea>
+    <div class="modal-actions">
+        <button class="modal-action modal-cancel" id="trust-modal-cancel"
+                type="button">Cancel</button>
+        <button class="modal-action modal-confirm" id="trust-modal-confirm"
+                type="button">Confirm</button>
+    </div>
+</div>
 <script>
 const REFRESH_MS = 3000;
 
@@ -552,6 +597,9 @@ function highlightJson(json) {
 /* --- UI-7 drawer state ----------------------------------------- */
 
 let latestEvents = [];   /* mirrors the most recent /api/events */
+let latestAgents = [];   /* mirrors the most recent /api/agents */
+let activeTrustEvent = null;
+let activeTrustAnnotation = null;
 
 function eventById(id) {
     if (!id) return null;
@@ -615,25 +663,64 @@ function agentToNode(agent) {
     return null;
 }
 
+function agentByName(name) {
+    if (!name) return null;
+    for (const agent of latestAgents) {
+        if (agent && agent.name === name) return agent;
+    }
+    return null;
+}
+
+function supportedTrustLevel(level) {
+    const numeric = Number(level);
+    return Number.isInteger(numeric) && [0, 1, 2].includes(numeric);
+}
+
 function renderDrawerTrust(event) {
-    /* UI-11a — read-only trust display. The row is drawer-earned
-     * on agent_response events only; no Adjust affordance appears
-     * until UI-11b. Unsupported values stay visible as raw ints
-     * with an explicit tag instead of being coerced. */
+    /* UI-11b - trust adjust remains drawer-earned. Unsupported
+     * values stay visible as raw values with an explicit tag and
+     * never receive the Adjust affordance. */
     const row = document.getElementById('drawer-trust-row');
+    row.replaceChildren();
     if (!event || event.type !== 'agent_response') {
         row.setAttribute('hidden', '');
-        row.textContent = '';
         return;
     }
     const level = event.trust_level;
     if (level === null || level === undefined) {
-        row.textContent = 'trust_level: —';
+        const value = document.createElement('span');
+        value.className = 'drawer-trust-value';
+        value.textContent = 'trust_level: -';
+        row.append(value);
         row.removeAttribute('hidden');
         return;
     }
-    const unsupported = ![0, 1, 2].includes(Number(level));
-    row.textContent = 'trust_level: ' + level + (unsupported ? ' (unsupported)' : '');
+    const unsupported = !supportedTrustLevel(level);
+    const value = document.createElement('span');
+    value.className = 'drawer-trust-value';
+    value.textContent = 'trust_level: ' + level + (unsupported ? ' (unsupported)' : '');
+    row.append(value);
+
+    const agent = agentByName(event.agent);
+    if (!unsupported && agent && !agent.unsupported) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'drawer-trust-adjust';
+        btn.textContent = 'Adjust';
+        btn.addEventListener('click', () => openTrustModal(event));
+        row.append(btn);
+    }
+
+    if (activeTrustAnnotation && activeTrustAnnotation.eventId === event.id) {
+        const note = document.createElement('p');
+        note.className = 'drawer-trust-note';
+        note.textContent = (
+            'trust adjust recorded: ' +
+            activeTrustAnnotation.before + ' -> ' + activeTrustAnnotation.after +
+            '. Recorded intent. Applies after watch restart.'
+        );
+        row.append(note);
+    }
     row.removeAttribute('hidden');
 }
 
@@ -826,14 +913,20 @@ function openModal(scar) {
 
 function closeModal() {
     activeRevokeScarId = null;
-    const modal = document.getElementById('revoke-modal');
+    activeTrustEvent = null;
+    const revokeModal = document.getElementById('revoke-modal');
+    const trustModal = document.getElementById('trust-modal');
     const backdrop = document.getElementById('modal-backdrop');
     backdrop.classList.remove('modal-open');
-    modal.setAttribute('hidden', '');
+    revokeModal.setAttribute('hidden', '');
+    trustModal.setAttribute('hidden', '');
 }
 
 function isModalOpen() {
-    return !document.getElementById('revoke-modal').hasAttribute('hidden');
+    return (
+        !document.getElementById('revoke-modal').hasAttribute('hidden') ||
+        !document.getElementById('trust-modal').hasAttribute('hidden')
+    );
 }
 
 async function confirmRevoke() {
@@ -880,6 +973,105 @@ async function confirmRevoke() {
     renderDrawerScars();
 }
 
+function selectedTrustLevel() {
+    const checked = document.querySelector('input[name="trust-level"]:checked');
+    return checked ? Number(checked.value) : null;
+}
+
+function updateTrustConfirmTone() {
+    if (!activeTrustEvent) return;
+    const confirmBtn = document.getElementById('trust-modal-confirm');
+    const selected = selectedTrustLevel();
+    confirmBtn.classList.toggle(
+        'modal-revoke',
+        selected !== null && selected > activeTrustEvent.trustBefore
+    );
+    confirmBtn.classList.toggle(
+        'modal-confirm',
+        selected === null || selected <= activeTrustEvent.trustBefore
+    );
+}
+
+function openTrustModal(event) {
+    if (!event || event.type !== 'agent_response') return;
+    if (!supportedTrustLevel(event.trust_level) || !agentByName(event.agent)) return;
+
+    const trustBefore = Number(event.trust_level);
+    activeTrustEvent = {
+        eventId: event.id,
+        agent: event.agent,
+        trustBefore,
+        event,
+    };
+
+    const modal = document.getElementById('trust-modal');
+    const backdrop = document.getElementById('modal-backdrop');
+    const summary = document.getElementById('trust-modal-summary');
+    const reason = document.getElementById('trust-modal-reason');
+    const confirmBtn = document.getElementById('trust-modal-confirm');
+
+    summary.textContent = event.agent + ': trust ' + trustBefore + ' -> select target';
+    reason.value = '';
+    confirmBtn.disabled = false;
+    for (const input of document.querySelectorAll('input[name="trust-level"]')) {
+        input.checked = Number(input.value) === trustBefore;
+    }
+    updateTrustConfirmTone();
+
+    modal.removeAttribute('hidden');
+    backdrop.classList.add('modal-open');
+    void modal.getBoundingClientRect();
+    document.getElementById('trust-modal-cancel').focus();
+}
+
+async function confirmTrustAdjust() {
+    if (!activeTrustEvent) return;
+    const state = activeTrustEvent;
+    const trustAfter = selectedTrustLevel();
+    if (![0, 1, 2].includes(trustAfter)) return;
+
+    const reasonField = document.getElementById('trust-modal-reason');
+    const confirmBtn = document.getElementById('trust-modal-confirm');
+    confirmBtn.disabled = true;
+
+    const trimmed = (reasonField.value || '').trim();
+    const payload = { trust_level: trustAfter };
+    if (trimmed) payload.reason = trimmed;
+
+    let ok = false;
+    try {
+        const r = await fetch(
+            '/api/agents/' + encodeURIComponent(state.agent) + '/trust',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            }
+        );
+        ok = r.status === 204;
+    } catch { /* network failure: leave modal open so operator retries */ }
+
+    if (!ok) {
+        confirmBtn.disabled = false;
+        return;
+    }
+
+    closeModal();
+    activeTrustAnnotation = {
+        eventId: state.eventId,
+        before: state.trustBefore,
+        after: trustAfter,
+    };
+    try {
+        const r = await fetch('/api/agents');
+        if (r.ok) {
+            const payload = await r.json();
+            latestAgents = Array.isArray(payload) ? payload : [];
+        }
+    } catch { /* annotation still renders from request context */ }
+    renderDrawerTrust(state.event);
+}
+
 function wireModal() {
     const cancelBtn = document.getElementById('modal-cancel');
     const revokeBtn = document.getElementById('modal-revoke');
@@ -900,6 +1092,17 @@ function wireModal() {
         ev.stopPropagation();
         closeModal();
     });
+}
+
+function wireTrustModal() {
+    const cancelBtn = document.getElementById('trust-modal-cancel');
+    const confirmBtn = document.getElementById('trust-modal-confirm');
+
+    cancelBtn.addEventListener('click', closeModal);
+    confirmBtn.addEventListener('click', confirmTrustAdjust);
+    for (const input of document.querySelectorAll('input[name="trust-level"]')) {
+        input.addEventListener('change', updateTrustConfirmTone);
+    }
 }
 
 /* UI-6 — Live Map flight rendering.
@@ -1035,9 +1238,10 @@ async function tick() {
     let crow = 'idle';
     let flight = null;
     try {
-        const [eventsRes, healthRes] = await Promise.all([
+        const [eventsRes, healthRes, agentsRes] = await Promise.all([
             fetch('/api/events'),
             fetch('/api/health'),
+            fetch('/api/agents'),
         ]);
         if (eventsRes.ok) {
             events = (await eventsRes.json()).events || [];
@@ -1057,6 +1261,10 @@ async function tick() {
              * or the projection has no mapped pair; otherwise
              * {source, target}. */
             flight = health.flight || null;
+        }
+        if (agentsRes.ok) {
+            const payload = await agentsRes.json();
+            latestAgents = Array.isArray(payload) ? payload : [];
         }
     } catch { /* network blip — leave the surface as-is */ }
 
@@ -1095,6 +1303,7 @@ loadMeta();
 tick();
 wireDrawer();
 wireModal();
+wireTrustModal();
 registerServiceWorker();
 setInterval(tick, REFRESH_MS);
 </script>

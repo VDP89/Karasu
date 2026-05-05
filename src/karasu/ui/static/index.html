@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="/assets/css/timeline.css">
 <link rel="stylesheet" href="/assets/css/crow.css">
 <link rel="stylesheet" href="/assets/css/map.css">
+<link rel="stylesheet" href="/assets/css/drawer.css">
 <style>
 /* index.html — application shell rules.
  *
@@ -304,6 +305,26 @@
     </footer>
 
 </div>
+
+<!-- UI-7 — Detail drawer.
+     Slides in from the right when the operator clicks a timeline
+     row OR a Live Map node. The backdrop sits below the drawer in
+     z-order; clicking it closes. The drawer body is a <pre>
+     element so JSON.stringify(..., null, 2) renders with native
+     indentation. The 5-class highlighter in the script block
+     wraps tokens with the json-key / json-string / json-number /
+     json-bool / json-null classes from drawer.css. -->
+<div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+<aside class="drawer" id="event-drawer" hidden
+       role="dialog" aria-modal="false" aria-labelledby="drawer-type">
+    <header class="drawer-header">
+        <time class="drawer-time" id="drawer-time">—</time>
+        <span class="drawer-type" id="drawer-type">event</span>
+        <button class="drawer-close" id="drawer-close"
+                type="button" aria-label="Close detail panel">×</button>
+    </header>
+    <pre class="drawer-body" id="drawer-body"></pre>
+</aside>
 <script>
 const REFRESH_MS = 3000;
 
@@ -351,6 +372,13 @@ function renderTimeline(events) {
         const row = document.createElement('li');
         row.className = 'event-row';
         row.tabIndex = 0;
+        /* UI-7 — carry the event id on the row so the click
+         * handler can resolve which event opened the drawer
+         * without re-fetching. The event objects themselves
+         * live on the latestEvents module variable so the
+         * drawer reads from the same projection the timeline
+         * is rendering. */
+        if (e.id) row.dataset.eventId = e.id;
 
         const time = document.createElement('time');
         time.className = 'event-time';
@@ -372,6 +400,205 @@ function renderTimeline(events) {
         row.append(time, content);
         tl.append(row);
     }
+}
+
+/* UI-7 — JSON syntax highlighter (vanilla).
+ *
+ * Operates on JSON.stringify(event, null, 2). Walks the source
+ * with a single regex and wraps each token in one of five span
+ * classes (json-key / json-string / json-number / json-bool /
+ * json-null) keyed off the existing palette in drawer.css.
+ *
+ * The 5-class scope is deliberate per Codex pin E for UI-6
+ * audit: the surface stays editorial, not dashboard. Adding
+ * comment / brace / colon tokens would chrome up a panel that
+ * already does its job with five colours.
+ *
+ * HTML escaping happens before tokenisation so a string value
+ * like "&lt;script&gt;" cannot inject markup. The regex below
+ * is the standard JSON-on-one-pass pattern from the MDN article
+ * (no recursion, single replace), adapted for the 5 token class
+ * surface. */
+function escapeHtml(s) {
+    return s.replace(/[&<>]/g, c => (
+        c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'
+    ));
+}
+
+function highlightJson(json) {
+    const escaped = escapeHtml(json);
+    return escaped.replace(
+        /("(\\u[a-fA-F0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(\.\d*)?([eE][+\-]?\d+)?)/g,
+        function (match) {
+            let cls;
+            if (/^"/.test(match)) {
+                cls = /:$/.test(match) ? 'json-key' : 'json-string';
+            } else if (/true|false/.test(match)) {
+                cls = 'json-bool';
+            } else if (/null/.test(match)) {
+                cls = 'json-null';
+            } else {
+                cls = 'json-number';
+            }
+            return '<span class="' + cls + '">' + match + '</span>';
+        }
+    );
+}
+
+/* --- UI-7 drawer state ----------------------------------------- */
+
+let latestEvents = [];   /* mirrors the most recent /api/events */
+
+function eventById(id) {
+    if (!id) return null;
+    for (const e of latestEvents) {
+        if (e.id === id) return e;
+    }
+    return null;
+}
+
+function findLatestEventForNode(nodeId) {
+    /* Walks events newest-first (events are oldest-first on disk;
+     * the timeline already reverses them for display) and returns
+     * the first event whose _flight_route pair includes nodeId
+     * as source OR target. Mirrors _flight_route's mapping table
+     * client-side; the projection is the canonical contract, so
+     * this lookup re-implements the same precedence rather than
+     * re-fetching /api/health.flight (which only carries the
+     * single latest pair).
+     *
+     * Returns null if no event in the tail involves the node —
+     * the drawer opens but renders the empty body state.
+     */
+    for (let i = latestEvents.length - 1; i >= 0; i--) {
+        const e = latestEvents[i];
+        const pair = clientFlightRoute(e);
+        if (!pair) continue;
+        if (pair[0] === nodeId || pair[1] === nodeId) return e;
+    }
+    return null;
+}
+
+function clientFlightRoute(e) {
+    /* Mirror of server._flight_route for a single event. Returns
+     * [source, target] or null. Kept tiny and dependency-free; the
+     * test surface for the canonical projection lives on the
+     * server in tests/test_ui_server.py. */
+    const t = e.type;
+    if (t === 'file_change') {
+        if (e.controller_resubmit) return ['user', 'karasu'];
+        if (e.github_event || e.source === 'github_webhook') {
+            return ['github', 'karasu'];
+        }
+        if (e.agent && (e.status === 'pending' || e.status === 'dispatched')) {
+            const target = agentToNode(e.agent);
+            if (target) return ['karasu', target];
+        }
+        return ['user', 'karasu'];
+    }
+    if (t === 'agent_response') {
+        const src = agentToNode(e.agent);
+        return src ? [src, 'karasu'] : null;
+    }
+    if (t === 'human_decision') return ['user', 'karasu'];
+    if (t === 'git_event')      return ['user', 'karasu'];
+    return null;
+}
+
+function agentToNode(agent) {
+    if (agent === 'claude_code' || agent === 'claude') return 'claude';
+    if (agent === 'codex') return 'codex';
+    return null;
+}
+
+function openDrawer(event) {
+    /* event = the projected event object, or null when the click
+     * target had no event to show (e.g. a node with no traffic
+     * yet). The drawer still opens; the body renders the empty
+     * sentence instead of JSON. */
+    const drawer = document.getElementById('event-drawer');
+    const backdrop = document.getElementById('drawer-backdrop');
+    const time = document.getElementById('drawer-time');
+    const type = document.getElementById('drawer-type');
+    const body = document.getElementById('drawer-body');
+
+    if (event) {
+        time.textContent = event.timestamp || '—';
+        if (event.timestamp) time.setAttribute('datetime', event.timestamp);
+        type.textContent = event.type || 'event';
+        body.classList.remove('is-empty');
+        body.innerHTML = highlightJson(JSON.stringify(event, null, 2));
+    } else {
+        time.textContent = '—';
+        type.textContent = 'no event';
+        body.classList.add('is-empty');
+        body.textContent = 'This node has not seen traffic yet.';
+    }
+
+    drawer.removeAttribute('hidden');
+    backdrop.removeAttribute('hidden');
+    /* Force layout flush so the transition fires from the off-
+     * canvas position rather than instantaneously. Same pattern
+     * as the UI-6 flight transition. */
+    void drawer.getBoundingClientRect();
+    drawer.classList.add('is-open');
+    backdrop.classList.add('is-open');
+}
+
+function closeDrawer() {
+    const drawer = document.getElementById('event-drawer');
+    const backdrop = document.getElementById('drawer-backdrop');
+    drawer.classList.remove('is-open');
+    backdrop.classList.remove('is-open');
+    /* Wait for the transition to finish before hiding so the
+     * slide-out is visible. Falls back to a fixed timeout since
+     * transitionend is fragile across browsers. */
+    setTimeout(() => {
+        drawer.setAttribute('hidden', '');
+        backdrop.setAttribute('hidden', '');
+    }, 240);
+}
+
+function wireDrawer() {
+    /* Event delegation on the timeline (rows are re-rendered
+     * every tick) and direct binding on the map nodes (static
+     * inline SVG elements that live for the life of the page).
+     * Backdrop, X button, Esc key all close. */
+    const timeline = document.getElementById('timeline');
+    const backdrop = document.getElementById('drawer-backdrop');
+    const closeBtn = document.getElementById('drawer-close');
+
+    timeline.addEventListener('click', (ev) => {
+        const row = ev.target.closest('.event-row');
+        if (!row) return;
+        const event = eventById(row.dataset.eventId);
+        openDrawer(event);
+    });
+    timeline.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Enter' && ev.key !== ' ') return;
+        const row = ev.target.closest('.event-row');
+        if (!row) return;
+        ev.preventDefault();
+        openDrawer(eventById(row.dataset.eventId));
+    });
+
+    for (const node of document.querySelectorAll('.map-node')) {
+        node.addEventListener('click', () => {
+            const id = node.dataset.node;
+            openDrawer(findLatestEventForNode(id));
+        });
+        node.addEventListener('keydown', (ev) => {
+            if (ev.key !== 'Enter' && ev.key !== ' ') return;
+            ev.preventDefault();
+            openDrawer(findLatestEventForNode(node.dataset.node));
+        });
+    }
+
+    backdrop.addEventListener('click', closeDrawer);
+    closeBtn.addEventListener('click', closeDrawer);
+    document.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape') closeDrawer();
+    });
 }
 
 /* UI-6 — Live Map flight rendering.
@@ -513,6 +740,14 @@ async function tick() {
         ]);
         if (eventsRes.ok) {
             events = (await eventsRes.json()).events || [];
+            /* UI-7 — keep a module-level mirror so the drawer
+             * can resolve event ids to the projected event
+             * without re-fetching. The reference is replaced
+             * each tick, so closed-over copies inside the
+             * drawer stay valid for the lifetime of the open
+             * drawer (the operator may keep a drawer open
+             * across multiple ticks). */
+            latestEvents = events;
         }
         if (healthRes.ok) {
             const health = await healthRes.json();
@@ -557,6 +792,7 @@ async function tick() {
 
 loadMeta();
 tick();
+wireDrawer();
 setInterval(tick, REFRESH_MS);
 </script>
 </body>

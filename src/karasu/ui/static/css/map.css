@@ -40,6 +40,14 @@
     width: 100%;
     height: 100%;
     display: block;
+    /* The outer SVG fills the .live-map container, so by default
+     * its 800×480 box absorbs every click and the .map-node hit
+     * test never wins. Disable pointer events on the SVG itself
+     * and re-enable them on .map-node so click events land on
+     * the right group. The hairline edges remain untargetable
+     * (they shouldn't be clickable — they're decorative
+     * scaffolding). */
+    pointer-events: none;
 }
 
 /* --- nodes ----------------------------------------------------- */
@@ -50,7 +58,14 @@
      *  vertical). Positioning happens through the SVG transform
      * attribute set in index.html — this rule only owns visual
      * styling. */
-    cursor: default;
+    cursor: pointer;
+    /* Re-enable pointer events that the outer .live-map-svg
+     * disabled. ``bounding-box`` makes the entire rectangular
+     * bounding box of the <g> (dot + label) clickable instead of
+     * only the rendered shapes — without it, the gap between the
+     * dot and the label is dead pixels and Playwright (and some
+     * mouse users) can't reliably hit the node. */
+    pointer-events: bounding-box;
 }
 
 .map-node-dot {

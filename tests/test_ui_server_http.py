@@ -440,6 +440,35 @@ def test_api_agents_marks_unsupported_trust_level(
     ]
 
 
+def test_api_agents_non_integer_trust_level_is_unsupported(
+    ui_http: tuple[str, int]
+) -> None:
+    """Malformed trust_level config should not turn the UI endpoint
+    into a 500. Surface the raw value as unsupported/read-only so
+    the operator can see and fix the config."""
+    host, port = ui_http
+    _write_config({
+        "agents": {
+            "claude_code": {
+                "trust_level": "high",
+                "handles": ["implementation"],
+            },
+        }
+    })
+
+    status, body, _ = _get(host, port, "/api/agents")
+    assert status == 200
+    payload = json.loads(body)
+    assert payload == [
+        {
+            "name": "claude_code",
+            "trust_level": "high",
+            "handles": ["implementation"],
+            "unsupported": True,
+        }
+    ]
+
+
 # ---------------------------------------------------------------------------
 # /assets/sw.js — Service-Worker-Allowed: / header (UI-8 P1#1 pin)
 # ---------------------------------------------------------------------------

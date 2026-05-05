@@ -453,7 +453,11 @@ def _list_agents() -> list[dict[str, Any]]:
         if name == "codex" and not raw.get("repo"):
             continue
 
-        trust_level = int(raw.get("trust_level", defaults["trust_level"]))
+        raw_trust = raw.get("trust_level", defaults["trust_level"])
+        try:
+            trust_level: Any = int(raw_trust)
+        except (TypeError, ValueError):
+            trust_level = raw_trust
         raw_handles = raw.get("handles")
         handles = (
             defaults["handles"]

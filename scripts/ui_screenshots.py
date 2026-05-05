@@ -704,6 +704,106 @@ CAPTURES: dict[str, list[dict]] = {
             "full_page": True,
         },
     ],
+    # UI-8 — PWA shell + offline page captures.
+    #
+    # No .webm by design (Codex P2 binding: UI-8 is the first
+    # chunk after UI-5 to legitimately skip the recording — the
+    # offline page is static, the only motion is the existing
+    # crow ambient breathing already covered by UI-5.webm).
+    #
+    # The "manifest installed" PNG is a normal index.html capture;
+    # the manifest itself is metadata the browser exposes on the
+    # install prompt, not a visual the operator sees on the page.
+    # The PNG verifies that index.html still renders correctly
+    # WITH the manifest link + SW registration in place (no
+    # regression from UI-7).
+    "UI-8-pwa": [
+        {
+            # Index page after the SW + manifest land. Visual
+            # surface is identical to UI-7's drawer-closed
+            # capture; the audit verifies the additions
+            # (manifest link in <head>, theme-color meta, SW
+            # registration) do NOT regress the rendered shell.
+            "name": "00-index-with-manifest.png",
+            "url": "/",
+            "seed_events": "flight-karasu-claude",
+            "wait_ms": 3500,
+            "full_page": False,
+        },
+        {
+            # /offline.html served directly. The route is
+            # reachable from the server outside of the SW
+            # navigation-fallback path so the auditor can open
+            # it during the screenshot pass without faking a
+            # network failure. Hero crow in .crow.offline pose
+            # (rotate 4 deg + opacity 0.7), single editorial
+            # sentence, last-known bus_path muted.
+            #
+            # localStorage seed runs via eval_js BEFORE goto so
+            # the page boots with a populated bus path; without
+            # the seed the page would show the em-dash
+            # placeholder (the empty-storage default branch).
+            # The captured PNG demonstrates the populated
+            # branch since that's the more informative state
+            # for the auditor.
+            "name": "01-offline-page-default.png",
+            "url": "/offline.html",
+            "seed": False,
+            # The offline page reads localStorage in its inline
+            # boot script and paints the bus value into the DOM
+            # once. To capture the populated branch without an
+            # extra reload, we set localStorage AND mutate the
+            # rendered text node directly — the resulting PNG
+            # matches what a fresh page-load with that storage
+            # value would show.
+            "eval_js": (
+                "var p = 'C:/Users/op/.karasu/events.jsonl';"
+                "localStorage.setItem('karasu:bus_path', p);"
+                "document.getElementById('offline-bus-value')"
+                "  .textContent = p;"
+            ),
+            "wait_ms": 200,
+            "full_page": False,
+        },
+        {
+            # /offline.html with empty localStorage. This is the
+            # branch a freshly-installed PWA hits if the bus has
+            # never been reached — Codex P1 binding: muted
+            # "bus —" placeholder, NEVER undefined / null /
+            # fake path. The capture proves the placeholder
+            # actually renders.
+            "name": "02-offline-page-empty-storage.png",
+            "url": "/offline.html",
+            "seed": False,
+            # Same DOM-mutation pattern as 01: clear localStorage
+            # AND set the rendered text to the em-dash placeholder
+            # so the PNG honestly shows the empty-storage branch.
+            "eval_js": (
+                "localStorage.removeItem('karasu:bus_path');"
+                "document.getElementById('offline-bus-value')"
+                "  .textContent = '—';"
+            ),
+            "wait_ms": 200,
+            "full_page": False,
+        },
+        {
+            # Narrow viewport — the offline shell stays
+            # readable on tablet / phone form factors. Same
+            # populated-bus-path branch as 01 for consistency.
+            "name": "03-offline-narrow-viewport.png",
+            "url": "/offline.html",
+            "seed": False,
+            "viewport": {"width": 720, "height": 1280},
+            "eval_js": (
+                "var p = 'C:/Users/op/.karasu/events.jsonl';"
+                "localStorage.setItem('karasu:bus_path', p);"
+                "document.getElementById('offline-bus-value')"
+                "  .textContent = p;"
+            ),
+            "wait_ms": 200,
+            "full_page": True,
+        },
+    ],
 }
 
 # Recording plan per slug. Each entry is a single video capture:

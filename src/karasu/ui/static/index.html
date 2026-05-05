@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#131316">
+<link rel="manifest" href="/assets/manifest.json">
 <title>Karasu UI</title>
 <link rel="stylesheet" href="/assets/css/tokens.css">
 <link rel="stylesheet" href="/assets/css/reset.css">
@@ -77,11 +79,19 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 60vw;
+    /* Inline-flex + explicit gap so the label / value split
+     * survives CSS minification or HTML whitespace-stripping —
+     * mirrors the offline.html .offline-bus pattern. Codex P2
+     * polish on the UI-8 audit asked for the explicit gap
+     * because the earlier ``margin-right`` on .label relied on
+     * text-node collapsing rules. */
+    display: inline-flex;
+    gap: var(--space-2);
+    align-items: baseline;
 }
 
 .bus-path .label {
     color: var(--fg-3);
-    margin-right: var(--space-2);
 }
 
 /* --- main canvas ----------------------------------------------- */
@@ -336,7 +346,34 @@ async function loadMeta() {
         document.getElementById('bus-path-value').textContent = m.bus_path || '—';
         document.getElementById('footer-version').textContent =
             m.version ? 'v' + m.version : 'v—';
+        /* UI-8 — persist the bus path so the offline.html page
+         * served by the service worker can render the operator's
+         * last-known surface instead of a generic "—". Wrapped in
+         * try / catch because some browsers throw on localStorage
+         * in private mode; the offline page degrades gracefully
+         * to the em-dash placeholder if the value is absent. */
+        try {
+            if (m.bus_path) {
+                localStorage.setItem('karasu:bus_path', m.bus_path);
+            }
+        } catch { /* private mode / storage disabled — skip */ }
     } catch { /* keep placeholders if /api/meta is unreachable */ }
+}
+
+/* UI-8 — service worker registration.
+ *
+ * Feature-detected (older browsers without SW skip silently;
+ * the page still works without the offline fallback). Scope is
+ * root because src/karasu/ui/static/sw.js needs to intercept
+ * navigation requests for the entire site, not just /assets/*.
+ * The Service-Worker-Allowed: / header from the server makes
+ * the root scope legal even though the SW file lives under
+ * /assets/. */
+function registerServiceWorker() {
+    if (!('serviceWorker' in navigator)) return;
+    navigator.serviceWorker.register('/assets/sw.js', { scope: '/' })
+        .catch(() => { /* SW registration is best-effort; the
+                          surface works without it */ });
 }
 
 /* The timeline reads /api/events as it ships from the server
@@ -793,6 +830,7 @@ async function tick() {
 loadMeta();
 tick();
 wireDrawer();
+registerServiceWorker();
 setInterval(tick, REFRESH_MS);
 </script>
 </body>

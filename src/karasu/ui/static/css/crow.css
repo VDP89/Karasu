@@ -95,3 +95,31 @@
     75%  { transform: translateX(2px); }
     100% { transform: translateX(0); }
 }
+
+/* --- state: offline (UI-8) ------------------------------------- */
+
+/* Out-of-signal posture for the offline.html easter egg page.
+ * Static — no keyframes, no loop. The crow leans 4° (the same
+ * lean magnitude as .waiting but applied as a held transform on
+ * a separate state, not a one-shot animation) and dims to 0.7
+ * opacity. Reads as "instrument out of signal", not as
+ * "broken / dead".
+ *
+ * Codex P2 binding from the UI-8 design review: no droop, no
+ * shake, no blink, no pulse, no grayscale filter. Posture only.
+ *
+ * Composes with .crow base via the shared currentColor — the
+ * offline pose preserves --fg-1 (the resting colour) rather
+ * than borrowing --warn or --accent. The dim + tilt do the
+ * editorial work; recolouring would push the figure toward
+ * "warning" semantics that the audit warned against. */
+.crow.offline {
+    transform: rotate(4deg);
+    opacity: 0.7;
+    /* Disable the ambient breathing loop the .crow base sets so
+     * the offline pose is fully static. The page that uses this
+     * class (offline.html) ships no other motion, so neutralising
+     * the loop here keeps the surface true to "no flight, pulse,
+     * shake or map animation" (Codex pin #2). */
+    animation: none;
+}

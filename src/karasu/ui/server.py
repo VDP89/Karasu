@@ -313,10 +313,18 @@ class UIHandler(BaseHTTPRequestHandler):
         status: int,
         body: bytes,
         content_type: str = "application/octet-stream",
+        extra_headers: tuple[tuple[str, str], ...] = (),
     ) -> None:
+        """Write a response. ``extra_headers`` carries optional
+        headers added before ``end_headers``; UI-8 uses it to set
+        ``Service-Worker-Allowed: /`` on the SW response so the
+        worker registered from /assets/sw.js can scope to root.
+        """
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        for name, value in extra_headers:
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -371,6 +379,16 @@ class UIHandler(BaseHTTPRequestHandler):
             self._send(200, html, "text/html; charset=utf-8")
             return
 
+        # UI-8 — offline shell served by the service worker as a
+        # navigation fallback when the network is unreachable. The
+        # route is also reachable directly so the auditor can open
+        # the page during the screenshot pass without faking a
+        # network failure.
+        if path == "/offline.html":
+            html = (STATIC_DIR / "offline.html").read_bytes()
+            self._send(200, html, "text/html; charset=utf-8")
+            return
+
         # /design-system is an unlinked tool / debug page (UI-0
         # §6, leaned in next-session.md). It documents every
         # token from the design system in live code so a token
@@ -396,7 +414,23 @@ class UIHandler(BaseHTTPRequestHandler):
                 self._send(403, b"forbidden", "text/plain")
                 return
             if target.is_file():
-                self._send(200, target.read_bytes(), _content_type_for(target))
+                # UI-8 — the service worker file MUST carry
+                # ``Service-Worker-Allowed: /`` so the SW
+                # registered from /assets/sw.js can scope to
+                # root. Without the header, the browser rejects
+                # the registration with a SecurityError because
+                # an SW's default scope is the directory it lives
+                # in (/assets/), and we need it to intercept
+                # navigation requests for the entire site.
+                extra: tuple[tuple[str, str], ...] = ()
+                if path == "/assets/sw.js":
+                    extra = (("Service-Worker-Allowed", "/"),)
+                self._send(
+                    200,
+                    target.read_bytes(),
+                    _content_type_for(target),
+                    extra_headers=extra,
+                )
                 return
 
         self._send(404, b"not found", "text/plain")

@@ -7,7 +7,7 @@ Phase 1B: COMPLETED (no-adapter pass validated, F1–F5 closed)
 Phase 1C: COMPLETED (real Claude adapter loop validated, F6–F8 closed)
 Phase 2: COMPLETED — chunks 1+2+3 merged (#30 #31 #32 #33). Audit accepted with one round of changes (PR #33 contract alignment + redaction).
 Phase 3: COMPLETED + DOGFOOD-VALIDATED + AUDIT-ACCEPTED — chunks 3a + 3b + 3c merged (#34 #35 #36 #37). Live dogfood 2026-05-02 (issue #39) validated end-to-end: `/scar` → controller resubmit (94 ms) → pipeline applies scar → second dispatch with `priority=high` → response back to Telegram. Cap held at 3 under spam. Three operational findings filed: F9 (#40), F10 (#41), F11 (#42). Audit forward-look returned by ChatGPT and recorded in [`docs/memory/phase-3-dogfood-audit-2026-05-02.md`](phase-3-dogfood-audit-2026-05-02.md): 2 REQUERIDOS applied this PR (trust=2 docs warning + cap-local-per-origin issue), 1 NICE-TO-HAVE applied (sessions template), 2 NICE-TO-HAVE queued for Phase 3+ hardening (priority persist + startup warning).
-UI surface progress (PWA roadmap — main HEAD `37b51ba`, 2026-05-05):
+UI surface progress (PWA roadmap — main HEAD `e535c95`, 2026-05-05):
 - UI-0  (design brief)              ✔ PR #62  merged (`92e2c91`).
 - UI-1  (rebase + projection)       ✔ PR #63  merged (`4819d7b`).
 - UI-2  (design system + tokens)    ✔ PR #69  merged (`6ec5203`).
@@ -24,8 +24,8 @@ UI surface progress (PWA roadmap — main HEAD `37b51ba`, 2026-05-05):
 - UI-10 (scar revoke impl)          ✔ PR #85  merged (`b89047c`).
 - Lighthouse baseline post-UI-10    ✔ PR #86  merged (`9ed761c`).
 - UI-11 brief (trust adjust)        ✔ PR #87  merged (`37b51ba`, doc-only).
-- UI-11a (trust read display)       ← NEXT. Branch: feat/ui-11a-trust-display.
-- UI-11b (trust write affordance)   BLOCKED until UI-11a merges (pin §11.6.1).
+- UI-11a (trust read display)       ✔ PR #89  merged (`e535c95`).
+- UI-11b (trust write affordance)   ← NEXT. Branch: feat/ui-11b-trust-write.
 - UI-12  (push notifications)       OUT OF SCOPE until UI-11b merges.
 
 ## System status
@@ -60,6 +60,8 @@ UI surface progress (PWA roadmap — main HEAD `37b51ba`, 2026-05-05):
 - UI design-system documentation page ✔ (UI-2) — `GET /design-system` serves a live render of every token (palette swatches with contrast labels, type scale, spacing, radius, shadow, focus ring, z-index, motion). Unlinked from the operator surface; doubles as the visual regression baseline for UI-3..UI-9.
 - UI application shell ✔ (UI-3) — three-row sticky-grid layout (header + main + footer). Header: vector crow glyph (placeholder; UI-5 swaps with the canonical 32x32 sprite) + agent name + bus path right-aligned with ellipsis. Crow glyph recolours via class swap on `/api/health` state (`--fg-1` / `--accent` / `--warn`). Main: empty state (96px hero crow breathing 1px translateY 4s ease-mag, single editorial sentence) when zero events; canvas-stub placeholder when events exist. Footer: version + last event time + crow state. `[hidden] { display: none !important; }` global safety net keeps `el.hidden = true` from being outranked by class-level `display:` rules.
 - `GET /api/meta` ✔ (UI-3) — `{version, bus_path}` for the surface to render its own version line and bus-path badge. `version` via `importlib.metadata` (stdlib, no new runtime dep) with `"unknown"` fallback. Additive: `/api/events` and `/api/health` shapes unchanged.
+- `GET /api/agents` ✔ (UI-11a) — read-only trust display source. Reads `karasu.yaml` directly via the configured `CONFIG_PATH` so it works with no `karasu watch` process running. Returns configured adapters with `name`, `trust_level`, `handles`, plus `unsupported: true` for trust values outside `{0,1,2}` or malformed values such as `"high"`. Does not instantiate adapters and does not reach into live adapter instances.
+- `/api/events` projection includes `data.action` ✔ (UI-11a) — additive field with HTTP shape lock in the same PR so UI-11b can distinguish `scar_revoke` / `trust_adjust` human_decision events without scraping raw drawer JSON.
 - `scripts/ui_fetch_fonts.sh` ✔ — idempotent, woff2 magic-byte verified.
 - `scripts/ui_screenshots.py` ✔ — per-slug capture plan; per-capture `seed` (populate/truncate the bus) and `viewport` (override 1440x900) knobs; per-capture `press_tab` step (real keyboard-driven focus, not synthetic `.focus()`); `_apply_step` runs `wait_ms` first so JS-rendered targets exist before hover / press_tab fire; fresh Playwright context per capture so viewport overrides don't leak; bus seeded via `ui_server.configure(...)` instead of `os.chdir` (Windows tempdir cleanup race fixed).
 - UI event timeline ✔ (UI-4) — `static/css/timeline.css` (first feature CSS split). `.timeline` is a `<ol>` with max-width 720 px, centred. Each row is a single typographic line: `<time>` mono `--fs-12 --fg-2`, type display `--fs-16 --fg-1` (the only accent), meta mono `--fs-14 --fg-2`. Hairline `--fg-3` between rows; `--bg-2` hover wash; design-system `--focus-ring` on Tab via `.event-row[tabindex=0]`. Latest-on-top via reversed copy; full re-render every 3 s tick. Narrow viewport (≤720 px) collapses to a single column. Empty-state branch from UI-3 is unchanged.
@@ -109,7 +111,7 @@ UI surface progress (PWA roadmap — main HEAD `37b51ba`, 2026-05-05):
 
 - Cost / latency under continuous editing not measured (single-edit dogfood only)
 - No upper bound on adapter concurrency yet (Phase 1 keeps dispatch synchronous)
-- Telegram / UI design not started
+- Telegram remains temporary until the PWA notification path lands
 
 ## Phase 3 dogfood metrics (issue #39)
 
@@ -124,52 +126,61 @@ Cap enforcement: 6 `/scar` rapid-fire → exactly 3 resubmits, 3 cap warnings, 0
 ## Next step (entry point)
 
 ```text
-main HEAD: 37b51ba (UI-11 brief, 2026-05-05).
+main HEAD: e535c95 (UI-11a trust read display, 2026-05-05).
 0 PRs open. 0 branches open.
 
-Entry point: UI-11a — trust gradient READ display.
-Branch: feat/ui-11a-trust-display (from main).
-Scope (~250 LOC):
-  - GET /api/agents endpoint (reads karasu.yaml directly;
-    returns [{name, trust_level, handles, status?}];
-    trust_level outside {0,1,2} → unsupported, read-only).
-  - _project_event extension: data.action surfaced when
-    present, None when absent (backwards-compatible).
-  - EVENTS_PROJECTION_KEYS update (same PR, pin §11.6.2).
-  - HTTP shape lock for GET /api/agents (same PR).
-  - Drawer extension: trust_level visible when open event
-    is agent_response (read-only, no Adjust button yet).
-  - 1 PNG of drawer with trust visible.
-  - No .webm (no motion change).
-  - No Playwright (no interaction change).
+Entry point: UI-11b — trust gradient WRITE affordance.
+Branch: feat/ui-11b-trust-write (from main).
+Scope (~400 LOC target):
+  - POST /api/agents/{name}/trust endpoint.
+  - Emits human_decision with data.action="trust_adjust",
+    data.agent, data.trust_before, data.trust_after, optional
+    trimmed data.reason.
+  - INTENT-ONLY: no live adapter mutation. Modal and post-
+    confirm surface must state: "Recorded intent. Applies after
+    watch restart."
+  - Drawer extension: Adjust button beside trust_level only for
+    supported agent_response events. No /agents page, no toolbar,
+    no global settings surface.
+  - Reuse UI-10 modal primitive; add modal-trust micro-elements.
+  - Radio options only: trust levels {0,1,2}. Unsupported
+    configured values remain read-only.
+  - HTTP shape locks for POST success/failure + event payload.
+  - Playwright: cancel does not emit, confirm emits, Esc modal-
+    first, backdrop closes modal only, reason trim/omit.
+  - docs/event-schema.md additive trust_adjust section.
+  - 4-5 PNGs + 1 .webm walking the full flow.
 
 Gating pins (P0):
-  §11.6.1  UI-11a ships BEFORE UI-11b (absolute).
-  §11.6.2  data.action in _project_event + shape-lock
-           tests in SAME PR as UI-11a.
-  §11.6.3  Server reads karasu.yaml directly; works with
-           no karasu watch running.
-  §11.6.4  Trust values {0,1,2} only; others = unsupported
-           read-only.
+  §11.6.1  SATISFIED by PR #89. UI-11b may now open.
   §11.6.5  UI-11b is INTENT-ONLY. Modal copy: "Recorded
            intent. Applies after watch restart."
   §11.6.6  Drawer-earned only. No /agents page, no toolbar,
            no global settings surface.
+  §11.6.7  Modal confirmation mandatory; no inline shortcut.
+  §11.6.8  Modal offers only {0,1,2}; unsupported configured
+           values remain read-only.
+  §11.6.9  Every mutation emits inspectable bus event.
+  §11.6.10 POST success may return 204, but the post-confirm
+           UI must visibly annotate the drawer.
+  §11.6.11 Playwright coverage: cancel, confirm, Esc,
+           backdrop, reason trim/omit.
+  §11.6.12 .webm shows full-shell operator feel.
 
-After UI-11a merges → open UI-11b (write affordance, ~400 LOC).
 After UI-11b merges → UI-12 (push notifications, own brief).
 
 Remaining items (non-blocking):
 - Issue #66: fetch_card opt-in retry on 502/503/504 (P2).
 - Issue #76: THIRD_PARTY_NOTICES.md for OpenMoji (P2).
+- Issue #77: stale UI-6 tracker; UI-6 already merged.
 - Operator-side: rename repo Karasu- → Karasu (GitHub Settings).
-- Operator-side: uninstall ChatGPT Codex Connector App from repo.
+- Operator-side: confirm ChatGPT Codex Connector App remains
+  uninstalled / unused for this repo.
 ```
 
 ## Do NOT do yet
 
 ```text
-- Do NOT open UI-11b before UI-11a merges (pin §11.6.1).
 - Do NOT imply live adapter mutation in any UI-11 copy
   (pin §11.6.5 — INTENT-ONLY).
 - Do NOT add /agents page, header toolbar, or global trust

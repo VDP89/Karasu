@@ -1,188 +1,227 @@
 # Next Session Entry Point
 
-## Status: UI-11a — trust gradient READ display
+## Status: UI-11b — trust gradient WRITE affordance
 
-main HEAD: `37b51ba` (UI-11 brief merged, 2026-05-05).
-0 PRs open. 0 branches open. 52 binding pins accumulated.
+main HEAD: `e535c95` (UI-11a merged, 2026-05-05).
+0 PRs open. 0 branches open after this docs sync merges.
+52 binding pins accumulated.
 
-The UI-11 brief (PR #87) is sealed, operator-confirmed, and
-Codex-audited. UI-11a is the unblocked entry point.
+UI-11a is complete and merged (#89). It landed the read layer
+required before any write affordance:
 
-## Context recap (what happened in the previous session)
+- `GET /api/agents` reads `karasu.yaml` directly.
+- `/api/events` projection includes `data.action`.
+- HTTP shape locks cover `/api/agents` and the projection key.
+- Drawer displays `trust_level: N` for `agent_response` events.
+- Unsupported trust values render read-only instead of being coerced.
 
-2026-05-05 session:
+UI-11b is now unblocked by pin §11.6.1.
 
-1. **UI MVP merge sequence** executed (#78 → #79 → #80 → #81 →
-   #82 in stacked-PR order). Technique: `git diff --binary
-   <pre-squash>..<branch>` applied over fresh main for each
-   descendant (squash-merge + rebase --onto produces phantom
-   conflicts; diff-apply avoids them).
+## Context recap
 
-2. **UI-10 (scar revoke)** implemented and merged (#85).
-   First write path in the surface. Established patterns:
-   - `.modal` CSS primitive (reused by UI-11b).
-   - `_emit_human_decision` server helper (reused by UI-11b).
-   - POST 204 + JS drawer annotation contract.
-   - Playwright cancel/confirm/Esc/backdrop tests.
+2026-05-05 UI-11a session:
 
-3. **Lighthouse variance** post-UI-10: Performance drifts
-   81–85 with ~50% PASS rate. Threshold stays at 85 (operator-
-   signed rationale in `docs/ui/lighthouse/README.md`).
-   Pattern: re-run until PASS, commit that report.
+1. **PR #88 merged** before work resumed.
+   Docs/memory sync pointed the repo to UI-11a.
 
-4. **UI-11 brief** (PR #87) sealed end-to-end: operator
-   sign-off → Codex audit → P1/2×P2 follow-ups applied →
-   merge. 12 §11.6 implementation pins set.
+2. **PR #89 implemented and merged**.
+   Branch: `feat/ui-11a-trust-display`.
+   Commit on main: `e535c95`.
+
+3. **Codex audit result**:
+   - P0: none
+   - P1: none
+   - P2: two small follow-ups
+   - Verdict: APPROVED
+
+4. **Audit follow-up applied before merge**:
+   `/api/agents` now handles malformed `trust_level` config
+   values such as `trust_level: high` by surfacing the raw
+   value with `unsupported: true`, rather than 500ing.
+
+5. **Verification**:
+   - CI green on Python 3.10 and 3.12.
+   - Required PNG captured at
+     `docs/ui/screenshots/UI-11a-trust-display/00-drawer-trust-visible.png`.
+   - Local full pytest on Windows remained at 471 passed / 2
+     known pre-existing Windows failures:
+     `test_git_probe.py::test_git_tree_path_exists_passes_cwd_through`
+     and `test_ui_server.py::test_valid_asset_under_static_dir_is_served`.
 
 ## Entry point for this session
 
-Branch `feat/ui-11a-trust-display` from `main`.
+Branch `feat/ui-11b-trust-write` from `main`.
 
-### UI-11a deliverables (~250 LOC)
+### UI-11b deliverables (~400 LOC target, but audit coherence wins)
 
 ```text
-1. GET /api/agents endpoint
-   - Reads karasu.yaml directly via the same config loader
-     cmd_watch uses. Works with no karasu watch running.
-   - Returns JSON array: [{name, trust_level, handles}]
-     (status? field is optional — OK to omit in UI-11a).
-   - trust_level outside {0,1,2} → include raw int value;
-     add "unsupported": true flag (pin §11.6.4).
-   - 404 or empty array if no agents configured.
+1. POST /api/agents/{name}/trust
+   - Returns 204 on success.
+   - Emits a human_decision event:
+       data.action       = "trust_adjust"
+       data.agent        = <adapter name>
+       data.trust_before = <current displayed value>
+       data.trust_after  = <selected value>
+       data.reason       = <optional trimmed reason>
+   - INTENT-ONLY: does NOT mutate running adapter instances.
+   - Does NOT imply live adapter mutation in copy or UI.
+   - Local-only surface, same auth posture as UI-10 / UI-11a.
 
-2. HTTP shape lock for GET /api/agents
-   - In tests/test_ui_server_http.py (same PR, pin §11.6.2).
-   - Assert: status 200, Content-Type JSON, array shape,
-     name/trust_level/handles keys present.
+2. HTTP shape locks
+   - POST success -> 204, empty body.
+   - Event emitted with exact action + agent + trust_before +
+     trust_after fields.
+   - Unknown agent -> 404.
+   - Unsupported configured trust_level -> read-only; POST should
+     not offer or accept mutation from that state.
+   - Invalid target trust outside {0,1,2} -> 422.
+   - Empty / whitespace reason omitted; non-empty reason trimmed.
 
-3. _project_event extension: data.action
-   - src/karasu/ui/server.py::_project_event
-   - Add "action": event.data.get("action") (or None).
-   - EVENTS_PROJECTION_KEYS constant updated to include
-     "action" in the same commit (pin §11.6.2).
-   - Shape-lock test updated in tests/test_ui_server_http.py
-     (same PR — the 20-key projection shape becomes 21-key).
+3. Drawer extension
+   - Existing UI-11a trust row gains an Adjust button only when:
+       event.type == "agent_response"
+       trust_level is one of {0,1,2}
+       agent is present and loadable from /api/agents
+   - No global toolbar, no /agents page, no settings surface.
+   - Unsupported values show raw value + unsupported tag and no
+     Adjust button.
 
-4. Drawer extension: trust_level visible (read-only)
-   - src/karasu/ui/static/js/drawer.js (or inline script):
-     when openDrawer(event) is called with an agent_response
-     event, render an additional row: "trust_level: N"
-     alongside the existing JSON body.
-   - For trust_level outside {0,1,2}: render as
-     "trust_level: N (unsupported)" — no Adjust button.
-   - No Adjust button, no modal, no POST in UI-11a.
-   - drawer.css: add .drawer-trust-row rule (minimal —
-     reuses existing token stack, no new tokens).
+4. Modal
+   - Reuse UI-10 .modal primitive.
+   - Add .modal-trust-options / .modal-trust-option in modal.css.
+   - Radio options only: 0 / 1 / 2.
+   - Inline descriptions visible, not tooltip-only:
+       0 = quarantined / approval required
+       1 = assistive
+       2 = autonomous mutation
+   - Copy MUST include:
+       "Recorded intent. Applies after watch restart."
+   - Optional reason field, same trim/omit convention as UI-10.
 
-5. 1 PNG: drawer open on an agent_response event showing
-   the trust_level row. 1440x900 viewport.
-   (No .webm — no motion change. No Playwright — no new
-    interaction. PNG only per §11 definition of done.)
+5. Client JS
+   - openTrustModal(event)
+   - confirmTrustAdjust()
+   - wireTrustModal()
+   - Esc precedence: modal first, drawer second.
+   - Post-confirm annotation in drawer must read like recorded
+     intent, not "trust now N".
+
+6. Docs
+   - docs/event-schema.md additive section for UI trust_adjust
+     human_decision variant.
+   - PR body includes bus schema diff.
+
+7. Visual artifacts
+   - PNG: drawer with Adjust button.
+   - PNG: modal default.
+   - PNG: modal with reason typed.
+   - PNG: modal reduced-motion.
+   - PNG: post-confirm drawer annotation.
+   - .webm walking click -> modal -> confirm -> result.
+
+8. Playwright regression
+   - cancel does not mutate / emit event.
+   - confirm emits event.
+   - Esc modal-first behavior.
+   - backdrop closes modal only, drawer stays open.
+   - reason trimming / omission if reason is included.
 ```
 
-### Precedents from UI-10 to reuse
+## Precedents to reuse
 
 ```text
-- Config path wiring: cmd_ui already passes config_path to
-  the UI handler (wired in UI-10). GET /api/agents reads the
-  same path. No new wiring needed.
-- _emit_human_decision: not called in UI-11a (read-only).
-  Relevant for UI-11b.
-- tests/test_ui_server_http.py: extend the existing file.
-  Pattern: fixture spins up a UIHandler, asserts response.
-- scripts/ui_screenshots.py: extend with UI-11a capture plan
-  (one entry: drawer-trust-visible at 1440x900).
+- UI-10 Scar revoke:
+  - _emit_human_decision helper.
+  - POST 204 + no response body.
+  - .modal primitive.
+  - modal cancel/confirm/Esc/backdrop Playwright pattern.
+  - re-fetch/annotate drawer after a successful write.
+
+- UI-11a Trust read:
+  - GET /api/agents.
+  - CONFIG_PATH wiring via cmd_ui -> run_ui_server -> configure.
+  - drawer-trust-row markup and CSS.
+  - unsupported trust handling.
+  - data.action projection shape lock.
 ```
 
-### Files to read before coding
+## Binding pins for UI-11b
+
+Most actionable P0 pins from `docs/ui/ui-11-design-brief.md` §11.6:
 
 ```text
-1. src/karasu/ui/server.py        — UIHandler, _project_event,
-                                    EVENTS_PROJECTION_KEYS,
-                                    load_config path.
-2. src/karasu/ui/static/js/       — JS drawer open logic
-                                    (openDrawer or equivalent).
-3. src/karasu/ui/static/css/      — drawer.css, tokens.css.
-4. tests/test_ui_server_http.py   — shape-lock test pattern.
-5. docs/ui/ui-11-design-brief.md  — §3-A (surface), §3-E
-                                    (endpoints), §3-G (trust
-                                    range), §6 (roadmap),
-                                    §11.6 (12 pins).
-6. src/karasu/adapters/base.py    — AUTONOMOUS_TRUST_LEVEL = 2.
-7. src/karasu/config.py (or       — how agents config is
-   wherever load_config lives)      loaded from karasu.yaml.
+§11.6.5  UI-11b is INTENT-ONLY. Modal and post-confirm
+         surface must state the adjustment is recorded for the
+         next watcher run / requires watch restart.
+
+§11.6.6  Drawer-earned only. No /agents page, no toolbar,
+         no global trust settings surface.
+
+§11.6.7  Mutation requires modal confirmation. No inline
+         trust change shortcut.
+
+§11.6.8  The modal offers only documented values {0,1,2};
+         unsupported configured values remain read-only.
+
+§11.6.9  Every trust mutation emits an inspectable bus event.
+
+§11.6.10 POST success may return 204, but post-confirm UI must
+         visibly refresh/annotate the drawer so the operator sees
+         the recorded intent.
+
+§11.6.11 Playwright must cover cancel-does-not-mutate,
+         confirm-emits-event, Esc modal-first behavior, and
+         reason trim/omit if a reason field is present.
+
+§11.6.12 .webm must show full-shell operator feel.
 ```
 
-## Binding pins for UI-11a (P0 — all 12 §11.6 pins carry)
-
-The four most actionable for UI-11a specifically:
+The earlier pins also still bind:
 
 ```text
-§11.6.1  UI-11a ships BEFORE UI-11b (absolute gate).
-§11.6.2  data.action in _project_event + EVENTS_PROJECTION_KEYS
-         update + shape-lock test — ALL in the SAME PR.
-§11.6.3  Server reads karasu.yaml directly; no IPC, no adapter-
-         instance reach-through; works with no karasu watch.
-§11.6.4  Trust values {0,1,2} only for the Adjust affordance;
-         out-of-range values render as unsupported/read-only.
-         (UI-11a: surface the raw int + "unsupported" tag.)
+- Do NOT imply live adapter mutation.
+- Do NOT cache /api/* under any circumstances.
+- Do NOT add install banners, update toasts, connection badges.
+- Do NOT lower Lighthouse thresholds without operator-signed rationale.
+- Do NOT introduce a build step or bundler.
+- Do NOT let the pipeline consume human_decision directly.
+- Do NOT touch AgentResponse, F3, F7, F8.
 ```
 
-The remaining 8 pins (§11.6.5 through §11.6.12) are primarily
-UI-11b concerns (modal, Playwright, .webm, intent honesty).
-They carry as context; UI-11a does not need to implement them.
+## Audit cadence for UI-11b
 
-## Audit cadence for UI-11a
-
-Per §7 of the brief:
+Per the UI-11 brief:
 
 ```text
-1. 1 PNG of the drawer with trust_level visible.
-2. HTTP shape lock for GET /api/agents (same PR).
-3. EVENTS_PROJECTION_KEYS update covering data.action
-   (same PR, shape-lock test updated).
-4. Codex audit out-of-band via ChatGPT before merge.
-   Deliver the audit prompt automatically at close
-   (per feedback_audit_prompt_automatic.md).
+1. HTTP shape locks for POST.
+2. Bus event schema diff in PR body.
+3. docs/event-schema.md updated in the same PR.
+4. Playwright regression: cancel + confirm + Esc + backdrop.
+5. 4-5 PNGs + 1 .webm.
+6. Codex audit out-of-band via ChatGPT before merge.
 ```
 
-## After UI-11a merges
+## After UI-11b merges
 
 ```text
-UI-11b (write affordance, ~400 LOC):
-  - POST /api/agents/{name}/trust → 204.
-  - Drawer: Adjust button alongside trust_level display.
-  - .modal-trust-options + .modal-trust-option in modal.css.
-  - JS: openTrustModal / confirmTrustAdjust / wireTrustModal.
-  - Playwright: cancel + confirm + Esc + backdrop.
-  - 4-5 PNGs + 1 .webm walking the full flow.
-  - HTTP shape locks for POST.
-  - docs/event-schema.md: trust_adjust section.
-  - Pin §11.6.5 CRITICAL: modal copy = "Recorded intent.
-    Applies after watch restart." NO implication of live
-    mutation.
+UI-12: push notifications.
+Requires own brief because push UX has opt-in, unsubscribe,
+permission, and privacy surface.
 ```
 
 ## Open issues (non-blocking)
 
 ```text
 #66  fetch_card opt-in retry on 502/503/504 (P2).
-#76  THIRD_PARTY_NOTICES.md for OpenMoji (P2, issue #76).
+#76  THIRD_PARTY_NOTICES.md for OpenMoji + dependencies (P2).
+#77  stale UI-6 tracker; UI-6 already merged.
 ```
 
-## Operator-side TODOs (cannot be done from this surface)
+## Operator-side TODOs
 
 ```text
-- Rename repo: GitHub → Settings → Repository name → "Karasu"
+- Rename repo: GitHub Settings -> Repository name -> "Karasu"
   (current name "Karasu-" is a typo).
-- Uninstall ChatGPT Codex Connector GitHub App from repo:
-  GitHub → Settings → Integrations → Applications →
-  ChatGPT Codex Connector → Uninstall.
+- Confirm ChatGPT Codex Connector App remains uninstalled /
+  unused for this repo.
 ```
-
-## Anchor: Accumulated binding pins (52 total, P0)
-
-See `docs/ui/ui-11-design-brief.md` §11.6 for the full 12 pins
-set by the UI-11 brief audit. The 34 base pins (UI-2..UI-10
-audits) and the 6 UI-10 implementation pins all carry forward
-into UI-11a and UI-11b.

@@ -1088,3 +1088,33 @@ Known issue:
 
 Next step:
 - UI-11a — trust gradient read display. Branch `feat/ui-11a-trust-display` from main.
+
+---
+
+## 2026-05-05 — UI-11a merged, trust read display on main
+
+What changed:
+- **PR #89 merged** via squash (`e535c95`). UI-11a trust gradient READ display is now on `main`.
+- `GET /api/agents` added to the UI server. It reads `karasu.yaml` directly through the configured `CONFIG_PATH` and works with no `karasu watch` process running.
+- `/api/events` projection now includes `data.action`; the HTTP shape lock was updated in the same PR per pin §11.6.2.
+- Drawer now renders `trust_level: N` as a read-only row when opened on an `agent_response` event.
+- Unsupported trust values outside `{0,1,2}` render read-only. Codex P2 follow-up added hardening for malformed values such as `trust_level: high`, which now surface as `unsupported: true` instead of crashing `/api/agents`.
+- Required PNG shipped at `docs/ui/screenshots/UI-11a-trust-display/00-drawer-trust-visible.png`.
+
+Audit cycle:
+- Round 1 — Codex verdict **APPROVED**. No P0, no P1, two P2 follow-ups.
+- P2 #1 fixed before merge: non-integer `trust_level` config values no longer 500 the endpoint.
+- P2 #2 (screenshot-plan comment cleanup) already addressed in the branch before merge; UI-11a / UI-10 / UI-7 capture-plan blocks are separated by chunk.
+- CI green on Python 3.10 and 3.12.
+
+Decisions:
+- UI-11a stayed read-only. No Adjust button, no modal, no POST route, no `/agents` page, no toolbar, no live adapter mutation.
+- `GET /api/agents` mirrors active adapter construction enough for the UI: disabled agents are hidden, `codex` without a repo is hidden, defaults are surfaced when an enabled adapter omits `handles` or `trust_level`.
+- Malformed trust values are operator-visible configuration problems, not UI server crashes. The endpoint returns the raw value plus `unsupported: true`.
+
+Impact:
+- Pin §11.6.1 is satisfied. UI-11b is now unblocked.
+- UI-11b can depend on `GET /api/agents`, `data.action`, and the drawer trust row without widening its first diff.
+
+Next step:
+- UI-11b — trust gradient WRITE affordance. Branch `feat/ui-11b-trust-write` from main. Must remain INTENT-ONLY: modal and post-confirm copy state "Recorded intent. Applies after watch restart."

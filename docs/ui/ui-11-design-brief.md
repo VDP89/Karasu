@@ -172,6 +172,15 @@ G) Trust value range exposed by the modal:
    but have no documented semantics. Conservative:
    restrict UI-11 to the documented range. A future
    chunk earns higher values with explicit semantics.
+
+   Unsupported configured values (Codex P2 binding,
+   2026-05-05): if `karasu.yaml` declares a trust_level
+   outside {0, 1, 2} (e.g. 3), the UI surfaces it as
+   unsupported / read-only — the read display shows the
+   raw integer with an explicit "unsupported" tag, and
+   the write modal does NOT offer to mutate it. The UI
+   never silently coerces an out-of-range value into one
+   of the three documented levels. Pin §11.6.4 binding.
    [CONFIRMED 2026-05-05]
 
 H) Single agent or batch:
@@ -232,6 +241,22 @@ How this pin shapes UI-11 implementation if accepted:
   or on the modal Confirm. Lowering trust uses --fg-1 (neutral)
   because reducing autonomy is not destructive in the same
   sense.
+- "Honest about persistence" → the modal copy MUST state
+  that the adjustment is recorded for the NEXT watcher run.
+  Pin §11.6.5 binding (Codex P1, 2026-05-05). Suggested
+  copy direction:
+
+      Inline modal sentence (under the title):
+      "Recorded intent. Applies after watch restart."
+
+      Or (longer-form, modal lede):
+      "This records a trust adjustment for the next watcher
+       run. Restart karasu watch to apply it."
+
+  The post-confirm drawer annotation MUST also reflect this
+  truth — a fresh "trust adjust recorded" line on the agent
+  panel rather than a "trust now: N" line that implies the
+  running adapter changed.
 - The operator-feel test: when Victor (or any operator) hits
   Adjust on a real agent in dogfood, the click should feel
   like a deliberate trust gradient change, not like ticking
@@ -429,7 +454,10 @@ All §3 decisions need confirmation. Plus:
    source; whatever cmd_watch instantiates is what UI-11
    shows. If an agent is configured but its module fails
    to import, list it with `trust_level: null` and a note
-   ("not loadable") rather than hiding it.
+   ("not loadable") rather than hiding it. Configured
+   trust_level values outside {0, 1, 2} surface as the
+   raw integer with an "unsupported" tag (pin §11.6.4 +
+   §3-G).
    [CONFIRMED 2026-05-05]
 
 3. Does the UI server READ from karasu.yaml directly, or
@@ -504,21 +532,87 @@ All §3 decisions need confirmation. Plus:
 - Codex audit returns APPROVED or APPROVED-with-observations.
 ```
 
-## 11.6 · Implementation pins (will be filled by Codex audit)
+## 11.6 · Implementation pins (Codex audit, 2026-05-05)
 
-This section is intentionally empty in the DRAFT. After
-Codex audits the brief and operator sign-off lands on §3 +
-§10, this section will carry the implementation pins (like
-§11.6 of the UI-10 brief did).
+Twelve pins set by Codex on the UI-11 brief audit (PR #87)
+bind UI-11a / UI-11b implementation. Verbatim:
+
+```text
+1. UI-11a ships before UI-11b. The read display must land
+   and be audited before any trust-adjust POST/modal ships.
+
+2. data.action must surface in /api/events projection in
+   UI-11a, with shape-lock tests updated in the same PR.
+   UI-11b must not infer human_decision subtype from raw
+   drawer JSON alone.
+
+3. Trust display reads karasu.yaml directly and must work
+   even when karasu watch has never been started. No IPC,
+   no adapter-instance reach-through.
+
+4. Trust values exposed in the UI are limited to 0, 1, and
+   2. Unknown configured values render as unsupported/
+   read-only; the UI must not silently coerce them.
+
+5. UI-11b is intent-only. The modal and post-confirm
+   surface must state that the adjustment is recorded for
+   the next watcher run / requires watch restart. The UI
+   must not imply live mutation of the running adapter.
+
+6. Trust adjust remains drawer-earned and
+   agent_response-only. No /agents page, no header
+   toolbar, no global trust settings surface.
+
+7. Modal confirmation is mandatory for trust changes. No
+   inline shortcut, no keyboard-only quick commit, no
+   batch.
+
+8. .modal-trust-options and related styles must be scoped
+   under .modal. Trust-option styling must not leak into
+   timeline rows, map nodes, drawer scar rows, or future
+   settings surfaces.
+
+9. Every trust-adjust write emits a human_decision event
+   with data.action="trust_adjust", data.agent,
+   data.trust_before, data.trust_after, and optional
+   trimmed reason omitted when empty.
+
+10. POST success may return 204, but the post-confirm UI
+    must visibly refresh/annotate the drawer so the
+    operator sees the recorded intent.
+
+11. Playwright must cover cancel-does-not-mutate,
+    confirm-emits-event, Esc modal-first behavior, and
+    reason trimming/omission if a reason field is present.
+
+12. The implementation .webm must read as deliberate
+    operator intent against a specific agent_response,
+    not as a generic settings panel.
+```
+
+Pin #1 + #2 lock the chunk order and the projection-before-
+visual contract. Pin #5 is the binding copy clarification
+applied in §3.5 + §6 below — UI must not imply live mutation.
+Pin #4 is the unsupported-value scope discipline applied in
+§3-G + §10.2. The remaining pins parallel UI-10 §11.6
+contracts (drawer-earned, modal mandatory, scope discipline,
+schema, annotation, Playwright coverage, operator-feel
+.webm).
 
 ## 12 · Status
 
 ```text
-Brief status:        CONFIRMED (operator sign-off complete
-                     2026-05-05 on every §3 + §10 decision).
+Brief status:        APPROVED-with-observations (Codex,
+                     2026-05-05, PR #87). One P1 + two P2
+                     applied as in-branch follow-up; twelve
+                     §11.6 implementation pins set.
 Operator sign-off:   COMPLETE (2026-05-05).
-Codex audit:         PENDING (out-of-band via ChatGPT).
-Implementation:      BLOCKED on the brief merging.
+Codex audit:         APPROVED-with-observations + non-blocking
+                     follow-ups applied. Mergeable.
+Implementation:      UNBLOCKED once this brief merges.
+                     UI-11a (read display) ships first per
+                     pin §11.6.1; UI-11b (write affordance)
+                     follows.
 ```
 
 The brief mirrors the lifecycle `ui-10-design-brief.md` went

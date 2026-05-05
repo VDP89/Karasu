@@ -159,6 +159,145 @@ _BASELINE = [
     ),
 ]
 
+# UI-6 — flight_route corpora.
+#
+# ``_flight_route`` projects the LATEST event into a (source, target)
+# pair on /api/health.flight. Each corpus below crafts a tail whose
+# latest event lands on a specific flight pair, with the previous
+# events kept short and incidental so the timeline beside the map
+# stays readable in the audit PNG.
+def _ui6_event(idx: int, **overrides):
+    base = {
+        "id": f"ui6-{idx:03d}",
+        "timestamp": f"2026-05-04T12:00:{idx:02d}Z",
+        "type": "file_change",
+        "source": "watcher",
+        "data": {
+            "path": "src/karasu/example.py",
+            "change_type": "modified",
+            "classification": "code_change",
+            "priority": "normal",
+        },
+        "dispatch": {},
+        "response": {},
+    }
+    base.update(overrides)
+    return base
+
+
+# Lightweight tail prefix shared across the per-flight corpora so
+# the timeline panel beside the map is not empty during the
+# capture. The latest event in each corpus determines the flight.
+_UI6_PREFIX = [
+    _ui6_event(1),
+    _ui6_event(
+        2,
+        type="agent_response",
+        source="adapter",
+        data={
+            "correlates": "ui6-001",
+            "path": "src/karasu/example.py",
+            "priority": "normal",
+        },
+        dispatch={
+            "agent": "claude_code",
+            "status": "completed",
+            "trust_level": 1,
+        },
+        response={"content": "ok", "requires_human": False},
+    ),
+]
+
+
+FLIGHT_CORPORA: dict[str, list[dict]] = {
+    # latest = file_change watcher → user → karasu
+    "flight-user-karasu": _UI6_PREFIX
+    + [_ui6_event(3, timestamp="2026-05-04T12:01:00Z")],
+    # latest = file_change with pending dispatch to claude_code →
+    # karasu → claude
+    "flight-karasu-claude": _UI6_PREFIX
+    + [
+        _ui6_event(
+            4,
+            timestamp="2026-05-04T12:01:05Z",
+            dispatch={
+                "agent": "claude_code",
+                "status": "pending",
+                "trust_level": 1,
+            },
+        ),
+    ],
+    # latest = agent_response from claude → claude → karasu
+    "flight-claude-karasu": _UI6_PREFIX
+    + [
+        _ui6_event(
+            5,
+            timestamp="2026-05-04T12:01:10Z",
+            type="agent_response",
+            source="adapter",
+            data={
+                "correlates": "ui6-001",
+                "path": "src/karasu/example.py",
+                "priority": "normal",
+            },
+            dispatch={
+                "agent": "claude_code",
+                "status": "completed",
+                "trust_level": 1,
+            },
+            response={"content": "ok", "requires_human": False},
+        ),
+    ],
+    # latest = github_webhook ingress → github → karasu
+    "flight-github-karasu": _UI6_PREFIX
+    + [
+        _ui6_event(
+            6,
+            timestamp="2026-05-04T12:01:15Z",
+            source="github_webhook",
+            data={
+                "path": "src/karasu/example.py",
+                "change_type": "review_comment",
+                "classification": "code_change",
+                "priority": "high",
+                "github_event": "pull_request_review_comment",
+                "github_action": "created",
+                "github_pr": 42,
+                "github_repo": "VDP89/Karasu-",
+                "github_author": "reviewer1",
+            },
+        ),
+    ],
+    # latest = controller_resubmit → user → karasu (operator scar)
+    "flight-controller-resubmit": _UI6_PREFIX
+    + [
+        _ui6_event(
+            7,
+            timestamp="2026-05-04T12:01:20Z",
+            source="controller",
+            data={
+                "path": "src/karasu/example.py",
+                "change_type": "modified",
+                "classification": "code_change",
+                "priority": "high",
+                "controller_resubmit": True,
+                "resubmit_origin": "ui6-001",
+                "controller_chain_depth": 1,
+            },
+        ),
+    ],
+    # latest = unknown event type → flight is None (crow parked).
+    "flight-parked": _UI6_PREFIX
+    + [
+        _ui6_event(
+            8,
+            timestamp="2026-05-04T12:01:25Z",
+            type="future_event_type",
+        ),
+    ],
+}
+
+
 STATE_CORPORA: dict[str, list[dict]] = {
     "idle": _BASELINE,
     "processing": _BASELINE
@@ -382,6 +521,100 @@ CAPTURES: dict[str, list[dict]] = {
             "full_page": False,
         },
     ],
+    # UI-6 — Live Map captures.
+    #
+    # Each PNG seeds a flight corpus whose latest event lands the
+    # /api/health.flight projection on a specific (source, target)
+    # pair, then waits long enough for the polling tick to fetch
+    # /api/health and the JS to apply the transition. The wide
+    # viewport (1440x900) shows the side-by-side map+timeline
+    # layout per the operator's UI-6 layout decision (>= 1280 px:
+    # split; < 1280 px: stacked).
+    "UI-6-livemap": [
+        {
+            # Empty state stays the first impression — the map
+            # only appears once events populate the projection
+            # (UI-3 / UI-5 contract carried into UI-6).
+            "name": "00-empty-state-no-map.png",
+            "url": "/",
+            "seed": False,
+            "wait_ms": 3500,
+            "full_page": False,
+        },
+        {
+            # Latest event is a watcher file_change → user → karasu.
+            # The crow flies into the watchtower from the user
+            # node on the left edge.
+            "name": "01-flight-user-to-karasu.png",
+            "url": "/",
+            "seed_events": "flight-user-karasu",
+            "wait_ms": 3500,
+            "full_page": False,
+        },
+        {
+            # Latest event is a file_change with a router-assigned
+            # claude_code dispatch in flight → karasu → claude.
+            # The map narrates the outbound leg the timeline
+            # cannot read on its own.
+            "name": "02-flight-karasu-to-claude.png",
+            "url": "/",
+            "seed_events": "flight-karasu-claude",
+            "wait_ms": 3500,
+            "full_page": False,
+        },
+        {
+            # Latest event is an agent_response from claude →
+            # claude → karasu. Inbound leg, the response landed.
+            "name": "03-flight-claude-to-karasu.png",
+            "url": "/",
+            "seed_events": "flight-claude-karasu",
+            "wait_ms": 3500,
+            "full_page": False,
+        },
+        {
+            # Latest event is a github_webhook ingress →
+            # github → karasu.
+            "name": "04-flight-github-to-karasu.png",
+            "url": "/",
+            "seed_events": "flight-github-karasu",
+            "wait_ms": 3500,
+            "full_page": False,
+        },
+        {
+            # Latest event is a controller_resubmit (operator
+            # scar) → user → karasu. Same destination pair as
+            # the watcher file_change, but the auditor reads the
+            # timeline beside it to confirm the controller_resubmit
+            # marker; the map stays semantically right.
+            "name": "05-flight-controller-resubmit.png",
+            "url": "/",
+            "seed_events": "flight-controller-resubmit",
+            "wait_ms": 3500,
+            "full_page": False,
+        },
+        {
+            # Latest event has no mapped flight pair → projection
+            # returns null; the crow parks (hidden) and the map
+            # nodes return to their resting --fg-2 colour.
+            "name": "06-flight-parked.png",
+            "url": "/",
+            "seed_events": "flight-parked",
+            "wait_ms": 3500,
+            "full_page": False,
+        },
+        {
+            # Narrow viewport collapses the side-by-side layout
+            # to stacked (map on top, timeline below). The map's
+            # aspect-ratio recovers to 4/3 to keep nodes readable
+            # at narrow widths.
+            "name": "07-livemap-narrow-viewport.png",
+            "url": "/",
+            "seed_events": "flight-claude-karasu",
+            "viewport": {"width": 720, "height": 1280},
+            "wait_ms": 3500,
+            "full_page": True,
+        },
+    ],
 }
 
 # Recording plan per slug. Each entry is a single video capture:
@@ -409,6 +642,33 @@ RECORDINGS: dict[str, dict] = {
             {"seed_events": "waiting", "wait_ms": 1000},
             {"seed_events": "error", "wait_ms": 1000},
             {"seed_events": "idle", "wait_ms": 800},
+        ],
+    },
+    # UI-6 — Live Map .webm.
+    #
+    # Walks the dispatch chain so the auditor sees multiple flights
+    # in one recording: file_change watcher → router-assigned to
+    # claude → response from claude → github webhook ingress →
+    # human_decision (rendered via the controller-resubmit corpus,
+    # same user→karasu pair) → empty (parked).
+    #
+    # Viewport is 1024x640 — full-shell context per Codex pin #5
+    # (the auditor must confirm the SHELL stays still from a single
+    # frame, not see a cropped close-up of the flying crow).
+    #
+    # Per-frame wait is 1000 ms so each 600 ms ease-mag transition
+    # finishes inside the frame and the next seed lands on a settled
+    # surface; total wall time ~6 s.
+    "UI-6-livemap": {
+        "viewport": {"width": 1024, "height": 640},
+        "url": "/",
+        "frames": [
+            {"seed_events": "flight-user-karasu", "wait_ms": 1000},
+            {"seed_events": "flight-karasu-claude", "wait_ms": 1000},
+            {"seed_events": "flight-claude-karasu", "wait_ms": 1000},
+            {"seed_events": "flight-github-karasu", "wait_ms": 1000},
+            {"seed_events": "flight-controller-resubmit", "wait_ms": 1000},
+            {"seed_events": "flight-parked", "wait_ms": 800},
         ],
     },
 }
@@ -469,20 +729,29 @@ def _seed_workdir(
 
 
 def _resolve_seed_events(plan: dict) -> list[dict] | None:
-    """Translate a plan's ``seed_events`` (a STATE_CORPORA key,
-    or a literal list) into the events to write to the bus.
-    ``None`` means use the plan's ``seed`` field instead.
+    """Translate a plan's ``seed_events`` (a corpora key, or a
+    literal list) into the events to write to the bus. ``None``
+    means use the plan's ``seed`` field instead.
+
+    The lookup walks STATE_CORPORA first (UI-5) then FLIGHT_CORPORA
+    (UI-6). Keys are namespaced by prefix (``flight-...``) so a
+    collision between the two registries is impossible by
+    convention; the registries themselves stay separate so the
+    crow_state corpora and the flight_route corpora are
+    independently auditable.
     """
     spec = plan.get("seed_events")
     if spec is None:
         return None
     if isinstance(spec, str):
-        if spec not in STATE_CORPORA:
-            raise ValueError(
-                f"seed_events {spec!r} not in STATE_CORPORA "
-                f"(known: {sorted(STATE_CORPORA)})"
-            )
-        return STATE_CORPORA[spec]
+        if spec in STATE_CORPORA:
+            return STATE_CORPORA[spec]
+        if spec in FLIGHT_CORPORA:
+            return FLIGHT_CORPORA[spec]
+        raise ValueError(
+            f"seed_events {spec!r} not in STATE_CORPORA or FLIGHT_CORPORA "
+            f"(known: {sorted(set(STATE_CORPORA) | set(FLIGHT_CORPORA))})"
+        )
     if isinstance(spec, list):
         return spec
     raise TypeError(f"seed_events must be str or list, got {type(spec).__name__}")

@@ -2,310 +2,268 @@
 
 ## Goal
 
-**UI-6 — the Live Map. Five domain nodes + crow flight per bus event.**
+**UI-7 — the Detail panel.** Click a timeline row OR a Live Map
+node and a lateral drawer slides in from the right with the
+event's pretty-printed JSON. Custom syntax highlighting on the
+existing palette (no highlight.js) — same editorial restraint
+the rest of the surface earns through hand-set tokens, not
+imported themes.
 
-Per UI-0 design brief §6, UI-6 is *"the chunk where the watchtower
-becomes coordinated motion"*. Five fixed nodes (User / Karasu /
-Claude / Codex / GitHub) with edges defined by the bus event flow.
-On each `file_change` / `agent_response` / `human_decision`, the
-canonical crow shipped in UI-5 flies between the relevant nodes
-along an SVG arc-path, 600 ms ease-mag, beak leading the tangent.
+Per UI-0 §6: *"Click on timeline row or map node → lateral
+drawer with pretty-printed JSON."* This is the chunk where the
+operator goes from *seeing the system think* to *interrogating a
+single beat*.
 
-UI-6 is the second motion-introducing chunk after UI-5; it ships
-a `.webm` recording in the same PR — **no exception** per the
-binding rule Codex pinned across UI-3 / UI-5 audits.
+## Binding constraints carried forward (P0)
 
-## Binding constraints from UI-3 / UI-4 / UI-5 audits (P0)
-
-Seven binding rules carried forward, all pinned by Codex in
-prior audit verdicts. Treat as P0 if violated, NOT as guidance.
+UI-6 audit added FIVE additional pins for UI-7+ (Codex,
+2026-05-04, PR #78 APPROVED-with-observations). Verbatim:
 
 ```text
-1. Crow flight may animate; the SHELL must remain still.
-   (Inherits "el crow puede tener vida; la superficie no
-   puede perder calma" from UI-4 + extends to the new map
-   chrome.)
-
-2. Flight transform belongs ONLY to the crow / flying-crow
-   element. Header chrome, timeline rows, footer cells, AND
-   the new map chrome (nodes, edges, labels, container) are
-   editorially still. No transform / animation on any of
-   those.
-
-3. UI-6 needs a SECOND asset: crow-flight.svg with wings
-   extended. Do NOT rotate the perched UI-5 crow and call it
-   flight — wings are folded; rotating the perched crow reads
-   as "tossed by the air", not flying. Source candidates
-   (same hunt pattern as UI-5): OpenMoji bird default pose,
-   Wikimedia "flying crow silhouette", heraldic raven
-   displayed. CC-licensed; attribute in the asset comment +
-   sprites_spec.md.
-
-4. The flying crow must be BEAK-LEADING along the path
-   tangent, with RESTRAINED rotation. Compute heading via
-   atan2(dy, dx) on each animation frame (or as a single
-   transform-origin + rotate at midpoint if frame-by-frame
-   is too noisy). Keep the rotation magnitude functional,
-   not theatrical — if the crow looks like it's doing
-   barrel rolls, the magnitude is too large.
-
-5. UI-6 .webm must show full-shell context (1024 × 640 or
-   wider — the map will need horizontal real estate). NOT a
-   cropped animation demo focused only on the flying crow.
-   Auditor must be able to confirm BOTH that the crow flies
-   AND that nothing else moves from a single frame.
-
-6. Live Map nodes / edges must NOT pulse, bounce, glow, or
-   "perform" unless a later audited chunk explicitly earns
-   that motion. Static nodes + a flying crow is the entire
-   choreography for UI-6. Hover states for nodes are OK
-   (colour transition only, per UI-2's chromatic whitelist).
-
-7. Any visual state derived from /api/health (or any other
-   server projection) MUST be covered with unit tests.
-   UI-5 caught _crow_state mid-audit because the projection
-   bug shipped to PNG / .webm artefacts; UI-6 adds at least
-   one new projection (which node is "active" given the bus
-   tail), so the precedence MUST be pinned in
-   tests/test_ui_server.py before the visual code lands.
+A. The Live Map is now an orientation layer, not a simulation
+   layer.
+B. UI-7 must not add motion to nodes, edges, timeline rows,
+   header, footer, or map chrome unless a new audited chunk
+   explicitly earns it.
+C. Any new /api/health-derived visual state must ship with
+   tests before screenshots.
+D. Keep latest-event semantics for flight unless a future PR
+   explicitly introduces stateful route memory and tests it.
+E. Do not let the detail drawer or inspector compete with the
+   crow/map; the surface remains editorial, not dashboard.
 ```
 
-## What ships in UI-6
+Pin E is the immediately load-bearing one for UI-7: the drawer
+must NOT borrow the visual weight of the crow or the map. Slide
+in, present JSON, slide out. No icons, no chrome, no badges.
+
+The seven Codex pins from UI-3 / UI-4 / UI-5 / UI-6 audits stay
+binding. The new chunk introduces motion (a drawer panel slides
+in) so several pins re-fire:
 
 ```text
-src/karasu/ui/static/assets/crow/crow-flight.svg   NEW.
-  - Wings extended silhouette per UI-0 §5.6 (vector,
-    monochrome, currentColor, scales).
-  - viewBox sized for the flight pose (probably wider than
-    UI-5's 72×72 to fit the wings).
-  - Source: TBD — operator-vetted CC-licensed asset adapted
-    to currentColor + the editorial vibe (austere, instrument,
-    not friendly).
-  - Optional: small operator-added details (eye notch in same
-    canvas-colour pattern as UI-5).
+1. Crow flight may animate; the SHELL must remain still. UI-7
+   adds a drawer that slides in over the canvas — the drawer
+   IS the new motion surface, but the shell behind it (header,
+   timeline beats, map nodes, footer) does NOT shift, scale,
+   blur or fade while the drawer opens. The drawer floats,
+   the shell stays.
 
-src/karasu/ui/static/css/map.css                   NEW.
-  - .live-map container: grid layout for the five nodes,
-    fixed positions in the available canvas area.
-  - .node base: dot or small mark + label. Static; hover
-    colour transition only (UI-2 chromatic whitelist).
-  - .edge: optional faint hairline (--fg-3) between
-    connected nodes — purely visual scaffolding for the
-    flight path. May be omitted if the flight arc itself
-    reads enough.
-  - .crow-flight base: position absolute over the map,
-    transform-origin centre, transitions wired in JS.
+2. Transform belongs to the moving element only. The drawer's
+   translate-X transition lives on the drawer itself, not on
+   .shell-main, .live-map, the timeline rows, etc. The crow
+   in the live-map continues to fly during a drawer-open if
+   the bus advances; the two motions are independent.
+
+3. The drawer needs --shadow-2 (the elevation token UI-0 §5.4
+   reserves for it). This is the SECOND motion-introducing
+   chunk after UI-5 / UI-6, so the audit cadence (PNG + .webm
+   ≤ 5 s ≤ 500 KB ≥ 1024×640) applies again WITHOUT exception.
+
+4. Custom syntax highlighting. NO highlight.js, NO prism.
+   Use the existing tokens (--accent for keys, --warn for
+   strings, --fg-2 for punctuation, --fg-3 for braces) and
+   write the highlighter in vanilla TS. ~50 LOC.
+
+5. Reduced motion contract holds. The slide transition clamps
+   to 1ms via reset.css's chromatic whitelist; the drawer
+   appears instantly. State change still legible.
+
+6. Map nodes / edges still NOT pulse, bounce, glow. Click on
+   a node opens the drawer; that click's only visual effect
+   on the node is :focus-visible (UI-3 focus ring). No
+   "selected" pulse.
+
+7. Any visual state derived from a server projection MUST be
+   covered by unit tests. UI-7's projection is whatever
+   /api/events already returns plus an ID-targeted single-event
+   read; if a new endpoint or field appears, the unit tests
+   are NOT optional.
+```
+
+## What ships in UI-7
+
+```text
+src/karasu/ui/static/css/drawer.css                NEW.
+  - .drawer container: position fixed, right edge, slides
+    in from off-canvas. Width clamped (min 360 px / 90 vw,
+    max 560 px). --bg-1 background, hairline left border.
+  - .drawer.is-open: transform: translateX(0). Default state
+    is translateX(100%) (off-canvas).
+  - .drawer-close button: top-right, --fg-2, hover --fg-1.
+  - .drawer-body: scrollable, max-height calc(100vh - header).
+  - .drawer-key, .drawer-string, .drawer-number, .drawer-bool,
+    .drawer-null: token-driven syntax highlighting.
 
 src/karasu/ui/static/index.html  (extension)
-  - New <section class="live-map"> in main, alongside the
-    existing timeline. May replace the timeline as the
-    "default view" or sit beside it — design call for the
-    chunk plan.
-  - Inline <svg class="crow-flight"> with the canonical
-    flight asset, hidden by default.
-  - JS in the existing <script> block: subscribes to /api/events,
-    on each new event computes (source_node, target_node)
-    and triggers a flight transition.
+  - <aside class="drawer" hidden> at the bottom of the shell.
+  - JS: clickable timeline rows + map nodes that open the
+    drawer with the relevant event. Esc / click-outside / X
+    button to close.
+  - Highlighter in ~50 LOC vanilla TS — operates on the
+    JSON.stringify(event, null, 2) output, walks token-by-
+    token, emits <span class="drawer-...">.
 
 src/karasu/ui/server.py  (extension)
-  - NEW projection helper: _flight_route(events) → returns
-    (source, target) tuple identifying which two nodes the
-    most-recent event flies between. Mirrors _crow_state's
-    pattern: read-only projection over the event tail.
-  - /api/health gains a `flight` field with this projection
-    (additive, doesn't break UI-3..UI-5 consumers).
+  - Optional: GET /api/events/<id> for single-event lookup.
+    The /api/events list already returns enough; UI-7 can
+    open the drawer purely from client-side state (the row
+    or node carries the event id, the JS reads from the
+    most recent /api/events response). Add the endpoint
+    only if the audit asks for it.
+  - No projection change otherwise.
 
-tests/test_ui_server.py  (extension)
-  - Unit tests for _flight_route covering: each event
-    type → expected (source, target); empty events →
-    (None, None); precedence on multiple recent events.
-  - Mandatory per Codex pin #7 (state projection bugs must
-    be covered with unit tests). UI-5 shipped without these
-    and the bug went visual before being caught.
+tests/test_ui_server.py  (extension if /api/events/<id> ships)
+  - Single-event lookup: known id returns 200 + projection;
+    unknown id returns 404; bus empty returns 404.
 
 scripts/ui_screenshots.py  (extension)
-  - UI-6 capture plan: PNGs at flight midpoints + at-rest
-    states + the empty-state map (no events).
-  - --record-video continues to work; the recording walks
-    a dispatch chain (file_change → agent_response →
-    human_decision → resubmit) so the auditor sees multiple
-    flights in one .webm.
+  - UI-7 capture plan: drawer-closed, drawer-open-on-timeline-
+    row, drawer-open-on-map-node, drawer-narrow-viewport.
+  - --record-video walks click → open → switch row →
+    close, full-shell.
 
-docs/ui/screenshots/UI-6-livemap/   NEW.
-  - PNGs + README per UI-2/UI-3/UI-4/UI-5 pattern.
-  - "What to look at" section covering: which event types
-    fly between which nodes, the flight transform tangent,
-    and the SHELL stillness (re-confirming pin #1 + #2).
+docs/ui/screenshots/UI-7-detail/   NEW.
+  - PNGs + README per UI-2..UI-6 pattern.
 
-docs/ui/recordings/UI-6-livemap.webm   NEW.
-  - The recording.
-  - <500 KB. Same transcoding fallback as UI-5 if needed.
-  - Full-shell viewport per pin #5.
-
-docs/ui/assets/karasu_sprites_spec.md   (UPDATE)
-  - Document crow-flight.svg as a SECOND canonical asset.
-  - Provenance + CC attribution for the flight pose source.
-  - State table reads now: idle/processing/waiting/error
-    use crow.svg; flight uses crow-flight.svg as a phase
-    overlay during transitions.
+docs/ui/recordings/UI-7-detail.webm   NEW.
 ```
 
 ## Surface contract — must respect
 
 ```text
-- UI = read-only sink. UI-6 only adds GET /api/health
-  field (additive); no projection change to /api/events;
-  no bus mutation.
-- No new bus event types. The flight phase derives entirely
-  from existing event tail.
-- No new runtime dependency. Stdlib + the assets shipped
-  in UI-2..UI-5. Playwright stays dev-only.
-- No build step. SVG and CSS ship static.
+- UI = read-only sink. UI-7 stays read-only against the bus.
 - Frozen contracts: AgentResponse, F3, F7, F8, surface=sink,
   single-worker invariant, scar=stored-correction-only,
-  I-001..I-006, TriggerSource Protocol, bus event schema —
-  none touched.
-- The empty-state hero from UI-3 stays the first impression
-  on a silent bus; UI-6 introduces the map only when events
-  populate the projection.
+  I-001..I-006, TriggerSource Protocol, bus event schema,
+  the /api/health additive fields shipped in UI-3..UI-6.
+- The empty-state hero from UI-3 stays the first impression.
+- The Live Map from UI-6 keeps flying while the drawer is
+  open — they are independent motions.
+- No build step. CSS / TS ship static.
+- No new runtime dependency.
 ```
 
 ## Open questions to resolve while planning
 
 ```text
-1. Map vs timeline: replace, sit beside, or toggle? UI-3
-   shipped the timeline as the default "events exist" view.
-   Does UI-6's map replace it, sit alongside (split view),
-   or get toggled by a UI-7 detail panel? Lean: sit alongside
-   in a two-column layout on wide viewports, stacked on
-   narrow. Confirm with operator before coding.
+1. Click target on the map node: the dot OR the whole .map-node
+   <g>? Hit area vs. label collision. Lean: the whole <g> with
+   tabindex (already there); the dot stays small for editorial
+   weight but the click registers anywhere over the node group.
 
-2. Flight route projection: deterministic per event type, or
-   data-driven from event metadata? Lean: deterministic
-   table — file_change → User→Karasu, agent_response →
-   adapter→Karasu, github_webhook → GitHub→Karasu, etc.
-   Keep the table small and document it in the spec.
+2. Drawer payload — full event JSON or filtered projection?
+   Lean: the projection (what /api/events already returns).
+   Adding the raw bus event would surface schema fields the
+   surface contract does NOT cover yet (event_metadata,
+   internal trace ids); the projection is the canonical UI
+   read.
 
-3. Multiple concurrent dispatches: queue, parallel, or
-   coalesce? Karasu's single-worker invariant means at most
-   one dispatch in flight at the pipeline level, but the
-   visual flight (600 ms) may overlap with the next event's
-   queued flight. Lean: queue strictly — if a flight is in
-   progress, the next event's flight starts on completion.
-   Avoids visual chaos; matches the pipeline's serial truth.
+3. Multiple drawers? Stacked? Lean: ONE drawer at a time. A
+   second click closes the first. Avoids a queue, avoids a
+   UX that asks the operator to remember which is which.
 
-4. Reduced motion for flight: per UI-2's chromatic whitelist,
-   transforms clamp to 1 ms. Flight stops being a flight
-   under reduced-motion. Lean: instead, swap the crow asset
-   to crow-flight.svg at the SOURCE node + INSTANT relocate
-   to the TARGET node + swap back to crow.svg. No transition,
-   but the state change is still legible.
+4. Map-node click → which event opens? The latest event whose
+   _flight_route maps to that node. Two cases: source-side
+   click (e.g. user) → latest event flying FROM user; target-
+   side click (e.g. claude) → latest event flying TO claude.
+   Empty if none. Document the rule in the README.
 
-5. Flight asset hunt: OpenMoji bird default pose vs Wikimedia
-   "Carrion crow in flight" vs heraldic raven displayed. The
-   heraldic option is most aligned editorially (austere,
-   instrument, classical). Investigate first.
+5. Highlighter scope: full JSON syntax (objects / arrays /
+   strings / numbers / booleans / null) plus comment-style
+   metadata? Lean: full JSON syntax, NO comment styling
+   (the projection doesn't carry comments). 5 token classes,
+   not 7.
 ```
 
 ## Audit cadence reminder
 
-Per UI-0 §7 + the binding pins:
-
 ```text
-1. Real PNG screenshots under docs/ui/screenshots/UI-6-livemap/
-   for every visible state.
-2. .webm recording at docs/ui/recordings/UI-6-livemap.webm
-   (≤5 s, <500 KB). REQUIRED per Codex UI-3 pin.
-3. A "what to look at" note covering type/node mapping,
-   flight rotation magnitudes, and reduced-motion behaviour.
+1. Real PNG screenshots under docs/ui/screenshots/UI-7-detail/
+   for every visible state (closed / open-from-timeline /
+   open-from-map / narrow-viewport).
+2. .webm at docs/ui/recordings/UI-7-detail.webm
+   (≤ 5 s, < 500 KB, full-shell ≥ 1024×640).
+3. "What to look at" note covering: the drawer slide motion,
+   shell stillness behind the drawer, syntax highlighting
+   tokens, click-outside / Esc close behaviour.
 4. The diff itself.
-5. The audit prompt for Codex (out-of-band via ChatGPT).
-6. Editorial check: pin #1 + #2 + #6 — verify SHELL stays
-   still. Pin #5 — verify .webm shows full-shell context.
-7. Unit-test check: pin #7 — _flight_route projection MUST
-   be covered. UI-5 shipped without _crow_state tests and
-   Codex caught the bug visually instead of structurally.
-   Don't repeat.
+5. The audit prompt for Codex out-of-band via ChatGPT.
+6. Editorial check: pins #1 + #2 — verify SHELL stays still
+   while drawer opens. Pin #4 — atan2 unchanged. Pin #5 —
+   .webm shows full-shell context.
+7. Unit-test check: pin #7 — if /api/events/<id> ships, the
+   projection MUST be covered.
 ```
 
 ## Pre-reads for next session
 
 ```text
-1. docs/ui/ui-0-design-brief.md §5.6 (crow assets) +
-   §6 (UI-6 roadmap entry) + §5.5 (motion durations,
-   ease-mag for flight, reduced-motion contract).
-2. docs/ui/assets/karasu_sprites_spec.md — UI-5's spec +
-   the "States the crow does NOT carry yet" section that
-   pre-documents the flight asset contract.
-3. src/karasu/ui/server.py — _crow_state + _read_events
-   patterns to mirror for _flight_route.
-4. src/karasu/ui/static/css/crow.css — UI-5's keyframes,
-   ease-mag definition, reduced-motion contract — same
-   primitives apply to flight.
-5. src/karasu/ui/static/index.html — current shell layout
-   (header / main / footer grid). UI-6's map slots into
-   main.
-6. tests/test_ui_server.py — _crow_state unit tests as the
-   pattern to follow for _flight_route.
+1. docs/ui/ui-0-design-brief.md §5.4 (SHADOW — --shadow-2 is
+   reserved for the drawer) + §5.5 (motion durations: panel
+   240ms ease-out for the drawer slide) + §6 (UI-7 roadmap
+   entry).
+2. docs/ui/screenshots/UI-6-livemap/README.md — the precedent
+   for "what to look at" structure.
+3. src/karasu/ui/static/css/timeline.css — feature CSS split
+   pattern; drawer.css mirrors it.
+4. src/karasu/ui/static/index.html — current shell layout +
+   the JS pattern from UI-6 (event delegation, click handling).
+5. src/karasu/ui/server.py — add /api/events/<id> here ONLY
+   if the audit asks for it; UI-7 can land without a server
+   change.
 ```
 
 ## Chunk size estimate
 
 ```text
-Code:       ~300 LOC (crow-flight.svg + map.css + index.html
-            extension + _flight_route + tests + ui_screenshots
-            UI-6 capture plan)
-Assets:     1 SVG asset (crow-flight, small), 5+ PNGs + 1 webm
-Docs:       ~100 LOC (screenshots README + sprites_spec
-            update for the flight asset)
-Tests:      _flight_route precedence (mandatory per pin #7)
-Total:      under the 400 LOC code budget.
+Code:       ~250 LOC (drawer.css + index.html extension +
+            highlighter ~50 LOC + tests if endpoint ships)
+Assets:     no new SVG (the drawer is pure CSS / type)
+Docs:       ~80 LOC (screenshots README)
+Tests:      single-event projection if endpoint ships
+Total:      under the 400 LOC budget.
 ```
 
 ## Do NOT do yet
 
 ```text
-- Do NOT animate anything outside .crow-flight during a
-  flight. Pin #1 + #2 binding.
-- Do NOT rotate the perched UI-5 crow as a substitute for a
-  proper flight asset. Pin #3 binding.
-- Do NOT introduce node "performance" animations (pulse,
-  glow, bounce). Pin #6 binding.
-- Do NOT crop the .webm to the flying crow alone. Pin #5
-  binding.
-- Do NOT ship the projection without unit tests. Pin #7
-  binding — UI-5's audit caught _crow_state visually because
-  no tests pinned the precedence; don't repeat.
-- Do NOT introduce a build step. SVG and CSS ship static.
-- Do NOT colour-code event types in the timeline (still
-  binding from UI-4). Chroma stays reserved for the crow
-  state, --accent, --error.
-- Do NOT introduce write paths to the bus. UI-10+ scope.
+- Do NOT animate anything outside .drawer during the slide.
+  Pin #1 + #2 binding.
+- Do NOT import highlight.js / prism / shiki. The token-driven
+  vanilla highlighter is the editorial choice.
+- Do NOT introduce node "selected" animations (pulse, glow).
+  Pin #6 binding.
+- Do NOT crop the .webm to the drawer alone. Pin #5 binding.
+- Do NOT introduce a build step.
+- Do NOT introduce write paths to the bus.
+- Do NOT tag @codex review. Audits stay operator-mediated.
 ```
 
 ## Anchor for the previous sessions
 
-- **UI-5 (canonical crow + state animations) merged 2026-05-04
-  via PR #74 (`904111a`).** Three audit rounds before APPROVED:
-  (1) FA vector → operator rejected (consumer-mascot); (2) pixel-
-  art pivot → Codex P0 (off-brief per UI-0 §5.6); (3) audit-
-  response vector adapted from OpenMoji "Black Bird"
-  (CC-BY-SA 4.0, attributed) + operator-added legs and eye
-  notch; (4) Codex caught a separate `_crow_state` projection
-  bug on re-audit (completed-tail mis-rendered as processing);
-  fix re-checks LATEST event explicitly + 7 unit tests pin the
-  precedence. APPROVED with observations on the 5th round.
-  P2 (root NOTICE / THIRD_PARTY_NOTICES.md for OpenMoji
-  licence trail) deferred as a follow-up issue.
-- UI-4 (event timeline) merged 2026-05-03 via PR #72
-  (`13e6270`). APPROVED first round.
-- UI-3 (application shell) merged 2026-05-03 via PR #70
-  (`a67d729`). APPROVED first round.
-- 399/394 pytest on Windows local (392 prior + 7 new
-  `_crow_state` tests). The two preexisting failures
-  (`test_git_probe::test_git_tree_path_exists_passes_cwd_through`
-  and `test_ui_server::test_valid_asset_under_static_dir_is_served`)
-  remain — Windows CRLF / cwd quirks; CI Linux green.
-- Karasu HEAD: `904111a` at session close. UI-6 branches off
-  this commit (or the docs(memory) sync that lands before
-  it; both are fast-forward).
+- **UI-6 (Live Map + crow flight) PR open.** `_flight_route`
+  projects the LATEST event to a `(source, target)` pair on
+  `/api/health.flight` (additive). Five domain nodes painted
+  on a static SVG canvas (user / karasu / claude / codex /
+  github); the SECOND canonical asset (`crow-flight.svg`,
+  adapted from game-icons.net "crow-dive" by Lorc, CC BY 3.0)
+  flies between them on bus advances. 22 unit tests + 2
+  HTTP-level tests pin the projection BEFORE the visual code
+  lands (pin #7). Layout: side-by-side ≥1280 px, stacked
+  below; empty-state hero stays the first impression. SVG-
+  element bug self-caught in autonomous review:
+  `crowFlight.hidden=false` on an `<svg>` creates a non-
+  reflecting expando (the IDL `hidden` property is HTMLElement-
+  only); fix uses `removeAttribute('hidden')` /
+  `setAttribute('hidden','')`. 8 PNGs + 1 .webm 242 KB
+  full-shell 1024×640.
+- UI-5 (canonical crow + state animations) merged 2026-05-04
+  via PR #74 (`904111a`). Three audit rounds before APPROVED.
+- UI-4 (event timeline) merged 2026-05-03 via PR #72.
+- UI-3 (application shell) merged 2026-05-03 via PR #70.
+- 421/422 pytest on Windows local (399 prior + 22 new
+  `_flight_route` tests). The same single preexisting failure
+  (`test_valid_asset_under_static_dir_is_served`, Windows
+  CRLF) remains; CI Linux green.
+- Karasu HEAD post-merge: TBD (UI-6 PR open, awaiting audit).

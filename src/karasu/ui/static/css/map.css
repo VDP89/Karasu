@@ -1,0 +1,183 @@
+/* map.css — UI-6 Live Map.
+ *
+ * Five domain nodes (user / karasu / claude / codex / github) on a
+ * static SVG canvas. The canvas itself, the nodes, the edges and
+ * the labels are editorially still — the only thing that moves is
+ * the crow during a flight transition.
+ *
+ * Binding constraints from the Codex audit pins (UI-3 / UI-4 / UI-5):
+ *
+ *   1. Crow flight may animate; the SHELL must remain still. The
+ *      .live-map container, .map-node *, .map-edge and labels are
+ *      static — no transform, no animation.
+ *   2. Flight transform belongs ONLY to .crow-flight. Hover on
+ *      .map-node uses colour transitions only (UI-2 chromatic
+ *      whitelist) — no scale, no glow, no bounce.
+ *   3. Reduced motion: the flight transition clamps to 1ms via
+ *      reset.css's chromatic whitelist. The JS layer compensates
+ *      by INSTANT-relocating the crow to the target node and
+ *      swapping the asset rather than animating along the arc;
+ *      the operator still sees the state change without motion.
+ */
+
+/* --- container ------------------------------------------------- */
+
+.live-map {
+    /* Fixed aspect-ratio canvas so the node grid stays predictable
+     * across viewport widths. The flight arc is drawn in SVG user
+     * units (0 0 800 480) and lays the same way regardless of how
+     * the container is sized. */
+    position: relative;
+    width: 100%;
+    aspect-ratio: 800 / 480;
+    background: var(--bg-1);
+    border: 1px solid var(--fg-3);
+    border-radius: var(--radius-1);
+    overflow: hidden;
+}
+
+.live-map-svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+/* --- nodes ----------------------------------------------------- */
+
+.map-node {
+    /* Node positions are set inline on the <g> via CSS variables
+     * --x / --y in viewBox units (0..800 horizontal, 0..480
+     *  vertical). Positioning happens through the SVG transform
+     * attribute set in index.html — this rule only owns visual
+     * styling. */
+    cursor: default;
+}
+
+.map-node-dot {
+    fill: var(--fg-2);
+    stroke: var(--bg-1);
+    stroke-width: 2;
+    transition: fill var(--duration-micro) var(--ease-out);
+}
+
+.map-node:hover .map-node-dot,
+.map-node:focus-visible .map-node-dot {
+    /* Hover earns a colour shift only (UI-2 chromatic whitelist).
+     * No scale, no glow — the surface stays still. */
+    fill: var(--fg-1);
+}
+
+/* The node currently acting as the flight's source OR target gets
+ * the accent colour for the duration of the flight. JS toggles
+ * .map-node--source / .map-node--target on /api/health updates. */
+.map-node--source .map-node-dot,
+.map-node--target .map-node-dot {
+    fill: var(--accent);
+}
+
+.map-node-label {
+    font-family: var(--font-mono);
+    font-size: var(--fs-12);
+    fill: var(--fg-2);
+    text-anchor: middle;
+    /* Disable selection on the SVG text — the labels are decorative,
+     * not content for the operator to copy. */
+    user-select: none;
+    pointer-events: none;
+}
+
+/* --- edges ----------------------------------------------------- */
+
+/* Hairline scaffolding between connected nodes. Purely visual —
+ * the flight arc itself is computed independently in JS so the
+ * visible edges and the crow's path are decoupled. Edges keep the
+ * map "structurally readable" even when no flight is active. */
+.map-edge {
+    stroke: var(--fg-3);
+    stroke-width: 1;
+    fill: none;
+}
+
+/* --- crow in flight ------------------------------------------- */
+
+/* The flight asset (crow-flight.svg) lives inline in index.html as
+ * an absolute-positioned <svg class="crow-flight">. Position is
+ * driven by JS through the --fx / --fy custom properties (in
+ * percentage of the container box). Rotation is split into two
+ * pieces:
+ *
+ *   --flight-asset-offset:  static offset between the asset's
+ *                           natural orientation and "beak forward".
+ *                           The crow-flight asset's body radiates
+ *                           DOWN-RIGHT from the head region
+ *                           (head/beak top of the viewBox), so
+ *                           rotating +90° aligns the head to the
+ *                           +x axis; from there the dynamic
+ *                           tangent rotation reads as forward
+ *                           flight.
+ *   --flight-heading:       dynamic angle (deg), set by JS from
+ *                           atan2(dy, dx) per Codex pin #4 so the
+ *                           beak leads the path tangent.
+ *
+ * Decoupling the asset offset from the heading lets a future asset
+ * swap (different natural orientation) update one CSS variable
+ * instead of touching JS. */
+.crow-flight {
+    position: absolute;
+    width: 32px;
+    height: 32px;
+    /* Centre on the (--fx, --fy) point. */
+    left: calc(var(--fx, 0%) - 16px);
+    top: calc(var(--fy, 0%) - 16px);
+    color: var(--accent);
+    --flight-asset-offset: 90deg;
+    --flight-heading: 0deg;
+    transform: rotate(calc(var(--flight-heading) + var(--flight-asset-offset)));
+    transform-origin: 50% 50%;
+    transition:
+        left var(--duration-flight) var(--ease-mag),
+        top var(--duration-flight) var(--ease-mag),
+        transform var(--duration-flight) var(--ease-mag),
+        color var(--duration-micro) var(--ease-out);
+    pointer-events: none;
+    /* Hidden by default. JS un-hides on the first /api/health
+     * response that returns a non-null flight projection. */
+}
+
+.crow-flight[hidden] {
+    display: none;
+}
+
+/* --- layout: split with the timeline on wide viewports --------- */
+
+/* Per the operator's UI-6 layout decision: side-by-side at >=1280px,
+ * stacked below. The timeline keeps its UI-4 max-width (720px) and
+ * the map fills the remaining horizontal space. Below 1280px we
+ * stack with the map on top so it remains the visual anchor when
+ * events exist. */
+.shell-main--with-map {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-8);
+    align-items: start;
+    max-width: 1440px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+@media (min-width: 1280px) {
+    .shell-main--with-map {
+        grid-template-columns: minmax(0, 1fr) 720px;
+    }
+}
+
+/* Narrow viewports: the map's aspect-ratio still holds, so it
+ * shrinks proportionally rather than overflowing. */
+@media (max-width: 720px) {
+    .live-map {
+        aspect-ratio: 4 / 3;
+    }
+    .map-node-label {
+        font-size: 10px;
+    }
+}

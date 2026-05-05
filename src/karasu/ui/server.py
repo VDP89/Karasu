@@ -111,6 +111,131 @@ def _read_events(limit: int = DEFAULT_EVENT_LIMIT) -> list[dict[str, Any]]:
     return out
 
 
+# --- UI-6: Live Map flight routing -------------------------------
+#
+# The Live Map paints five fixed nodes (user / karasu / claude /
+# codex / github) and flies the crow between them whenever the bus
+# advances. _flight_route is the read-only projection that tells
+# the surface which (source, target) pair the latest event walks.
+#
+# Binding decisions pinned by the operator before UI-6 implementation:
+#
+#   1. Project the LATEST meaningful event. NO memory of prior
+#      flights. NO invented recovery / delivery flights.
+#   2. agent_response (completed OR failed) walks Agent → Karasu.
+#      The response coming back is the meaningful motion regardless
+#      of outcome; failed dispatches still routed to the agent.
+#   3. controller_resubmit walks User → Karasu (operator intent
+#      semantically, even though the controller mechanically emits).
+#   4. file_change with an in-flight dispatch (router has assigned
+#      an agent and status is pending / dispatched) walks
+#      Karasu → Claude/Codex — the outbound leg the timeline
+#      cannot read on its own.
+#   5. github_webhook walks GitHub → Karasu.
+#   6. human_decision walks User → Karasu.
+#   7. Unknown / unmapped event types return None — the crow stays
+#      parked at the most recent target node (the visual layer's
+#      job, not the projection's).
+#
+# The flight is paired with crow_state on /api/health: state is
+# colour, flight is position. Both are projections of the same
+# event tail; neither holds memory.
+
+# Node identifiers used on the wire and in tests. The CSS / SVG
+# layer keys node positions off these strings, so any rename here
+# is a coordinated UI change.
+NODE_USER = "user"
+NODE_KARASU = "karasu"
+NODE_CLAUDE = "claude"
+NODE_CODEX = "codex"
+NODE_GITHUB = "github"
+
+# Map dispatch.agent strings (as they appear on the bus) to Live
+# Map node ids. Unknown agents fall through to None and the
+# projection returns no flight rather than inventing a target —
+# the operator should see a parked crow, not a wrong route.
+_AGENT_TO_NODE: dict[str, str] = {
+    "claude_code": NODE_CLAUDE,
+    "claude": NODE_CLAUDE,
+    "codex": NODE_CODEX,
+}
+
+
+def _flight_route(
+    events: list[dict[str, Any]],
+) -> tuple[str, str] | None:
+    """Derive the Live Map flight pair from the event tail.
+
+    Returns ``(source_node, target_node)`` for the LATEST event when
+    the event has a deterministic node mapping, or ``None`` when
+    the bus is silent OR the latest event is unmapped (the surface
+    parks the crow).
+
+    Precedence — only the latest event is consulted; older events
+    are NOT searched. This is deliberately stricter than
+    ``_crow_state``'s reverse walk: a flight is the visual proxy
+    for the most recent motion on the bus, and resurrecting an
+    older event's pair would contradict the operator's "no
+    invented recovery flight" pin.
+
+    Tests in tests/test_ui_server.py pin every branch.
+    """
+    if not events:
+        return None
+    ev = events[-1]
+    ev_type = ev.get("type")
+
+    if ev_type == "file_change":
+        # Operator scar → controller resubmit. Mechanically emitted
+        # by the controller, semantically User intent — show as
+        # User → Karasu so the map explains "a human correction
+        # entered the system" rather than "Karasu talked to itself".
+        if ev.get("controller_resubmit"):
+            return (NODE_USER, NODE_KARASU)
+        # GitHub webhook ingress. The projection surfaces both the
+        # github_event field (set when the webhook receiver handled
+        # the payload) and source="github_webhook"; either is enough.
+        if ev.get("github_event") or ev.get("source") == "github_webhook":
+            return (NODE_GITHUB, NODE_KARASU)
+        # Outbound leg: the router has picked an agent and the
+        # dispatch is in flight. Show Karasu → agent so the map
+        # narrates the request leaving the watchtower. Once the
+        # corresponding agent_response lands, the next call to
+        # _flight_route will return the inbound leg.
+        agent = ev.get("agent")
+        dispatch_status = ev.get("status")
+        if agent and dispatch_status in ("pending", "dispatched"):
+            target = _AGENT_TO_NODE.get(agent)
+            if target is not None:
+                return (NODE_KARASU, target)
+        # Plain filesystem / git-hook activity. The change came
+        # from the user editing the working tree.
+        return (NODE_USER, NODE_KARASU)
+
+    if ev_type == "agent_response":
+        # Inbound leg from whichever agent ran. completed AND
+        # failed both route Agent → Karasu — the response landed,
+        # the outcome is the colour (handled by _crow_state),
+        # not the path.
+        agent = ev.get("agent")
+        if agent is None:
+            return None
+        source_node = _AGENT_TO_NODE.get(agent)
+        if source_node is None:
+            return None
+        return (source_node, NODE_KARASU)
+
+    if ev_type == "human_decision":
+        return (NODE_USER, NODE_KARASU)
+
+    if ev_type == "git_event":
+        # Local git activity (commit, push, hook). Counts as User
+        # for routing purposes — the operator drove it.
+        return (NODE_USER, NODE_KARASU)
+
+    return None
+
+
 def _crow_state(events: list[dict[str, Any]]) -> str:
     """Derive the crow's display state from the event tail.
 
@@ -209,11 +334,21 @@ class UIHandler(BaseHTTPRequestHandler):
 
         if path == "/api/health":
             events = _read_events()
+            flight = _flight_route(events)
             self._send_json(
                 {
                     "status": "ok",
                     "events": len(events),
                     "crow": _crow_state(events),
+                    # UI-6 — Live Map projection. ``null`` when the
+                    # bus is silent or the latest event has no
+                    # mapped pair (parked crow); otherwise
+                    # ``{"source": <node>, "target": <node>}``.
+                    "flight": (
+                        {"source": flight[0], "target": flight[1]}
+                        if flight is not None
+                        else None
+                    ),
                 }
             )
             return

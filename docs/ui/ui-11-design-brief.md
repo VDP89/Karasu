@@ -7,9 +7,11 @@
 > chunk after this one (N == 11) executes against the
 > decisions recorded here.
 >
-> **STATUS:** DRAFT — operator sign-off pending on §3 + §10
-> decisions. Sections marked `[NEEDS OPERATOR SIGN-OFF]` are
-> the gates between "exploratory draft" and "binding contract".
+> **STATUS:** CONFIRMED — operator sign-off complete on §3 +
+> §10 decisions (Victor, 2026-05-05: "confirmado segun tus
+> criterios" — every default proposal accepted as the
+> binding contract). Awaiting Codex audit out-of-band before
+> merge.
 
 ## 0 · Why this brief exists
 
@@ -92,11 +94,11 @@ stripe.press        attention through copy + spacing, not chrome.
 Material defaults / Tailwind defaults / component-library
 chrome remain forbidden (UI-0 §4).
 
-## 3 · Confirmed decisions (operator sign-off pending)
+## 3 · Confirmed decisions (operator sign-off complete 2026-05-05)
 
-All decisions below need explicit operator confirmation before
-they bind UI-11 implementation. Each carries a default proposal
-informed by the inherited pins.
+All decisions below confirmed binding by Victor on 2026-05-05
+("confirmado segun tus criterios" — every default proposal
+accepted as the binding contract).
 
 ```text
 A) Surface for the trust adjust affordance:
@@ -105,7 +107,7 @@ A) Surface for the trust adjust affordance:
    agent_response (the dispatch actually carrying a
    trust_level). NO new pane, NO new tab, NO new
    "/agents" page, NO header toolbar.
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-05]
 
 B) Confirmation flow:
    PROPOSAL — Modal overlay, .modal primitive (UI-10).
@@ -113,13 +115,13 @@ B) Confirmation flow:
    in the modal (radio buttons, not free-text) with the
    three documented levels (0 / 1 / 2). Modal mandatory
    per pin §0.5.2.
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-05]
 
 C) Authentication:
    PROPOSAL — None for UI-11. Same as UI-10: surface is
    operator-local (127.0.0.1). UI-12+ deployed surfaces earn
    their own auth design.
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-05]
 
 D) Bus event schema for trust adjust:
    PROPOSAL — Reuse `human_decision` (no new event type)
@@ -131,7 +133,7 @@ D) Bus event schema for trust adjust:
      data.reason          = <optional free-text>
    Mirrors the additive pattern UI-10 used for scar_revoke.
    No schema break for UI-1..UI-10 consumers.
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-05]
 
 E) Server endpoints for trust adjust:
    PROPOSAL —
@@ -142,7 +144,7 @@ E) Server endpoints for trust adjust:
    from). The POST emits the human_decision event +
    returns 204 with no body. Same SW network-only contract
    from UI-8 holds (api/* network-only).
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-05]
 
 F) Persistence semantics — INTENT vs LIVE-MUTATION:
    PROPOSAL — INTENT only. The POST emits the bus event; it
@@ -158,8 +160,9 @@ F) Persistence semantics — INTENT vs LIVE-MUTATION:
    restarts `karasu watch` to pick up the new value, OR a
    later UI-12+ chunk earns the live-mutation pathway with
    its own brief.
-   [NEEDS OPERATOR SIGN-OFF — this is the most important
-   decision in the brief; it determines scope.]
+   [CONFIRMED 2026-05-05 — most important decision in the
+   brief; binds UI-11 scope to INTENT-only emit. Live
+   adapter mutation deferred to UI-12+ with its own brief.]
 
 G) Trust value range exposed by the modal:
    PROPOSAL — 0 / 1 / 2 (enum), rendered as three radio
@@ -169,13 +172,13 @@ G) Trust value range exposed by the modal:
    but have no documented semantics. Conservative:
    restrict UI-11 to the documented range. A future
    chunk earns higher values with explicit semantics.
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-05]
 
 H) Single agent or batch:
    PROPOSAL — Single. Batch trust adjust is a UI-12+
    concern; UI-11 ships one-agent-at-a-time only. Each
    adjust is one click + modal + one POST.
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-05]
 
 I) Chunk split:
    PROPOSAL — Two chunks.
@@ -194,7 +197,7 @@ I) Chunk split:
    for splits when feasible. UI-11a is small enough to
    land independently AND validates the read surface
    before the write.
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-05]
 ```
 
 ## 3.5 · Operator pin (binding when sign-off lands)
@@ -418,7 +421,7 @@ All §3 decisions need confirmation. Plus:
          warning gate this)
    If the doc has different wording, the brief uses THE
    DOC, not this proposal.
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-05]
 
 2. Which agents the surface lists:
    PROPOSAL — every adapter in the running config (read
@@ -427,7 +430,7 @@ All §3 decisions need confirmation. Plus:
    shows. If an agent is configured but its module fails
    to import, list it with `trust_level: null` and a note
    ("not loadable") rather than hiding it.
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-05]
 
 3. Does the UI server READ from karasu.yaml directly, or
    does it ONLY surface what `cmd_watch` already
@@ -437,7 +440,7 @@ All §3 decisions need confirmation. Plus:
    adds complexity. The config IS the contract — even if
    `karasu watch` has not been started, `karasu ui`
    should still list the configured adapters.
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-05]
 
 4. POST validation:
    PROPOSAL —
@@ -446,7 +449,7 @@ All §3 decisions need confirmation. Plus:
      - 422 on invalid type / out of range.
      - 404 on unknown agent name.
      - 4 KiB body cap (same as UI-10 revoke).
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-05]
 
 5. data.action backwards compatibility:
    The /correct + /scar Telegram path emits human_decision
@@ -458,12 +461,12 @@ All §3 decisions need confirmation. Plus:
    consumers branch on the action value; the missing
    action is treated as the legacy Telegram-style
    human_decision (same display as today).
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-05]
 
 6. Modal close UX with Esc:
    PROPOSAL — same as UI-10 §10.6. First Esc closes
    modal. Second Esc closes drawer.
-   [NEEDS OPERATOR SIGN-OFF — confirm to bind.]
+   [CONFIRMED 2026-05-05]
 ```
 
 ## 11 · Definition of "done"
@@ -511,15 +514,14 @@ Codex audits the brief and operator sign-off lands on §3 +
 ## 12 · Status
 
 ```text
-Brief status:        DRAFT (operator sign-off pending on §3
-                     + §10).
-Operator sign-off:   PENDING.
-Codex audit:         PENDING (after operator sign-off).
+Brief status:        CONFIRMED (operator sign-off complete
+                     2026-05-05 on every §3 + §10 decision).
+Operator sign-off:   COMPLETE (2026-05-05).
+Codex audit:         PENDING (out-of-band via ChatGPT).
 Implementation:      BLOCKED on the brief merging.
 ```
 
-The brief is currently `DRAFT, operator sign-off pending` in
-the same shape `ui-10-design-brief.md` shipped through PR #83.
-Sign-off + audit + follow-ups land on the same branch before
-the merge so the binding contract is in main before UI-11a
-opens.
+The brief mirrors the lifecycle `ui-10-design-brief.md` went
+through (PR #83): operator sign-off + Codex audit + follow-ups
+all landed on the same branch before the merge, so the
+binding contract is in `main` before UI-11a opens.

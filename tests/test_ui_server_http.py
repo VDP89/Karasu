@@ -50,9 +50,11 @@ from karasu.ui import server as ui_server
 def ui_http(tmp_path: Path) -> Iterator[tuple[str, int]]:
     original_event_log = ui_server.EVENT_LOG
     original_scars_path = ui_server.SCARS_PATH
+    original_config_path = ui_server.CONFIG_PATH
     ui_server.configure(
         event_log=tmp_path / "events.jsonl",
         scars_path=tmp_path / "scars",
+        config_path=tmp_path / "karasu.yaml",
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), ui_server.UIHandler)
     thread = threading.Thread(
@@ -69,6 +71,7 @@ def ui_http(tmp_path: Path) -> Iterator[tuple[str, int]]:
         ui_server.configure(
             event_log=original_event_log,
             scars_path=original_scars_path,
+            config_path=original_config_path,
         )
 
 
@@ -139,6 +142,12 @@ def _seed(events: list[dict]) -> None:
             fh.write(json.dumps(event) + "\n")
 
 
+def _write_config(config: dict) -> None:
+    """Write the per-test ``karasu.yaml``. JSON is valid YAML,
+    and keeps the fixture dependency-free."""
+    ui_server.CONFIG_PATH.write_text(json.dumps(config), encoding="utf-8")
+
+
 # ---------------------------------------------------------------------------
 # /api/events — shape lock
 # ---------------------------------------------------------------------------
@@ -173,6 +182,8 @@ EVENTS_PROJECTION_KEYS = frozenset({
     "github_author",
     # data — agent_response correlation (Phase 1B / F3)
     "correlates",
+    # data — human_decision subtype (UI-10+ write-path events)
+    "action",
     # dispatch
     "agent",
     "status",
@@ -209,6 +220,7 @@ def test_api_events_projection_shape_lock(
             "github_repo": "VDP89/Karasu-",
             "github_author": "reviewer1",
             "correlates": "evt-000",
+            "action": "scar_revoke",
         },
         "dispatch": {
             "agent": "claude_code",
@@ -243,6 +255,7 @@ def test_api_events_projection_shape_lock(
     assert projected["path"] == "src/foo.py"
     assert projected["controller_resubmit"] is True
     assert projected["github_pr"] == 42
+    assert projected["action"] == "scar_revoke"
     assert projected["agent"] == "claude_code"
     assert projected["status"] == "completed"
     assert projected["requires_human"] is False
@@ -334,6 +347,126 @@ def test_api_meta_shape_lock(ui_http: tuple[str, int]) -> None:
     # Both fields are strings (or ``"unknown"`` for version).
     assert isinstance(payload["version"], str)
     assert isinstance(payload["bus_path"], str)
+
+
+# ---------------------------------------------------------------------------
+# /api/agents — shape lock (UI-11a)
+# ---------------------------------------------------------------------------
+
+AGENT_KEYS = frozenset({"name", "trust_level", "handles"})
+
+
+def test_api_agents_empty_list_when_no_config(
+    ui_http: tuple[str, int]
+) -> None:
+    """No karasu.yaml / no configured adapters → empty JSON list.
+    UI-11a must work with no ``karasu watch`` process running."""
+    host, port = ui_http
+    assert not ui_server.CONFIG_PATH.exists()
+    status, body, headers = _get(host, port, "/api/agents")
+    assert status == 200
+    assert headers.get("content-type") == "application/json"
+    assert json.loads(body) == []
+
+
+def test_api_agents_shape_lock(ui_http: tuple[str, int]) -> None:
+    """Configured adapters project to the UI-11a read-only shape.
+    The endpoint reads karasu.yaml directly; it does not inspect
+    live adapter instances."""
+    host, port = ui_http
+    _write_config({
+        "agents": {
+            "claude_code": {
+                "trust_level": 2,
+                "handles": ["code_change", "implementation"],
+            },
+            "codex": {
+                "repo": "VDP89/Karasu-",
+                "trust_level": 0,
+                "handles": ["code_review"],
+            },
+        }
+    })
+
+    status, body, headers = _get(host, port, "/api/agents")
+    assert status == 200
+    assert headers.get("content-type") == "application/json"
+    payload = json.loads(body)
+    assert isinstance(payload, list)
+    assert len(payload) == 2
+    for record in payload:
+        assert AGENT_KEYS.issubset(record.keys())
+        assert isinstance(record["name"], str)
+        assert isinstance(record["trust_level"], int)
+        assert isinstance(record["handles"], list)
+
+    assert payload[0] == {
+        "name": "claude_code",
+        "trust_level": 2,
+        "handles": ["code_change", "implementation"],
+    }
+    assert payload[1] == {
+        "name": "codex",
+        "trust_level": 0,
+        "handles": ["code_review"],
+    }
+
+
+def test_api_agents_marks_unsupported_trust_level(
+    ui_http: tuple[str, int]
+) -> None:
+    """Trust values outside {0,1,2} are visible but read-only.
+    UI-11a surfaces the raw int plus an unsupported flag instead
+    of coercing it into the documented range."""
+    host, port = ui_http
+    _write_config({
+        "agents": {
+            "claude_code": {
+                "trust_level": 3,
+            },
+        }
+    })
+
+    status, body, _ = _get(host, port, "/api/agents")
+    assert status == 200
+    payload = json.loads(body)
+    assert payload == [
+        {
+            "name": "claude_code",
+            "trust_level": 3,
+            "handles": ["code_change", "bug_fix", "implementation"],
+            "unsupported": True,
+        }
+    ]
+
+
+def test_api_agents_non_integer_trust_level_is_unsupported(
+    ui_http: tuple[str, int]
+) -> None:
+    """Malformed trust_level config should not turn the UI endpoint
+    into a 500. Surface the raw value as unsupported/read-only so
+    the operator can see and fix the config."""
+    host, port = ui_http
+    _write_config({
+        "agents": {
+            "claude_code": {
+                "trust_level": "high",
+                "handles": ["implementation"],
+            },
+        }
+    })
+
+    status, body, _ = _get(host, port, "/api/agents")
+    assert status == 200
+    payload = json.loads(body)
+    assert payload == [
+        {
+            "name": "claude_code",
+            "trust_level": "high",
+            "handles": ["implementation"],
+            "unsupported": True,
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------

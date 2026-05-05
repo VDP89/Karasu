@@ -277,10 +277,19 @@ def test_run_ui_server_kwarg_calls_configure(
 
     real_configure = ui_server.configure
 
-    def spy(event_log: Path, scars_path: Path | None = None) -> None:
+    def spy(
+        event_log: Path,
+        scars_path: Path | None = None,
+        config_path: Path | None = None,
+    ) -> None:
         captured["event_log"] = event_log
         captured["scars_path"] = scars_path
-        real_configure(event_log=event_log, scars_path=scars_path)
+        captured["config_path"] = config_path
+        real_configure(
+            event_log=event_log,
+            scars_path=scars_path,
+            config_path=config_path,
+        )
 
     class _ServerStub:
         def __init__(self, address, handler) -> None:
@@ -305,6 +314,7 @@ def test_run_ui_server_kwarg_calls_configure(
     )
     assert captured["event_log"] == target_log
     assert captured["scars_path"] == target_scars
+    assert captured["config_path"] is None
 
 
 # ---------------------------------------------------------------------------

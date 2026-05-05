@@ -8,6 +8,7 @@ on each request and exposes:
   GET  /api/events                paginated event projection
   GET  /api/health                server + crow state summary
   GET  /api/meta                  version + configured bus path (UI-3)
+  GET  /api/agents                configured adapters + trust levels (UI-11a)
   GET  /api/scars                 active scars list (UI-10)
   POST /api/scars/{id}/revoke     append revoke + emit bus event (UI-10)
   GET  /assets/...                static assets (fonts, sprites, css)
@@ -82,6 +83,11 @@ STATIC_DIR = Path(__file__).parent / "static"
 # ``karasu.__main__.DEFAULT_SCARS`` so a fresh checkout works.
 SCARS_PATH = Path(".karasu/scars/")
 
+# UI-11a — config path for read-only agent/trust projection.
+# ``cmd_ui`` wires this from the same ``--config`` argument that
+# ``cmd_watch`` uses. Tests override it via ``configure(...)``.
+CONFIG_PATH = Path("karasu.yaml")
+
 # UI-10 — bound on the POST body for /api/scars/{id}/revoke.
 # Modal textarea caps the operator's reason on the client; the
 # server is the second line of defence. 4 KiB matches the
@@ -107,6 +113,18 @@ _BODY_NOT_OBJECT = object()
 # face of an enormous bus).
 DEFAULT_EVENT_LIMIT = 100
 MAX_EVENT_LIMIT = 1000
+
+_SUPPORTED_TRUST_LEVELS = frozenset({0, 1, 2})
+_AGENT_DEFAULTS: dict[str, dict[str, Any]] = {
+    "claude_code": {
+        "trust_level": 1,
+        "handles": ("code_change", "bug_fix", "implementation"),
+    },
+    "codex": {
+        "trust_level": 0,
+        "handles": ("code_review", "audit"),
+    },
+}
 
 
 def _project_event(raw: dict[str, Any]) -> dict[str, Any]:
@@ -141,6 +159,8 @@ def _project_event(raw: dict[str, Any]) -> dict[str, Any]:
         "github_author": data.get("github_author"),
         # data — agent_response correlation (Phase 1B / F3)
         "correlates": data.get("correlates"),
+        # data — human_decision subtype (UI-10+ write-path events)
+        "action": data.get("action"),
         # dispatch
         "agent": dispatch.get("agent"),
         "status": dispatch.get("status"),
@@ -404,6 +424,57 @@ def _list_active_scars() -> list[dict[str, Any]]:
     return out
 
 
+def _list_agents() -> list[dict[str, Any]]:
+    """Project configured adapters for ``GET /api/agents``.
+
+    UI-11a is read-only: it reads ``karasu.yaml`` directly and
+    never reaches into running adapter instances. This keeps
+    ``karasu ui`` useful when ``karasu watch`` is not running and
+    preserves the separate-process contract pinned in the UI-11
+    brief. Unknown adapter names are skipped because the current
+    runtime can only construct the adapters in ``_AGENT_DEFAULTS``.
+    """
+    from karasu.__main__ import _load_config, _normalize_handles
+
+    config = _load_config(CONFIG_PATH)
+    agents_cfg = config.get("agents", {}) or {}
+    if not isinstance(agents_cfg, dict):
+        return []
+
+    out: list[dict[str, Any]] = []
+    for name, defaults in _AGENT_DEFAULTS.items():
+        raw = agents_cfg.get(name)
+        if raw is None or raw is False:
+            continue
+        if not isinstance(raw, dict):
+            continue
+        # Mirrors ``_adapters``: codex without a repo is not an
+        # active adapter, even if the config section exists.
+        if name == "codex" and not raw.get("repo"):
+            continue
+
+        raw_trust = raw.get("trust_level", defaults["trust_level"])
+        try:
+            trust_level: Any = int(raw_trust)
+        except (TypeError, ValueError):
+            trust_level = raw_trust
+        raw_handles = raw.get("handles")
+        handles = (
+            defaults["handles"]
+            if raw_handles is None
+            else _normalize_handles(name, raw_handles)
+        )
+        record: dict[str, Any] = {
+            "name": name,
+            "trust_level": trust_level,
+            "handles": list(handles),
+        }
+        if trust_level not in _SUPPORTED_TRUST_LEVELS:
+            record["unsupported"] = True
+        out.append(record)
+    return out
+
+
 def _emit_human_decision(action: str, data: dict[str, Any]) -> None:
     """Append a ``human_decision`` event to the configured bus.
 
@@ -477,7 +548,7 @@ class UIHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_json(self, payload: dict[str, Any]) -> None:
+    def _send_json(self, payload: Any) -> None:
         body = json.dumps(payload).encode("utf-8")
         self._send(200, body, "application/json")
 
@@ -521,6 +592,13 @@ class UIHandler(BaseHTTPRequestHandler):
                     "bus_path": str(EVENT_LOG),
                 }
             )
+            return
+
+        # UI-11a — read-only trust display source. Reads the
+        # configured adapters from karasu.yaml directly; does not
+        # require ``karasu watch`` and does not mutate adapter state.
+        if path == "/api/agents":
+            self._send_json(_list_agents())
             return
 
         # UI-10 — active scars list. Companion read endpoint to
@@ -641,6 +719,7 @@ class UIHandler(BaseHTTPRequestHandler):
                 "/api/events",
                 "/api/health",
                 "/api/meta",
+                "/api/agents",
                 "/api/scars",
             ):
                 self._send(405, b"method not allowed", "text/plain")
@@ -748,6 +827,7 @@ def _content_type_for(path: Path) -> str:
 def configure(
     event_log: Path,
     scars_path: Path | None = None,
+    config_path: Path | None = None,
 ) -> None:
     """Override the paths the UI server reads from / writes to.
 
@@ -758,14 +838,17 @@ def configure(
     read because ``_read_events`` and ``_list_active_scars``
     resolve the globals at call time.
 
-    UI-10 added the optional ``scars_path`` parameter. Omitting
-    it leaves ``SCARS_PATH`` at its pre-existing default; tests
-    and ``cmd_ui`` pass an explicit path.
+    UI-10 added the optional ``scars_path`` parameter. UI-11a
+    added ``config_path`` so ``GET /api/agents`` reads the same
+    ``karasu.yaml`` path the CLI was given. Omitting either leaves
+    the pre-existing default.
     """
-    global EVENT_LOG, SCARS_PATH
+    global EVENT_LOG, SCARS_PATH, CONFIG_PATH
     EVENT_LOG = event_log
     if scars_path is not None:
         SCARS_PATH = scars_path
+    if config_path is not None:
+        CONFIG_PATH = config_path
 
 
 def run_ui_server(
@@ -773,19 +856,22 @@ def run_ui_server(
     port: int = 8787,
     event_log: Path | None = None,
     scars_path: Path | None = None,
+    config_path: Path | None = None,
 ) -> None:
     """Start the UI HTTP server. Blocks until interrupted.
 
     ``event_log`` overrides the default ``.karasu/events.jsonl``
     bus path; ``scars_path`` overrides the default
-    ``.karasu/scars/`` rules directory (UI-10). ``cmd_ui``
-    passes both resolved from ``karasu.yaml``; callers that
-    omit either kwarg keep the pre-existing default.
+    ``.karasu/scars/`` rules directory (UI-10); ``config_path``
+    points the UI-11a agent/trust projection at the same
+    ``karasu.yaml`` the CLI loaded. Callers that omit kwargs keep
+    the pre-existing defaults.
     """
-    if event_log is not None or scars_path is not None:
+    if event_log is not None or scars_path is not None or config_path is not None:
         configure(
             event_log=event_log if event_log is not None else EVENT_LOG,
             scars_path=scars_path,
+            config_path=config_path,
         )
     server = ThreadingHTTPServer((host, port), UIHandler)
     print(f"karasu ui → http://{host}:{port}")

@@ -124,6 +124,20 @@
     color: var(--fg-1);
 }
 
+/* --- UI-11a trust row ------------------------------------------ */
+
+/* Read-only, drawer-earned trust display. The row is intentionally
+ * typographic rather than button-like; UI-11b earns the Adjust
+ * affordance separately. */
+.drawer-trust-row {
+    padding: var(--space-3) var(--space-5);
+    font-family: var(--font-mono);
+    font-size: var(--fs-14);
+    color: var(--fg-2);
+    background: var(--bg-0);
+    box-shadow: var(--shadow-1);
+}
+
 /* --- drawer body ----------------------------------------------- */
 
 /* Pretty-printed JSON. The body itself is a <pre> — preserves

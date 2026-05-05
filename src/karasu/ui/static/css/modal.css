@@ -283,8 +283,15 @@
 
 .drawer-scar-revoke {
     /* Mirrors the modal Revoke action button but as the inline
-     * affordance inside the drawer. Same scope discipline:
-     * --danger reserved for destructive verbs. */
+     * affordance inside the drawer. Pre-confirmation exception
+     * to the §5.1 scope discipline (Codex P2 follow-up on
+     * PR #85): this button uses --danger as the entry-point
+     * styling for the SAME destructive verb the modal then
+     * confirms. Click here ONLY opens the modal — mutation
+     * never happens at this surface. Any new use of --danger
+     * outside (a) modal confirmation buttons or (b) this
+     * drawer pre-confirmation pattern is a P2 audit finding;
+     * see tokens.css for the alias contract. */
     flex-shrink: 0;
     font-family: var(--font-display);
     font-size: var(--fs-12);

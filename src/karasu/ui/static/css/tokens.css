@@ -82,7 +82,18 @@
      * destructive confirmation buttons inside modals only.
      * A regression that paints a warning banner with --danger
      * is a P2 audit finding even though the colour is the
-     * same hex — the alias IS the contract. */
+     * same hex — the alias IS the contract.
+     *
+     * Drawer pre-confirmation exception (Codex P2 follow-up
+     * on PR #85, UI-10 audit): drawer-level Revoke MAY use
+     * --danger only as a pre-confirmation affordance for the
+     * SAME destructive verb the modal then confirms. The
+     * drawer button must NOT perform mutation without the
+     * modal — it is the entry into the modal flow, NOT the
+     * mutation surface. This narrow exception is intentionally
+     * scoped to ".drawer-scar-revoke" today; "danger-adjacent
+     * styling can leak into trust-mutation UI later" is a
+     * P2 regression worth flagging if it happens. */
     --danger: var(--accent);
 
     /* §5.2 — typography. FOUT accepted (font-display: swap) so

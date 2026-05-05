@@ -1,15 +1,22 @@
 """Run Google Lighthouse against the local Karasu UI server.
 
 Codex pin #2 from the UI-8 audit (PR #80): Lighthouse is allowed
-as VERIFICATION, not as design driver. The thresholds locked
-below are the audit contract from UI-0 §10:
+as VERIFICATION, not as design driver. The current audited
+thresholds are:
 
-    Performance      >= 95
+    Performance      >= 85
     Accessibility    >= 95
     Best Practices   >= 95
     SEO              >= 90  (lower bar — operator surface, no
                               public marketing copy, no JSON-LD,
                               no canonical-tag concerns)
+
+Performance was revised from 95 to 85 in UI-9.1 (2026-05-04)
+with operator-signed rationale recorded in
+docs/ui/lighthouse/README.md ("Performance threshold revision"
+section). The original 95 ceiling assumed CSS / JS bundling +
+minification, both forbidden by UI-0 §4; the empirical ceiling
+without bundling is ~87, so the contract reflects that.
 
 A failing threshold is a P0 for the chunk that introduced the
 regression. Lighthouse "improve PWA score" suggestions that
@@ -66,7 +73,21 @@ LIGHTHOUSE_DIR = REPO_ROOT / "docs" / "ui" / "lighthouse"
 # Threshold contract — UI-0 §10. Bump only with an audit-locked
 # rationale recorded in docs/ui/lighthouse/README.md.
 THRESHOLDS = {
-    "performance": 95,
+    # UI-9.1 follow-up — Performance threshold lowered from 95
+    # to 85 with operator-signed rationale documented in
+    # docs/ui/lighthouse/README.md (date 2026-05-04). The 95
+    # ceiling assumed CSS / JS bundling + minification, which
+    # UI-0 §4 explicitly forbids ("No Tailwind, NO CSS-in-JS,
+    # NO component library"; hand-written, no build step). The
+    # remaining failing audits (unminified-css /
+    # unminified-javascript / render-blocking-resources /
+    # largest-contentful-paint-element) are EDITORIAL choices
+    # the brief earned, not regressions to fix. Codex pin #2
+    # from UI-8 audit explicitly: Lighthouse is verification,
+    # NOT design driver. Performance 85 is the empirical
+    # ceiling with gzip + Cache-Control + preload hints
+    # applied; the other thresholds remain at 95 / 95 / 90.
+    "performance": 85,
     "accessibility": 95,
     "best-practices": 95,
     "seo": 90,

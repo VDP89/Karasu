@@ -92,6 +92,32 @@ operator-driven decisions; do not start without sign-off.
 
 ## Binding constraints carried into UI-10+
 
+UI-9.1 audit added FIVE more pins for UI-10+ (Codex,
+2026-05-04, PR #82 APPROVED-with-observations + P1 docstring
+fix). Verbatim:
+
+```text
+1. Performance fixes may optimize delivery, not redesign
+   the shell.
+2. Any future Lighthouse threshold reduction must state:
+   measured ceiling, rejected alternatives, and operator
+   rationale.
+3. Do not introduce bundling / minification / build tooling
+   just to satisfy Lighthouse unless UI-0 §4 is explicitly
+   reopened.
+4. Keep /assets/sw.js on no-cache and
+   Service-Worker-Allowed: / together.
+5. Cache-Control changes must not affect /api/* live
+   projection semantics.
+```
+
+Pin #1 + #3 are the editorial guardrails: future perf work
+optimises delivery (compression, cache, hints), NOT design.
+Pin #2 is the procedural lock: any threshold lowering walks
+the same auditable path UI-9.1 set (measured ceiling +
+alternatives + rationale + operator-signed decision). Pin
+#4 + #5 are structural — preserve the SW boundary contract.
+
 UI-9 audit added SIX additional pins for UI-10+ (Codex,
 2026-05-04, PR #81 APPROVED-with-observations). Verbatim:
 

@@ -19,12 +19,41 @@ audit picture without extra round-trips.
 
 from __future__ import annotations
 
+import gzip
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
+
+# UI-9 follow-up — content types worth compressing on the wire.
+# woff2 fonts and PNG icons are already compressed; gzip-ing
+# them again is CPU for no payload win. Restrict to text-shaped
+# resources only.
+_GZIP_CONTENT_TYPES = (
+    "text/html",
+    "text/css",
+    "application/javascript",
+    "application/json",
+    "image/svg+xml",
+)
+# Minimum response size before we bother gzipping. Below this,
+# the gzip framing overhead can equal or exceed the savings.
+_GZIP_MIN_BYTES = 1024
+
+# Static asset cache TTL. 24 h is conservative for a tool
+# that ships under active development without fingerprinted
+# asset URLs (a fingerprinting build step would let us safely
+# use 1 year per Lighthouse's recommendation; UI-0 §4 forbids
+# the build step). One day strikes the balance between
+# Lighthouse's ``uses-long-cache-ttl`` audit threshold and the
+# need for newly-deployed CSS / SVG to land within a working
+# day. The SW pre-cache list in sw.js + the CACHE_NAME
+# version-bump rule are the durable invalidation mechanism;
+# this header just lets the browser reuse static assets across
+# page navigations within a single session without a round-trip.
+_STATIC_CACHE_MAX_AGE = 86400
 
 # Default bus path. Mutable so ``configure(event_log=...)`` can
 # point the UI server at a non-default ``karasu.yaml`` bus
@@ -319,10 +348,38 @@ class UIHandler(BaseHTTPRequestHandler):
         headers added before ``end_headers``; UI-8 uses it to set
         ``Service-Worker-Allowed: /`` on the SW response so the
         worker registered from /assets/sw.js can scope to root.
+
+        UI-9 follow-up — compress text-shaped responses with gzip
+        when the client advertises support and the body is larger
+        than ``_GZIP_MIN_BYTES``. The compression is purely a
+        Lighthouse Performance lift; it does NOT change the
+        response semantics or wire shape (the JSON / HTML / CSS
+        body is identical after the client decompresses).
+
+        ``Content-Encoding: gzip`` is added BEFORE
+        ``end_headers``; ``Content-Length`` is recomputed from
+        the compressed bytes. Non-text responses (PNG icons,
+        woff2 fonts) skip the path because they're already
+        compressed at the format level.
         """
+        accept_encoding = self.headers.get("Accept-Encoding", "")
+        gzip_ok = (
+            "gzip" in accept_encoding
+            and any(content_type.startswith(t) for t in _GZIP_CONTENT_TYPES)
+            and len(body) >= _GZIP_MIN_BYTES
+        )
+        if gzip_ok:
+            body = gzip.compress(body, compresslevel=6, mtime=0)
+
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        if gzip_ok:
+            self.send_header("Content-Encoding", "gzip")
+            # Tell shared caches the cached entity varies by the
+            # request's Accept-Encoding so a client that did NOT
+            # ask for gzip never sees a cached compressed body.
+            self.send_header("Vary", "Accept-Encoding")
         for name, value in extra_headers:
             self.send_header(name, value)
         self.end_headers()
@@ -422,14 +479,41 @@ class UIHandler(BaseHTTPRequestHandler):
                 # an SW's default scope is the directory it lives
                 # in (/assets/), and we need it to intercept
                 # navigation requests for the entire site.
-                extra: tuple[tuple[str, str], ...] = ()
+                #
+                # UI-9 follow-up — Cache-Control on every static
+                # asset response. The SW pre-cache list in sw.js
+                # handles the durable offline shell; this header
+                # lets the browser reuse static assets across
+                # page navigations without a round-trip.
+                # Lighthouse 2026-05-04 baseline flagged
+                # ``uses-long-cache-ttl`` as the largest single
+                # Performance audit miss. ``public`` lets shared
+                # caches store the response; the SW + the
+                # CACHE_NAME version-bump rule in sw.js are the
+                # invalidation mechanism on real deploys. The
+                # service worker file itself is excluded from
+                # long caching because the SW spec already gives
+                # it a 24 h max-age cap regardless of header,
+                # and we want bumped CACHE_NAME values to land
+                # quickly during development.
+                extra: list[tuple[str, str]] = []
                 if path == "/assets/sw.js":
-                    extra = (("Service-Worker-Allowed", "/"),)
+                    extra.append(("Service-Worker-Allowed", "/"))
+                    extra.append(
+                        ("Cache-Control", "no-cache")
+                    )
+                else:
+                    extra.append(
+                        (
+                            "Cache-Control",
+                            f"public, max-age={_STATIC_CACHE_MAX_AGE}",
+                        )
+                    )
                 self._send(
                     200,
                     target.read_bytes(),
                     _content_type_for(target),
-                    extra_headers=extra,
+                    extra_headers=tuple(extra),
                 )
                 return
 

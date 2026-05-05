@@ -1118,3 +1118,63 @@ Impact:
 
 Next step:
 - UI-11b — trust gradient WRITE affordance. Branch `feat/ui-11b-trust-write` from main. Must remain INTENT-ONLY: modal and post-confirm copy state "Recorded intent. Applies after watch restart."
+
+---
+
+## 2026-05-05 (continued) — UI-11 complete: UI-11a + UI-11b merged
+
+Session context: Victor continued with Codex after token exhaustion. Claude Code resumed
+to verify and audit the Codex-produced PRs, then merged UI-11b.
+
+What changed:
+- **PR #89 merged** (`e535c95`): UI-11a — trust gradient read display.
+  - `GET /api/agents` reads `karasu.yaml` directly.
+  - `data.action` in `_project_event` + `EVENTS_PROJECTION_KEYS` updated.
+  - HTTP shape locks: 4 new tests for `/api/agents` (empty, shape, unsupported int,
+    malformed string trust_level).
+  - Drawer: `trust_level: N` row on `agent_response` events (read-only).
+  - 1 PNG. Audit result: APPROVED (Codex, follow-up for malformed trust guard applied
+    before merge).
+
+- **PR #90 merged** (`de8de48`): docs/memory sync post-UI-11a.
+  - `next-session.md` updated to UI-11b as entry point.
+
+- **PR #91 merged** (`007574d`): UI-11b — trust adjust intent (write affordance).
+  - `POST /api/agents/{name}/trust` → 204. Reads config trust_before, persists
+    intent to `karasu.yaml` (atomic write via tmp), emits `human_decision` event
+    with `action="trust_adjust"`. Order: persist → emit → 204.
+  - Modal `.modal-trust-options` / `.modal-trust-option` scoped under `.modal`.
+    Radio buttons for {0, 1, 2} with one-line descriptions.
+  - Modal lede: "Recorded intent. Applies after watch restart." (pin §11.6.5).
+  - Post-confirm drawer annotation includes same copy.
+  - `--danger` (`modal-revoke` class) on Confirm only when raising trust; neutral
+    otherwise (pin §0.5.3).
+  - Playwright: 5 tests (cancel/confirm/Esc-modal-first/backdrop/whitespace-reason).
+  - 5 PNGs + 1 `.webm` 485 KB. 5 HTTP shape lock tests.
+  - `docs/event-schema.md` updated with `trust_adjust` section.
+  - Audit by Claude Code (in lieu of Codex per operator directive).
+
+Audit verdict (Claude Code, 2026-05-05):
+  APPROVED-with-observations. 0 P0, 0 P1. 2 P2 (non-blocking, no follow-ups applied):
+  - P2-A: yaml.safe_dump strips YAML comments from karasu.yaml (cosmetic).
+  - P2-B: modal displays event-time trust_level; bus records config-time trust_before.
+    Edge case when config changed between dispatch and adjust.
+
+Decisions:
+- `_persist_agent_trust` writes to `karasu.yaml` on POST. This is the intent-persistence
+  mechanism — without it "Applies after watch restart" would be an empty promise. Not
+  a violation of INTENT-ONLY (which refers to NOT mutating running adapter instances).
+- `import yaml` added at top of `server.py` (PyYAML already in pyproject.toml as
+  declared dep `pyyaml>=6.0`).
+- Codex returns to reviewer role for future chunks (UI-12+).
+
+Impact:
+- UI-11 complete. Both write paths (scar revoke UI-10, trust adjust UI-11) landed.
+- main HEAD: `007574d`. 0 PRs open. 0 branches open.
+- 466 tests pass on Windows (excluding 2 known CRLF failures + 18 Playwright deselected).
+- Trust gradient is now adjustable from the operator surface, intent-only, with honest copy.
+
+Next step:
+- UI-12 (push notifications) earns its own brief before any code.
+- Issue #66 (P2 fetch_card retry) non-blocking.
+- Issue #76 (P2 THIRD_PARTY_NOTICES.md) non-blocking.

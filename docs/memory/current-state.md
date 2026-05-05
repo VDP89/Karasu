@@ -25,8 +25,8 @@ UI surface progress (PWA roadmap — main HEAD `e535c95`, 2026-05-05):
 - Lighthouse baseline post-UI-10    ✔ PR #86  merged (`9ed761c`).
 - UI-11 brief (trust adjust)        ✔ PR #87  merged (`37b51ba`, doc-only).
 - UI-11a (trust read display)       ✔ PR #89  merged (`e535c95`).
-- UI-11b (trust write affordance)   ← NEXT. Branch: feat/ui-11b-trust-write.
-- UI-12  (push notifications)       OUT OF SCOPE until UI-11b merges.
+- UI-11b (trust write affordance)   ✔ PR #91  merged (`007574d`).
+- UI-12  (push notifications)       ← NEXT. Earns own brief before code.
 
 ## System status
 
@@ -126,56 +126,25 @@ Cap enforcement: 6 `/scar` rapid-fire → exactly 3 resubmits, 3 cap warnings, 0
 ## Next step (entry point)
 
 ```text
-main HEAD: e535c95 (UI-11a trust read display, 2026-05-05).
+main HEAD: 007574d (UI-11b trust adjust intent, 2026-05-05).
 0 PRs open. 0 branches open.
 
-Entry point: UI-11b — trust gradient WRITE affordance.
-Branch: feat/ui-11b-trust-write (from main).
-Scope (~400 LOC target):
-  - POST /api/agents/{name}/trust endpoint.
-  - Emits human_decision with data.action="trust_adjust",
-    data.agent, data.trust_before, data.trust_after, optional
-    trimmed data.reason.
-  - INTENT-ONLY: no live adapter mutation. Modal and post-
-    confirm surface must state: "Recorded intent. Applies after
-    watch restart."
-  - Drawer extension: Adjust button beside trust_level only for
-    supported agent_response events. No /agents page, no toolbar,
-    no global settings surface.
-  - Reuse UI-10 modal primitive; add modal-trust micro-elements.
-  - Radio options only: trust levels {0,1,2}. Unsupported
-    configured values remain read-only.
-  - HTTP shape locks for POST success/failure + event payload.
-  - Playwright: cancel does not emit, confirm emits, Esc modal-
-    first, backdrop closes modal only, reason trim/omit.
-  - docs/event-schema.md additive trust_adjust section.
-  - 4-5 PNGs + 1 .webm walking the full flow.
+UI-10 + UI-11 COMPLETE. Both write paths are on main:
+  - UI-10: scar revoke (POST /api/scars/{id}/revoke)
+  - UI-11a: trust read display (GET /api/agents + data.action projection)
+  - UI-11b: trust adjust intent (POST /api/agents/{name}/trust,
+    intent-only, persists to karasu.yaml, emits bus event)
 
-Gating pins (P0):
-  §11.6.1  SATISFIED by PR #89. UI-11b may now open.
-  §11.6.5  UI-11b is INTENT-ONLY. Modal copy: "Recorded
-           intent. Applies after watch restart."
-  §11.6.6  Drawer-earned only. No /agents page, no toolbar,
-           no global settings surface.
-  §11.6.7  Modal confirmation mandatory; no inline shortcut.
-  §11.6.8  Modal offers only {0,1,2}; unsupported configured
-           values remain read-only.
-  §11.6.9  Every mutation emits inspectable bus event.
-  §11.6.10 POST success may return 204, but the post-confirm
-           UI must visibly annotate the drawer.
-  §11.6.11 Playwright coverage: cancel, confirm, Esc,
-           backdrop, reason trim/omit.
-  §11.6.12 .webm shows full-shell operator feel.
-
-After UI-11b merges → UI-12 (push notifications, own brief).
+Entry point: UI-12 — push notifications.
+Requires own brief before code (UI-9 audit pin #1 + UI-0 §6).
+Push UX has its own opt-in / unsubscribe / privacy surface.
 
 Remaining items (non-blocking):
 - Issue #66: fetch_card opt-in retry on 502/503/504 (P2).
 - Issue #76: THIRD_PARTY_NOTICES.md for OpenMoji (P2).
-- Issue #77: stale UI-6 tracker; UI-6 already merged.
 - Operator-side: rename repo Karasu- → Karasu (GitHub Settings).
-- Operator-side: confirm ChatGPT Codex Connector App remains
-  uninstalled / unused for this repo.
+- Operator-side: uninstall ChatGPT Codex Connector App if still
+  installed (PR #67 retired the bot; physical uninstall closes loop).
 ```
 
 ## Do NOT do yet

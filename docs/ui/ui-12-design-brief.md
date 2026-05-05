@@ -341,6 +341,22 @@ E) Server endpoints for push:
                                    (Codex P1 binding —
                                    hash is not a store
                                    lookup key).
+                                   Codex P2 binding
+                                   (round 2, 2026-05-05):
+                                   the raw endpoint is
+                                   request-local secret
+                                   material and MUST NOT
+                                   cross into logs, bus
+                                   events, projections,
+                                   screenshots, or
+                                   response bodies. The
+                                   same discipline applies
+                                   to the subscribe POST
+                                   body (which also carries
+                                   the raw endpoint as part
+                                   of the PushSubscription
+                                   payload). Pinned as
+                                   §11.6.16.
    GET /api/push reads the push store directly, the same
    way GET /api/agents reads karasu.yaml directly. Same SW
    network-only contract holds (api/* never cached).
@@ -1224,50 +1240,69 @@ Fifteen pins set by Codex on the UI-12 brief audit
 
 15. Multi-device fan-out must be explicit: each active
     subscription is a separate delivery target.
+
+16. Raw push endpoints are request-local secret material
+    and must never be logged, projected, emitted,
+    screenshotted, or echoed.
 ```
 
-Pins 5 + 6 + 7 are the privacy contract that drives
-§3-D + §3-E + §3-F (endpoint_hash audit-only, raw
-endpoint never on bus, hash never as store lookup
-key, store classified private). Pin 12 is the §3-I
-shape-lock requirement on UI-12b (fetch handler
-ordering is no longer auditable from diff alone). Pin
-13 is the §10.5 cryptography exception named, scoped,
-and non-generalising. Pin 14 is the multi-layer
-rate-limit policy in §6 UI-12c (event-id dedupe +
-per-category debounce + UI-write suppression). The
-remaining pins parallel UI-10 §11.6 / UI-11 §11.6
-contracts (modal mandatory, scope discipline, schema
-discipline, operator-feel .webm).
+Pins 5 + 6 + 7 + 16 are the privacy contract that
+drives §3-D + §3-E + §3-F (endpoint_hash audit-only,
+raw endpoint never on bus, hash never as store lookup
+key, store classified private, raw endpoint
+request-local-secret on subscribe + unsubscribe POST
+bodies). Pin 12 is the §3-I shape-lock requirement on
+UI-12b (fetch handler ordering is no longer auditable
+from diff alone). Pin 13 is the §10.5 cryptography
+exception named, scoped, and non-generalising. Pin 14
+is the multi-layer rate-limit policy in §6 UI-12c
+(event-id dedupe + per-category debounce + UI-write
+suppression). The remaining pins parallel UI-10 §11.6
+/ UI-11 §11.6 contracts (modal mandatory, scope
+discipline, schema discipline, operator-feel .webm).
+
+Pin 16 added in Codex round 2 audit (2026-05-05) as
+the optional tightening alongside the §3-E P2; the
+implementer accepted the tightening to keep the
+privacy contract symmetric across both POST bodies
+(subscribe carries the full PushSubscription
+including endpoint; unsubscribe carries the bare
+endpoint). Pins 1-15 are unchanged from round 1.
 
 ## 12 · Status
 
 ```text
-Brief status:        CHANGES-REQUIRED — fixes applied
-                     in-branch (Claude Opus 4.7,
-                     2026-05-05). Round 1 audit verdict
-                     was CHANGES-REQUIRED; all 8 findings
-                     (2 P0 + 4 P1 + 2 P2) addressed by
-                     edits to §3-A / §3-D / §3-E / §3-F /
-                     §3-G / §3-I / §6 UI-12b / §6 UI-12c /
-                     §9 / §10.5. The fifteen Codex-
-                     proposed §11.6 pins ratified verbatim.
-Operator sign-off:   PENDING on §3 + §10 proposals (the
-                     audit substantively endorsed each via
-                     the Q1-Q7 yes-with-conditions
-                     answers; explicit operator sign-off
-                     still required before merge).
-Codex audit:         Round 1 returned CHANGES-REQUIRED.
-                     Round 2 PENDING (verifies fixes
-                     applied; verifies re-formed §3 + §10
-                     contract holds the audit's
-                     conditions).
+Brief status:        APPROVED-with-observations — Codex
+                     round 2 (2026-05-05). Round 1
+                     verdict was CHANGES-REQUIRED; all 8
+                     findings (2 P0 + 4 P1 + 2 P2)
+                     addressed and verified satisfied in
+                     round 2. Round 2 introduced one new
+                     P2 (§3-E raw endpoint must be marked
+                     request-local secret) plus an
+                     optional tightening (16th pin); both
+                     applied in this commit.
+                     Mergeable.
+Operator sign-off:   PENDING on §3 + §10 proposals.
+                     Codex substantively endorsed each
+                     via Q1-Q7 yes-with-conditions
+                     (round 1) and verified-satisfied
+                     (round 2); explicit operator sign-
+                     off on each PROPOSAL still required
+                     before merge per the UI-11 lifecycle
+                     precedent.
+Codex audit:         Round 1: CHANGES-REQUIRED.
+                     Round 2: APPROVED-with-observations
+                     (1 P2, 0 P1, 0 P0; tightening pin 16
+                     accepted). Sixteen §11.6 pins
+                     ratified as binding.
 Implementation:      BLOCKED until brief merges.
                      UI-12a (read display) ships first per
                      pin §0.5.1 carry-forward; UI-12b
                      (opt-in surface) follows; UI-12c
                      (server-side emit) closes the chunk.
-Loop budget:         Round 1 of 5 consumed.
+Loop budget:         2 of 5 rounds consumed. Audit loop
+                     CLOSED.
 ```
 
 The brief follows the lifecycle `ui-10-design-brief.md` (PR

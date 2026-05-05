@@ -6,6 +6,23 @@
 <meta name="theme-color" content="#131316">
 <link rel="manifest" href="/assets/manifest.json">
 <title>Karasu UI</title>
+<!-- UI-9 follow-up — ``rel="preload"`` hints let the browser
+     fetch every CSS file in parallel with high priority instead
+     of serialising them after the HTML parser hits each
+     ``<link rel="stylesheet">``. This is a browser hint, NOT a
+     build step or a bundler — UI-0 §4 still holds (hand-written
+     CSS, no toolchain). Hints come first, the actual stylesheet
+     links second so the existing render path is unchanged.
+     Lighthouse 2026-05-04 baseline flagged ``render-blocking-
+     resources`` as a Performance miss; this is the surgical
+     fix. -->
+<link rel="preload" href="/assets/css/tokens.css" as="style">
+<link rel="preload" href="/assets/css/reset.css" as="style">
+<link rel="preload" href="/assets/css/base.css" as="style">
+<link rel="preload" href="/assets/css/timeline.css" as="style">
+<link rel="preload" href="/assets/css/crow.css" as="style">
+<link rel="preload" href="/assets/css/map.css" as="style">
+<link rel="preload" href="/assets/css/drawer.css" as="style">
 <link rel="stylesheet" href="/assets/css/tokens.css">
 <link rel="stylesheet" href="/assets/css/reset.css">
 <link rel="stylesheet" href="/assets/css/base.css">

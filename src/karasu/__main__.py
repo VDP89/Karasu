@@ -604,6 +604,40 @@ def cmd_chat(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_retry_http_statuses(raw: str) -> frozenset[int]:
+    """Argparse type-hook for ``--retry-http-statuses``.
+
+    Empty string → empty frozenset (matches the documented default;
+    keeps the round-trip ``CLI flag → fetch_card kwarg`` clean
+    even when the operator passes ``--retry-http-statuses ''``).
+    Otherwise comma-split → ``int(...)`` per part → range-check
+    against the HTTP status range. Bad input fails fast with
+    ``argparse.ArgumentTypeError`` so the operator sees a usage
+    error, not a silent set membership miss at fetch time.
+    """
+    if not raw:
+        return frozenset()
+    out: set[int] = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            code = int(part)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"--retry-http-statuses must be comma-separated "
+                f"integers, got {part!r}"
+            )
+        if code < 100 or code >= 600:
+            raise argparse.ArgumentTypeError(
+                f"--retry-http-statuses must be HTTP status codes "
+                f"(100-599), got {code}"
+            )
+        out.add(code)
+    return frozenset(out)
+
+
 def cmd_peers(args: argparse.Namespace) -> int:
     """Fetch and print a peer agent's A2A AgentCard.
 
@@ -618,6 +652,7 @@ def cmd_peers(args: argparse.Namespace) -> int:
             args.url,
             timeout=args.timeout,
             retries=args.retries,
+            retry_http_statuses=args.retry_http_statuses,
         )
     except AgentCardFetchError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -746,7 +781,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ui.set_defaults(func=cmd_ui)
 
-    from karasu.a2a import DEFAULT_FETCH_RETRIES, DEFAULT_FETCH_TIMEOUT
+    from karasu.a2a import (
+        DEFAULT_FETCH_RETRIES,
+        DEFAULT_FETCH_RETRY_HTTP_STATUSES,
+        DEFAULT_FETCH_TIMEOUT,
+        RECOMMENDED_RETRY_HTTP_STATUSES,
+    )
 
     peers = sub.add_parser(
         "peers",
@@ -777,9 +817,26 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_FETCH_RETRIES,
         help=(
             "additional retry attempts on transient network errors "
-            "(URLError only, NOT non-2xx HTTP status). Backoff is "
-            f"exponential. Default: {DEFAULT_FETCH_RETRIES} "
-            "(no retries — preserves single-shot semantics)."
+            "(URLError only by default; see --retry-http-statuses to "
+            "extend coverage). Backoff is exponential. Default: "
+            f"{DEFAULT_FETCH_RETRIES} (no retries — preserves "
+            "single-shot semantics)."
+        ),
+    )
+    _recommended = ",".join(
+        str(s) for s in sorted(RECOMMENDED_RETRY_HTTP_STATUSES)
+    )
+    peers.add_argument(
+        "--retry-http-statuses",
+        type=_parse_retry_http_statuses,
+        default=DEFAULT_FETCH_RETRY_HTTP_STATUSES,
+        metavar="CODES",
+        help=(
+            "comma-separated HTTP status codes that should trigger "
+            "the same retry loop as URLError. Empty by default "
+            "(non-2xx HTTP statuses surface immediately). "
+            f"Recommended for transient proxy errors: {_recommended}. "
+            "Shares the --retries budget with URLError retries."
         ),
     )
     peers.add_argument(

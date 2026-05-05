@@ -22,7 +22,15 @@ from urllib.request import Request, urlopen
 
 DEFAULT_FETCH_TIMEOUT = 5.0
 DEFAULT_FETCH_RETRIES = 0
+DEFAULT_FETCH_RETRY_HTTP_STATUSES: frozenset[int] = frozenset()
 AGENT_CARD_PATH = "/.well-known/agent-card.json"
+
+# Recommended opt-in set for transient-flavoured HTTP errors. Not the
+# default — the default stays empty so existing callers are byte-for-
+# byte unchanged. Surfaced for the CLI --help text and for any
+# programmatic caller that wants the canonical set without re-deriving
+# it.
+RECOMMENDED_RETRY_HTTP_STATUSES: frozenset[int] = frozenset({502, 503, 504})
 
 # Exponential backoff between retry attempts. The initial delay
 # is intentionally small (sub-second): the most common URLError
@@ -43,6 +51,7 @@ def fetch_card(
     *,
     timeout: float = DEFAULT_FETCH_TIMEOUT,
     retries: int = DEFAULT_FETCH_RETRIES,
+    retry_http_statuses: frozenset[int] = DEFAULT_FETCH_RETRY_HTTP_STATUSES,
 ) -> dict[str, Any]:
     """Fetch a peer's AgentCard JSON.
 
@@ -62,11 +71,25 @@ def fetch_card(
     caller can override per fetch.
 
     ``retries`` (default 0) controls how many additional attempts
-    are made on a transient network error. Only :class:`URLError`
-    triggers a retry — :class:`HTTPError` (server returned a
-    non-2xx, i.e. answered) and JSON / shape errors (server
-    answered with garbage) are surfaced immediately. Backoff
-    between attempts is exponential, starting at
+    are made on a transient failure. By default only
+    :class:`URLError` (network glitch — refused connection, DNS,
+    TCP reset) triggers a retry; :class:`HTTPError` (server
+    returned a non-2xx, i.e. answered) and JSON / shape errors
+    (server answered with garbage) are surfaced immediately.
+
+    ``retry_http_statuses`` (default empty) extends the retry
+    surface to a caller-chosen set of HTTP status codes. When an
+    :class:`HTTPError` arrives whose ``code`` is in this set, the
+    same retry loop applies — same ``retries`` budget, same
+    exponential backoff, shared with :class:`URLError` retries
+    ("transient = transient"). Statuses outside the set continue
+    to surface immediately. Recommended opt-in for proxy / load-
+    balancer hiccups: ``{502, 503, 504}``
+    (:data:`RECOMMENDED_RETRY_HTTP_STATUSES`). Default empty
+    preserves byte-for-byte the pre-issue-#66 single-shot-on-HTTP
+    semantics.
+
+    Backoff between attempts is exponential, starting at
     ``_BACKOFF_INITIAL_SECONDS`` and capped at
     ``_BACKOFF_MAX_SECONDS``.
     """
@@ -74,6 +97,18 @@ def fetch_card(
         raise ValueError(f"timeout must be > 0, got {timeout}")
     if retries < 0:
         raise ValueError(f"retries must be >= 0, got {retries}")
+    for status in retry_http_statuses:
+        # bool is a subclass of int in Python; reject explicitly so
+        # frozenset({True}) does not silently coerce to {1}.
+        if not isinstance(status, int) or isinstance(status, bool):
+            raise ValueError(
+                f"retry_http_statuses must contain ints, got {status!r}"
+            )
+        if status < 100 or status >= 600:
+            raise ValueError(
+                f"retry_http_statuses must be HTTP status codes "
+                f"(100-599), got {status}"
+            )
     url = _resolve_card_url(base_url)
     request = Request(url, headers={"Accept": "application/json"})
 
@@ -84,9 +119,13 @@ def fetch_card(
                 body = response.read()
             break
         except HTTPError as exc:
-            # The server answered with a non-2xx. That's a real
-            # response, not a network glitch — surface it now so
-            # the caller sees what the peer actually said.
+            # The server answered with a non-2xx. By default that's
+            # a real response and we surface it. If the caller
+            # opted this status into the retry set, treat it as
+            # transient and reuse the URLError retry path.
+            if exc.code in retry_http_statuses and attempt < retries:
+                _sleep_backoff(attempt)
+                continue
             raise AgentCardFetchError(
                 f"HTTP {exc.code} fetching {url}"
             ) from exc

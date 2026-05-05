@@ -808,3 +808,57 @@ def test_cmd_peers_empty_retry_http_statuses_string_yields_empty_set(
     assert "HTTP 503" in captured.err
     # Empty set means single-shot semantics, even with --retries=3.
     assert mock_urlopen.call_count == 1
+
+
+def test_fetch_card_retries_zero_with_populated_set_still_single_shot() -> None:
+    """retries=0 + retry_http_statuses={503} — the budget wins.
+
+    Pinned in response to the Codex round-1 audit on commit fe926ab
+    (P2): even with a populated retry set, a zero budget means
+    single-shot. The set is the WHICH; retries is the HOW MANY.
+    A future refactor that silently couples "populated set" with
+    "always one extra attempt" is caught here."""
+    with patch("karasu.a2a.fetch.urlopen") as mock_urlopen, patch(
+        "karasu.a2a.fetch._sleep_backoff"
+    ) as mock_sleep:
+        mock_urlopen.side_effect = _http_error(503)
+        with pytest.raises(AgentCardFetchError, match="HTTP 503"):
+            fetch_card(
+                "http://example.invalid",
+                retries=0,
+                retry_http_statuses=frozenset({503}),
+            )
+    assert mock_urlopen.call_count == 1
+    mock_sleep.assert_not_called()
+
+
+def test_fetch_card_retries_each_recommended_status_individually() -> None:
+    """502, 503, 504 each trigger retry when the operator opts into
+    RECOMMENDED_RETRY_HTTP_STATUSES.
+
+    Pinned in response to the Codex round-1 audit on commit fe926ab
+    (P2): the recommended-set constant test pins the membership of
+    the constant; this test pins the per-status retry BEHAVIOUR so
+    a future refactor that drops one of the three from the dispatch
+    path (e.g. an off-by-one in the membership check, or a typo
+    re-binding the constant) is caught."""
+    payload = b'{"name": "peer", "skills": []}'
+    for status in (502, 503, 504):
+        with patch("karasu.a2a.fetch.urlopen") as mock_urlopen, patch(
+            "karasu.a2a.fetch._sleep_backoff"
+        ):
+            mock_urlopen.side_effect = [
+                _http_error(status),
+                _mock_response(payload),
+            ]
+            result = fetch_card(
+                "http://example.invalid",
+                retries=1,
+                retry_http_statuses=RECOMMENDED_RETRY_HTTP_STATUSES,
+            )
+        assert result == {"name": "peer", "skills": []}, (
+            f"status {status} did not retry to success"
+        )
+        assert mock_urlopen.call_count == 2, (
+            f"status {status} did not retry exactly once"
+        )

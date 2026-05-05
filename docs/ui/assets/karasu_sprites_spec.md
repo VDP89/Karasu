@@ -90,6 +90,21 @@ box-shadow transitions UI-2 already covers.
                    No loop — looping reads as alarm fatigue.
                    The colour stays accent until the bus state
                    moves on; the keyframe runs once.
+.crow.offline      UI-8 — out-of-signal posture for the
+                   offline.html PWA fallback page. STATIC:
+                   transform: rotate(4deg) + opacity: 0.7.
+                   The class also overrides animation: none so
+                   the .crow base ambient breathing loop stops
+                   for the offline pose — fully still. No new
+                   keyframes, no droop, shake, blink, pulse or
+                   grayscale filter (Codex P2 binding from the
+                   UI-8 design review). Reads as "instrument
+                   out of signal", NOT as "broken / dead". The
+                   colour stays --fg-1 (the resting colour);
+                   the dim + tilt do the editorial work —
+                   recolouring through --warn or --accent
+                   would push the figure toward warning
+                   semantics that the audit warned against.
 ```
 
 The eye notch fill (`var(--bg-0)`) is independent of
@@ -189,13 +204,11 @@ Final approach (OpenMoji-adapted) was selected because it:
 
 ## States the crow does NOT carry yet
 
-Per UI-0 §6, the following ship in later chunks:
-
-```text
-out-of-signal (UI-8) PWA offline-page easter-egg pose. Same
-                     base asset, custom CSS class for any pose
-                     change.
-```
+Per UI-0 §6, all the originally-deferred crow states have now
+shipped (UI-5: idle / processing / waiting / error; UI-6:
+flight; UI-8: offline). No further crow state is queued. UI-8's
+offline pose is documented inline below; the flight asset gets
+its own section starting at "Karasu Crow in Flight".
 
 UI-5 covers idle / processing / waiting / error in the header
 and hero slots only. UI-6 adds the flight pose as a SECOND
@@ -396,4 +409,4 @@ update.
 | waiting      | crow.svg          | header glyph          | asymmetric tilt 480 ms forwards (warn) |
 | error        | crow.svg          | header glyph          | sharp shake 240 ms × 1 (accent) |
 | flight       | crow-flight.svg   | live-map overlay      | arc relocate 600 ms ease-mag (accent) |
-| out-of-signal (UI-8) | TBD       | offline page          | TBD (later chunk)             |
+| offline      | crow.svg          | offline.html hero     | static — rotate(4deg) + opacity 0.7, animation neutralised (--fg-1) |

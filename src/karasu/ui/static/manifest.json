@@ -1,0 +1,25 @@
+{
+  "name": "Karasu",
+  "short_name": "Karasu",
+  "description": "Adaptive coordination layer between AI agents — a watchtower for the bus.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0a0b",
+  "theme_color": "#131316",
+  "icons": [
+    {
+      "src": "/assets/icons/karasu-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/icons/karasu-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#131316">
+<title>Karasu — out of signal</title>
+<link rel="stylesheet" href="/assets/css/tokens.css">
+<link rel="stylesheet" href="/assets/css/reset.css">
+<link rel="stylesheet" href="/assets/css/base.css">
+<link rel="stylesheet" href="/assets/css/crow.css">
+<style>
+/* offline.html — UI-8 fallback shell.
+ *
+ * Served by sw.js when a navigation request fails to reach the
+ * network. Reads the last-known bus path from localStorage so
+ * the operator knows which agent surface they were watching;
+ * renders an italic-muted "bus —" placeholder when localStorage
+ * is empty (Codex P1 binding — never undefined / null / fake
+ * path).
+ *
+ * No motion beyond the existing .crow.offline posture (the
+ * static rotate + opacity declared in crow.css). The ambient
+ * breathing loop from UI-5 stays subliminal. */
+[hidden] { display: none !important; }
+
+.offline-shell {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-12) var(--space-6);
+    text-align: center;
+    gap: var(--space-8);
+    max-width: 56ch;
+    margin: 0 auto;
+}
+
+.offline-hero {
+    width: 96px;
+    height: 96px;
+}
+
+.offline-line {
+    margin: 0;
+    color: var(--fg-2);
+    font-family: var(--font-display);
+    font-size: var(--fs-20);
+    line-height: var(--lh-display);
+    letter-spacing: var(--tracking-display);
+}
+
+.offline-bus {
+    font-family: var(--font-mono);
+    font-size: var(--fs-12);
+    color: var(--fg-3);
+    /* Inline-flex with explicit gap so the label / value split
+     * survives CSS minification, whitespace-stripping, or any
+     * future change that removes inline whitespace from the HTML
+     * source. The earlier ``margin-right: var(--space-2)`` on
+     * .label gave the same visual result but relied on text-node
+     * collapsing rules; the explicit gap is the contract. Codex
+     * P2 polish on PR #80 audit. */
+    display: inline-flex;
+    gap: var(--space-2);
+    align-items: baseline;
+}
+
+.offline-bus .label {
+    color: var(--fg-3);
+}
+
+.offline-bus .value {
+    color: var(--fg-2);
+}
+
+@media (max-width: 720px) {
+    .offline-line { font-size: var(--fs-16); }
+}
+</style>
+</head>
+<body>
+<main class="offline-shell">
+    <!-- Hero crow in the .offline pose. Same path data as the
+         canonical perched asset (UI-5); .crow.offline in
+         crow.css applies the rotate(4deg) + opacity(0.7)
+         posture change — no new motion, no new geometry. -->
+    <svg class="crow offline crow-hero offline-hero"
+         viewBox="0 0 72 72"
+         fill="currentColor"
+         aria-hidden="true">
+        <path d="m40.203,22s3.1218-9,11.4467-4c0,0,8.585.75,8.9753,3.375,0,0-7.9346,1.625-10.0159,5.625s3.1218,7-5.3331,15.625c0,0-4.0324,4.375-10.276,4.375,0,0-22,3-25,0"/>
+        <path d="m10.125,46.875s24.875-22.875,32.875-21.875,2,13.25-5.5,17.625-27.375,4.25-27.375,4.25Z"/>
+        <rect x="22" y="45" width="2" height="10"/>
+        <rect x="28" y="45" width="2" height="10"/>
+        <circle cx="49" cy="24" r="1.8" fill="var(--bg-0)"/>
+    </svg>
+    <p class="offline-line">
+        The bus is unreachable. Karasu will resume when the connection returns.
+    </p>
+    <div class="offline-bus" id="offline-bus">
+        <span class="label">bus</span><span class="value" id="offline-bus-value">—</span>
+    </div>
+</main>
+<script>
+/* Read the last-known bus_path written by index.html on every
+ * /api/meta tick. Empty / undefined / null all collapse to the
+ * em-dash placeholder so the offline shell never renders a fake
+ * path (Codex P1 binding from the UI-8 design review). */
+(function () {
+    var key = 'karasu:bus_path';
+    var value;
+    try {
+        value = localStorage.getItem(key);
+    } catch (e) {
+        /* Some browsers throw on localStorage in private mode.
+         * Treat as empty — graceful degradation. */
+        value = null;
+    }
+    var el = document.getElementById('offline-bus-value');
+    if (value && typeof value === 'string' && value.length > 0) {
+        el.textContent = value;
+    } else {
+        el.textContent = '—';
+    }
+})();
+</script>
+</body>
+</html>

@@ -615,6 +615,95 @@ CAPTURES: dict[str, list[dict]] = {
             "full_page": True,
         },
     ],
+    # UI-7 — Detail drawer captures.
+    #
+    # Opens the drawer via Playwright click() on either a timeline
+    # row or a map node, asserts the drawer settled, and screenshots
+    # the full shell. Each PNG seeds the same UI-6 corpora so the
+    # underlying surface (map + timeline) is the same across the
+    # set; only the drawer state varies.
+    "UI-7-detail": [
+        {
+            # Closed state — drawer hidden, shell as UI-6 left it.
+            # The audit verifies that with no click yet, nothing on
+            # the surface betrays the presence of the drawer
+            # markup (no chrome leak, no visible backdrop).
+            "name": "00-drawer-closed.png",
+            "url": "/",
+            "seed_events": "flight-karasu-claude",
+            "wait_ms": 3500,
+            "full_page": False,
+        },
+        {
+            # Drawer opened from a timeline row click.
+            # The pre-screenshot click() targets the FIRST timeline
+            # row (the LATEST event, top of the list) — its body
+            # is the file_change with the claude_code dispatch.
+            # The drawer header reads "file_change" + the
+            # timestamp; the body shows the highlighted JSON
+            # projection.
+            "name": "01-drawer-from-timeline-row.png",
+            "url": "/",
+            "seed_events": "flight-karasu-claude",
+            "wait_ms": 3500,
+            "click": ".event-row:first-child",
+            "post_click_wait_ms": 400,
+            "full_page": False,
+        },
+        {
+            # Drawer opened from a map node click.
+            # Click target is the claude node (the target of the
+            # current flight). The handler resolves to the latest
+            # event whose _flight_route pair touches claude — the
+            # same file_change as above for this corpus.
+            "name": "02-drawer-from-map-node-claude.png",
+            "url": "/",
+            "seed_events": "flight-karasu-claude",
+            "wait_ms": 3500,
+            "click": ".map-node[data-node='claude']",
+            "post_click_wait_ms": 400,
+            "full_page": False,
+        },
+        {
+            # Drawer opened from a node with no traffic yet.
+            # Codex node clicked while the corpus only has
+            # claude / user events — the resolver returns null
+            # and the drawer renders the empty sentence body.
+            "name": "03-drawer-empty-node.png",
+            "url": "/",
+            "seed_events": "flight-claude-karasu",
+            "wait_ms": 3500,
+            "click": ".map-node[data-node='codex']",
+            "post_click_wait_ms": 400,
+            "full_page": False,
+        },
+        {
+            # Drawer opened with a github_webhook event payload —
+            # exercises the highlighter against a busier projection
+            # (github_event, github_pr, github_repo, github_author
+            # all populated).
+            "name": "04-drawer-github-webhook.png",
+            "url": "/",
+            "seed_events": "flight-github-karasu",
+            "wait_ms": 3500,
+            "click": ".event-row:first-child",
+            "post_click_wait_ms": 400,
+            "full_page": False,
+        },
+        {
+            # Narrow viewport — the drawer takes 100vw at <= 720px
+            # so the operator on a tablet can read the JSON without
+            # squinting.
+            "name": "05-drawer-narrow-viewport.png",
+            "url": "/",
+            "seed_events": "flight-karasu-claude",
+            "viewport": {"width": 720, "height": 1280},
+            "wait_ms": 3500,
+            "click": ".event-row:first-child",
+            "post_click_wait_ms": 400,
+            "full_page": True,
+        },
+    ],
 }
 
 # Recording plan per slug. Each entry is a single video capture:
@@ -669,6 +758,55 @@ RECORDINGS: dict[str, dict] = {
             {"seed_events": "flight-github-karasu", "wait_ms": 1000},
             {"seed_events": "flight-controller-resubmit", "wait_ms": 1000},
             {"seed_events": "flight-parked", "wait_ms": 800},
+        ],
+    },
+    # UI-7 — Detail drawer .webm.
+    #
+    # Walks the open / switch / close sequence inside ONE
+    # Playwright context: open from timeline row → switch to
+    # opening from a map node → close (Esc / X). Full-shell
+    # 1024×640 per Codex pin #5; the auditor must see that the
+    # SHELL stays still while only the drawer slides.
+    #
+    # 1024 px is below the 1280 px split breakpoint, so the
+    # timeline renders stacked under the map in this recording —
+    # which is fine: the drawer slide is the audit focus and
+    # both layouts trigger the same drawer.
+    "UI-7-detail": {
+        "viewport": {"width": 1024, "height": 640},
+        "url": "/",
+        "frames": [
+            # Boot frame: corpus seeded, drawer closed.
+            {"seed_events": "flight-karasu-claude", "wait_ms": 800},
+            # Open from a timeline row click.
+            {
+                "eval_js": "document.querySelector('.event-row').click()",
+                "wait_ms": 700,
+            },
+            # Close via Esc.
+            {
+                "eval_js": (
+                    "document.dispatchEvent("
+                    "  new KeyboardEvent('keydown', {key: 'Escape'})"
+                    ");"
+                ),
+                "wait_ms": 500,
+            },
+            # Open from a map-node click (claude).
+            {
+                "eval_js": (
+                    "document.querySelector("
+                    "  '.map-node[data-node=\"claude\"]'"
+                    ").dispatchEvent(new MouseEvent('click', "
+                    "  {bubbles: true}));"
+                ),
+                "wait_ms": 700,
+            },
+            # Close via backdrop click.
+            {
+                "eval_js": "document.getElementById('drawer-backdrop').click()",
+                "wait_ms": 500,
+            },
         ],
     },
 }
@@ -781,6 +919,13 @@ def _apply_step(page, plan: dict) -> None:
     if "press_tab" in plan:
         for _ in range(int(plan["press_tab"])):
             page.keyboard.press("Tab")
+    if "click" in plan:
+        page.locator(plan["click"]).first.click()
+    if "post_click_wait_ms" in plan:
+        # Settle window between the click that opens an animated
+        # element (e.g. UI-7's drawer slide) and the screenshot.
+        # Separate from ``wait_ms`` so the click timing is explicit.
+        page.wait_for_timeout(plan["post_click_wait_ms"])
     if "eval_js" in plan:
         page.evaluate(plan["eval_js"])
 

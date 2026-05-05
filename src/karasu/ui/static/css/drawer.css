@@ -1,0 +1,192 @@
+/* drawer.css — UI-7 Detail panel.
+ *
+ * Lateral drawer that slides in from the right when the operator
+ * clicks a timeline row OR a Live Map node. Carries the
+ * pretty-printed JSON projection of the relevant event with
+ * token-driven syntax highlighting (no highlight.js, no prism,
+ * no shiki — vanilla TS + the existing palette).
+ *
+ * Codex binding pins from the UI-6 audit (PR #78):
+ *
+ *   B. UI-7 must not add motion to nodes, edges, timeline rows,
+ *      header, footer, or map chrome unless a new audited chunk
+ *      explicitly earns it. The drawer slide is the new motion
+ *      surface; the rest of the shell stays still.
+ *
+ *   E. Do not let the detail drawer compete with the crow / map.
+ *      The surface remains editorial, not dashboard. Drawer is
+ *      minimal: single hairline left border, no icons, no chrome
+ *      badges, no decorative dividers. Header has the timestamp,
+ *      the event type and an unstyled × close. Body is type
+ *      only.
+ *
+ * Reduced motion: reset.css restricts transition-property to a
+ * chromatic whitelist (color, background-color, border-color,
+ * outline-color, text-decoration-color, fill, stroke, box-shadow)
+ * under prefers-reduced-motion: reduce. The drawer's transform
+ * and the backdrop's opacity are NOT on the whitelist, so under
+ * reduced motion they become effectively instant — the state
+ * change is still legible (drawer appears, backdrop appears),
+ * just without the slide / fade. Colour feedback (the .drawer-
+ * close hover for example) keeps its full duration intact. The
+ * earlier wording said "clamps every transform / opacity to 1 ms",
+ * which was imprecise — the whitelist does not animate those
+ * properties at all under reduced motion, rather than animating
+ * them faster. Codex P2 polish on PR #79 audit.
+ */
+
+/* --- backdrop --------------------------------------------------- */
+
+/* Hit-area + click-outside-closes layer. Visually almost
+ * transparent; the drawer above carries the editorial weight.
+ * Pointer-events: auto only when the drawer is open so the rest
+ * of the surface stays clickable while the drawer is hidden. */
+.drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-overlay);
+    background: rgba(0, 0, 0, 0.35);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--duration-panel) var(--ease-out);
+}
+
+.drawer-backdrop.is-open {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* --- drawer ----------------------------------------------------- */
+
+.drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: clamp(360px, 40vw, 560px);
+    z-index: calc(var(--z-overlay) + 1);
+    background: var(--bg-1);
+    border-left: 1px solid var(--fg-3);
+    box-shadow: var(--shadow-2);
+    transform: translateX(100%);
+    transition: transform var(--duration-panel) var(--ease-out);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.drawer.is-open {
+    transform: translateX(0);
+}
+
+/* --- drawer header --------------------------------------------- */
+
+/* Single row: timestamp (mono, muted), type (display, fg-1), the
+ * close button. No icons, no badges. The hairline below is
+ * --shadow-1 so the header sits visually above the body without
+ * adding a heavy divider. */
+.drawer-header {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-5);
+    box-shadow: var(--shadow-1);
+}
+
+.drawer-time {
+    font-family: var(--font-mono);
+    font-size: var(--fs-12);
+    color: var(--fg-2);
+}
+
+.drawer-type {
+    font-family: var(--font-display);
+    font-size: var(--fs-16);
+    color: var(--fg-1);
+    font-weight: var(--weight-display);
+    flex: 1;
+}
+
+.drawer-close {
+    appearance: none;
+    background: none;
+    border: none;
+    color: var(--fg-2);
+    font-size: var(--fs-20);
+    line-height: 1;
+    padding: 0 var(--space-2);
+    cursor: pointer;
+    transition: color var(--duration-micro) var(--ease-out);
+}
+
+.drawer-close:hover,
+.drawer-close:focus-visible {
+    color: var(--fg-1);
+}
+
+/* --- drawer body ----------------------------------------------- */
+
+/* Pretty-printed JSON. The body itself is a <pre> — preserves
+ * indentation without leaning on extra wrapping markup. Fixed-
+ * width font, --fs-14 so two levels of indentation read on a
+ * 360 px viewport without truncation. */
+.drawer-body {
+    flex: 1;
+    margin: 0;
+    padding: var(--space-5);
+    overflow: auto;
+    font-family: var(--font-mono);
+    font-size: var(--fs-14);
+    line-height: 1.5;
+    color: var(--fg-2);
+    /* Wrap long strings (path-like values can be >100 chars) but
+     * preserve indentation whitespace. tab-size keeps any tabs in
+     * stringified JSON consistent — JSON.stringify uses 2-space
+     * indentation by default. */
+    white-space: pre-wrap;
+    word-break: break-word;
+    tab-size: 2;
+}
+
+/* --- JSON token classes (5, deliberately) ---------------------- */
+
+/* Tokens map to the existing palette so a future token swap
+ * (different accent / warn / fg) propagates without touching
+ * the highlighter. No new colours introduced for this chunk —
+ * the editorial restraint UI-7 earns is in the SHAPE of the
+ * highlighter (5 classes, not 15), not new chroma. */
+.json-key      { color: var(--accent); }
+.json-string   { color: var(--warn); }
+.json-number   { color: var(--fg-1); }
+.json-bool     { color: var(--fg-1); font-weight: var(--weight-medium, 500); }
+.json-null     { color: var(--fg-3); font-style: italic; }
+
+/* --- empty body (no event resolved) ---------------------------- */
+
+/* Map-node click can resolve to "no event involves this node yet"
+ * (e.g. clicking codex when no codex dispatch has fired). The
+ * drawer still opens, the body shows an editorial sentence
+ * instead of empty JSON. */
+.drawer-body.is-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: var(--fg-3);
+    font-family: var(--font-display);
+    font-size: var(--fs-14);
+    font-style: italic;
+}
+
+/* --- narrow viewport ------------------------------------------- */
+
+/* Below 720 px the drawer takes full width. The clamp() above
+ * already handles widths down to 360 px (40 vw at 900 px is
+ * 360 px); this rule covers very narrow tablets / phones where
+ * 40 vw would still shrink below 360 px and the user wants the
+ * drawer to be the whole screen. */
+@media (max-width: 720px) {
+    .drawer {
+        width: 100vw;
+    }
+}

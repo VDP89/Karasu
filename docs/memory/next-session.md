@@ -2,268 +2,399 @@
 
 ## Goal
 
-**UI-7 — the Detail panel.** Click a timeline row OR a Live Map
-node and a lateral drawer slides in from the right with the
-event's pretty-printed JSON. Custom syntax highlighting on the
-existing palette (no highlight.js) — same editorial restraint
-the rest of the surface earns through hand-set tokens, not
-imported themes.
+**UI-8 — PWA shell.** `manifest.json`, vanilla service worker,
+offline page (with the crow in an "out of signal" state — the
+intended easter egg per UI-0 §6).
 
-Per UI-0 §6: *"Click on timeline row or map node → lateral
-drawer with pretty-printed JSON."* This is the chunk where the
-operator goes from *seeing the system think* to *interrogating a
-single beat*.
+This is the chunk that turns Karasu's read-only watchtower into
+an installable surface — the operator can pin it to a desktop /
+home screen, and when the bus / server are unreachable the
+service worker serves a hand-built offline page instead of the
+browser's default error.
 
 ## Binding constraints carried forward (P0)
 
-UI-6 audit added FIVE additional pins for UI-7+ (Codex,
-2026-05-04, PR #78 APPROVED-with-observations). Verbatim:
+UI-7 audit added FIVE additional pins for UI-8+ (Codex,
+2026-05-04, PR #79 APPROVED-with-observations). Verbatim:
 
 ```text
-A. The Live Map is now an orientation layer, not a simulation
-   layer.
-B. UI-7 must not add motion to nodes, edges, timeline rows,
-   header, footer, or map chrome unless a new audited chunk
-   explicitly earns it.
-C. Any new /api/health-derived visual state must ship with
-   tests before screenshots.
-D. Keep latest-event semantics for flight unless a future PR
-   explicitly introduces stateful route memory and tests it.
-E. Do not let the detail drawer or inspector compete with the
-   crow/map; the surface remains editorial, not dashboard.
+1. PWA shell must not add visual excitement. Manifest /
+   offline / service-worker are infrastructure, not a new
+   surface.
+2. Offline page may use the crow, but in an out-of-signal
+   pose; no flight, pulse, shake, or map animation.
+3. Service worker must not cache stale bus / event JSON in a
+   way that misrepresents live state.
+4. If UI-8 introduces any new offline / connection visual
+   state, it needs a small deterministic test or documented
+   manual verification path.
+5. Drawer remains an inspection layer; do not let offline /
+   PWA affordances add badges, toasts, or dashboard chrome
+   unless explicitly earned.
 ```
 
-Pin E is the immediately load-bearing one for UI-7: the drawer
-must NOT borrow the visual weight of the crow or the map. Slide
-in, present JSON, slide out. No icons, no chrome, no badges.
+Pin #3 is the load-bearing one for the service-worker design:
+/api/events / /api/health / /api/meta MUST be network-only.
+Caching them risks the operator reading a stale projection
+that contradicts the bus — exactly the kind of "looks live
+but isn't" failure UI is designed to avoid. Pin #1 + #2 are
+the editorial guardrails (no excitement, no chrome additions).
 
-The seven Codex pins from UI-3 / UI-4 / UI-5 / UI-6 audits stay
-binding. The new chunk introduces motion (a drawer panel slides
-in) so several pins re-fire:
+## UI-8 design review locked (Codex, 2026-05-04)
+
+The audit prompt for UI-8 was reviewed before any code landed.
+Verdict: APPROVED-with-observations for the design review /
+pre-implementation gate. P0 = none. Three P1 contracts + three
+P2 polish items must be respected when the implementation
+opens. Verbatim:
+
+### P1 — structural contracts
 
 ```text
-1. Crow flight may animate; the SHELL must remain still. UI-7
-   adds a drawer that slides in over the canvas — the drawer
-   IS the new motion surface, but the shell behind it (header,
-   timeline beats, map nodes, footer) does NOT shift, scale,
-   blur or fade while the drawer opens. The drawer floats,
-   the shell stays.
+1. /api/* network-only is FIRST-BRANCH in sw.js.
+   The fetch handler must short-circuit /api/* requests before
+   any cache-first logic can match them. Intended shape:
 
-2. Transform belongs to the moving element only. The drawer's
-   translate-X transition lives on the drawer itself, not on
-   .shell-main, .live-map, the timeline rows, etc. The crow
-   in the live-map continues to fly during a drawer-open if
-   the bus advances; the two motions are independent.
+     self.addEventListener('fetch', (event) => {
+       const url = new URL(event.request.url);
 
-3. The drawer needs --shadow-2 (the elevation token UI-0 §5.4
-   reserves for it). This is the SECOND motion-introducing
-   chunk after UI-5 / UI-6, so the audit cadence (PNG + .webm
-   ≤ 5 s ≤ 500 KB ≥ 1024×640) applies again WITHOUT exception.
+       // 1. /api/* — network-only, always.
+       if (url.pathname.startsWith('/api/')) {
+         event.respondWith(fetch(event.request));
+         return;
+       }
 
-4. Custom syntax highlighting. NO highlight.js, NO prism.
-   Use the existing tokens (--accent for keys, --warn for
-   strings, --fg-2 for punctuation, --fg-3 for braces) and
-   write the highlighter in vanilla TS. ~50 LOC.
+       // 2. Navigation — try network, fall back to offline.html.
+       if (event.request.mode === 'navigate') {
+         event.respondWith(
+           fetch(event.request)
+             .catch(() => caches.match('/offline.html'))
+         );
+         return;
+       }
 
-5. Reduced motion contract holds. The slide transition clamps
-   to 1ms via reset.css's chromatic whitelist; the drawer
-   appears instantly. State change still legible.
+       // 3. Static assets — cache-first, only after the
+       //    /api/ + navigate branches have already returned.
+       event.respondWith(
+         caches.match(event.request)
+           .then((hit) => hit || fetch(event.request))
+       );
+     });
 
-6. Map nodes / edges still NOT pulse, bounce, glow. Click on
-   a node opens the drawer; that click's only visual effect
-   on the node is :focus-visible (UI-3 focus ring). No
-   "selected" pulse.
+   The ordering is the contract. Any refactor that lets /api/*
+   fall through to caches.match() is a P0 regression.
 
-7. Any visual state derived from a server projection MUST be
-   covered by unit tests. UI-7's projection is whatever
-   /api/events already returns plus an ID-targeted single-event
-   read; if a new endpoint or field appears, the unit tests
-   are NOT optional.
+2. Empty localStorage on the offline page renders as a muted
+   "bus —" (the em-dash placeholder used elsewhere in the
+   shell) OR omits the bus line entirely. NEVER undefined,
+   null, or a fake path. Lean: render the muted line so the
+   shell rhythm is preserved without pretending knowledge.
+
+3. CACHE_NAME is explicit + the bump rule is documented.
+   Intended shape:
+
+     const CACHE_NAME = 'karasu-ui-v8';
+
+   And in docs/ui/screenshots/UI-8-pwa/README.md:
+
+     "Bump CACHE_NAME whenever sw.js, offline.html,
+      manifest.json, CSS, fonts, or crow assets change."
+
+   This is the most common PWA debugging trap; the discipline
+   prevents stale shells across deploys. The docstring at the
+   top of sw.js must reference the bump rule.
 ```
 
-## What ships in UI-7
+### P2 — polish
 
 ```text
-src/karasu/ui/static/css/drawer.css                NEW.
-  - .drawer container: position fixed, right edge, slides
-    in from off-canvas. Width clamped (min 360 px / 90 vw,
-    max 560 px). --bg-1 background, hairline left border.
-  - .drawer.is-open: transform: translateX(0). Default state
-    is translateX(100%) (off-canvas).
-  - .drawer-close button: top-right, --fg-2, hover --fg-1.
-  - .drawer-body: scrollable, max-height calc(100vh - header).
-  - .drawer-key, .drawer-string, .drawer-number, .drawer-bool,
-    .drawer-null: token-driven syntax highlighting.
+1. Offline pose stays "signal lost", not "injured". The
+   posture change is rotate(4deg) + opacity 0.7 — no droop,
+   no shake, no blink, no pulse, no grayscale filter. The
+   ambient breathing loop from UI-5 stays subliminal.
+
+2. No .webm required for UI-8. The offline page is static
+   infrastructure; the only motion is the existing crow
+   ambient breathing (already covered by the UI-5 .webm).
+   PNGs are enough. (UI-6 / UI-7 .webm cadence does not
+   carry; UI-8 is the first chunk after UI-5 to legitimately
+   skip the recording.)
+
+3. Manifest colours are literal hex MATCHING tokens.css
+   exactly. If --bg-0 is #0a0a0b, the manifest's
+   background_color is "#0a0a0b" — no rounding, no "close
+   enough" drift. The audit will diff the values; an
+   off-by-one channel is a P2 regression.
+```
+
+### Implementation pins to carry into the code
+
+```text
+1. /api/* is network-only, FIRST-BRANCH, never cache-first.
+2. Offline page is a separate page, not a fake frozen live map.
+3. No install toast, no badge, no connection indicator in the
+   main shell.
+4. Empty localStorage renders as "bus —" or omits the line.
+   Never undefined / null.
+5. CACHE_NAME bump rule is documented in sw.js docstring AND
+   in the screenshots README.
+6. No .webm required unless UI-8 introduces new motion beyond
+   the static offline posture.
+```
+
+Codex closed the design review with: "Design is clear enough
+to implement." Proceed when UI-7 lands and feat/ui-8-pwa
+opens off main (or stacked on feat/ui-7-detail until UI-7
+merges).
+
+The five Codex pins added on the UI-6 audit + the seven pins
+from UI-3 / UI-4 / UI-5 / UI-6 stay binding. UI-8 introduces
+NO new motion surface (the offline page is static), so the
+shell-stillness pins re-fire trivially. The new constraints
+specific to UI-8 are around the service-worker contract:
+
+```text
+1. The bus is never mutated. UI-8 is read-only against the
+   bus; the SW only caches static assets + the index.html
+   shell. /api/events / /api/health / /api/meta MUST NOT be
+   cached — they're live state.
+
+2. Offline page lives at /offline.html (or static fallback).
+   When the SW intercepts a navigation and the network is
+   unreachable, it returns the offline shell. The shell shows
+   the crow in an out-of-signal pose (per UI-0 §6, "intended
+   easter egg") + a single editorial sentence + the bus path
+   the operator was watching.
+
+3. THIRD asset on the table: the out-of-signal crow. UI-5
+   shipped crow.svg (perched, four states), UI-6 shipped
+   crow-flight.svg (wings extended). UI-8 needs a custom CSS
+   class on the EXISTING crow.svg — same base asset, posture
+   change via transform / class. NOT a third SVG file unless
+   the audit asks for one. Spec it in
+   docs/ui/assets/karasu_sprites_spec.md once landed.
+
+4. Service worker is vanilla. NO Workbox. NO build step. The
+   SW is hand-written under static/sw.js, registered from
+   index.html with a feature-detection guard. Pre-cache list
+   is the static manifest of design tokens + fonts + sprites
+   committed today; runtime cache is bounded.
+
+5. The manifest declares the crow as the icon at multiple
+   sizes (192 + 512 PNG) so the home-screen tile is editorial,
+   not generic. Generation can use Pillow or a one-shot
+   manual render committed to the repo.
+
+6. Pin C carries: any new /api/health-derived state requires
+   unit tests. UI-8 introduces no new server projection.
+```
+
+## What ships in UI-8
+
+```text
+src/karasu/ui/static/manifest.json                NEW.
+  - name: "Karasu", short_name: "Karasu", display: "standalone".
+  - theme_color: var(--bg-1) literal hex (manifest doesn't
+    resolve CSS vars).
+  - background_color: var(--bg-0) literal hex.
+  - icons: 192×192 + 512×512 (PNGs derived from crow.svg).
+  - start_url: "/", scope: "/".
+
+src/karasu/ui/static/sw.js                        NEW.
+  - install: precache the static manifest (CSS, fonts, sprite
+    SVGs, index.html, offline.html).
+  - activate: cleanup old caches by version key.
+  - fetch: navigation requests → offline.html on network
+    failure; static asset requests → cache-first; /api/*
+    requests → network-only (NEVER cached).
 
 src/karasu/ui/static/index.html  (extension)
-  - <aside class="drawer" hidden> at the bottom of the shell.
-  - JS: clickable timeline rows + map nodes that open the
-    drawer with the relevant event. Esc / click-outside / X
-    button to close.
-  - Highlighter in ~50 LOC vanilla TS — operates on the
-    JSON.stringify(event, null, 2) output, walks token-by-
-    token, emits <span class="drawer-...">.
+  - <link rel="manifest" href="/assets/manifest.json">.
+  - Inline SW registration with feature detection
+    (if ('serviceWorker' in navigator)).
+  - Theme-color meta tag matching the manifest.
+
+src/karasu/ui/static/offline.html                 NEW.
+  - Standalone page with the same shell tokens (links to
+    /assets/css/{tokens,reset,base}.css + crow.css).
+  - Hero crow in out-of-signal state — same crow.svg asset,
+    new .crow.offline class for the posture.
+  - Single editorial sentence: "The bus is unreachable.
+    Karasu will resume when the connection returns."
+  - Renders the LAST KNOWN bus_path from localStorage so the
+    operator knows which agent surface they were watching.
+
+src/karasu/ui/static/css/crow.css  (extension)
+  - .crow.offline state: subtle slump (rotate 4deg + reduced
+    opacity?) — TBD in chunk planning, must read as
+    "instrument out of signal" not as "broken/dead".
 
 src/karasu/ui/server.py  (extension)
-  - Optional: GET /api/events/<id> for single-event lookup.
-    The /api/events list already returns enough; UI-7 can
-    open the drawer purely from client-side state (the row
-    or node carries the event id, the JS reads from the
-    most recent /api/events response). Add the endpoint
-    only if the audit asks for it.
-  - No projection change otherwise.
-
-tests/test_ui_server.py  (extension if /api/events/<id> ships)
-  - Single-event lookup: known id returns 200 + projection;
-    unknown id returns 404; bus empty returns 404.
+  - GET /assets/manifest.json + GET /assets/sw.js: served by
+    the existing static asset handler — sw.js needs the
+    Service-Worker-Allowed: / header so it can scope to root.
+  - GET /offline.html: served like /design-system (additive
+    route, not advertised).
+  - No projection change.
 
 scripts/ui_screenshots.py  (extension)
-  - UI-7 capture plan: drawer-closed, drawer-open-on-timeline-
-    row, drawer-open-on-map-node, drawer-narrow-viewport.
-  - --record-video walks click → open → switch row →
-    close, full-shell.
+  - UI-8 capture plan: index-with-manifest, offline-page,
+    offline-narrow-viewport.
+  - --record-video walks the registration logs only if
+    Playwright exposes them; otherwise UI-8 ships PNGs only
+    (the offline page is static — no motion to record beyond
+    the crow's ambient breathing already covered by UI-5
+    .webm).
 
-docs/ui/screenshots/UI-7-detail/   NEW.
-  - PNGs + README per UI-2..UI-6 pattern.
+docs/ui/screenshots/UI-8-pwa/   NEW.
+  - PNGs + README per UI-2..UI-7 pattern.
 
-docs/ui/recordings/UI-7-detail.webm   NEW.
+docs/ui/assets/karasu_sprites_spec.md  (extension)
+  - Document the .crow.offline state as a fifth crow class on
+    the existing asset (idle / processing / waiting / error +
+    flight asset + offline state on perched asset).
 ```
 
 ## Surface contract — must respect
 
 ```text
-- UI = read-only sink. UI-7 stays read-only against the bus.
+- UI = read-only sink. UI-8's SW NEVER caches /api/* — those
+  responses must hit the live server.
 - Frozen contracts: AgentResponse, F3, F7, F8, surface=sink,
   single-worker invariant, scar=stored-correction-only,
   I-001..I-006, TriggerSource Protocol, bus event schema,
   the /api/health additive fields shipped in UI-3..UI-6.
 - The empty-state hero from UI-3 stays the first impression.
-- The Live Map from UI-6 keeps flying while the drawer is
-  open — they are independent motions.
-- No build step. CSS / TS ship static.
-- No new runtime dependency.
+- The Live Map from UI-6 keeps flying inside the cached
+  shell — the SW serves index.html offline but the JS layer
+  shows the empty state when /api/events fails to fetch.
+- No build step. Vanilla SW + plain manifest.
+- No new runtime dependency (Pillow is dev-only for icon
+  generation; the icon PNGs commit as static assets).
 ```
 
 ## Open questions to resolve while planning
 
 ```text
-1. Click target on the map node: the dot OR the whole .map-node
-   <g>? Hit area vs. label collision. Lean: the whole <g> with
-   tabindex (already there); the dot stays small for editorial
-   weight but the click registers anywhere over the node group.
+1. Offline crow pose — slump, sleep, or just dim?
+   Lean: subtle slump (rotate 4deg, like the .waiting tilt
+   but symmetric and held) + opacity 0.7. Out-of-signal
+   should read as "the crow waits for the wire", not as
+   "broken". Audit visually.
 
-2. Drawer payload — full event JSON or filtered projection?
-   Lean: the projection (what /api/events already returns).
-   Adding the raw bus event would surface schema fields the
-   surface contract does NOT cover yet (event_metadata,
-   internal trace ids); the projection is the canonical UI
-   read.
+2. Cache versioning. Cache name embeds the package version
+   (read at SW install via importing the version from the
+   page, OR hardcoded and bumped per release). Lean:
+   hardcoded at SW write time, audit the discipline of
+   bumping it per UI-N PR that touches the SW.
 
-3. Multiple drawers? Stacked? Lean: ONE drawer at a time. A
-   second click closes the first. Avoids a queue, avoids a
-   UX that asks the operator to remember which is which.
+3. Manifest icon generation. Pillow render of crow.svg at
+   192 / 512 with --bg-0 background, OR commit Inkscape /
+   Figma-rendered PNGs. Lean: Pillow one-shot under
+   scripts/ for reproducibility; commit the PNGs as the
+   canonical asset.
 
-4. Map-node click → which event opens? The latest event whose
-   _flight_route maps to that node. Two cases: source-side
-   click (e.g. user) → latest event flying FROM user; target-
-   side click (e.g. claude) → latest event flying TO claude.
-   Empty if none. Document the rule in the README.
+4. Last-known bus_path on offline page — localStorage is
+   the simplest persistence. Stored on every successful
+   /api/meta tick; read on offline page boot. Lean: yes,
+   keeps the offline page useful instead of a generic
+   "no signal" sentence.
 
-5. Highlighter scope: full JSON syntax (objects / arrays /
-   strings / numbers / booleans / null) plus comment-style
-   metadata? Lean: full JSON syntax, NO comment styling
-   (the projection doesn't carry comments). 5 token classes,
-   not 7.
+5. SW registration scope. The default scope is the SW's
+   own URL prefix; we want root scope so /api/* is
+   intercepted. Requires Service-Worker-Allowed: / header
+   on the SW response. Server-side change: 1 line in the
+   asset handler when path == /assets/sw.js.
 ```
 
 ## Audit cadence reminder
 
 ```text
-1. Real PNG screenshots under docs/ui/screenshots/UI-7-detail/
-   for every visible state (closed / open-from-timeline /
-   open-from-map / narrow-viewport).
-2. .webm at docs/ui/recordings/UI-7-detail.webm
-   (≤ 5 s, < 500 KB, full-shell ≥ 1024×640).
-3. "What to look at" note covering: the drawer slide motion,
-   shell stillness behind the drawer, syntax highlighting
-   tokens, click-outside / Esc close behaviour.
+1. Real PNG screenshots under docs/ui/screenshots/UI-8-pwa/
+   for each new state (manifest installed prompt where
+   visible, offline page default, offline narrow viewport).
+2. Optional .webm if a motion-relevant state appears
+   (probably not for UI-8 — the offline page is static).
+3. "What to look at" note covering: the crow's offline pose
+   (pin #3 — must read as instrument out-of-signal), the
+   SW cache version bump discipline (pin #2), the /api/*
+   network-only contract (pin #1).
 4. The diff itself.
 5. The audit prompt for Codex out-of-band via ChatGPT.
-6. Editorial check: pins #1 + #2 — verify SHELL stays still
-   while drawer opens. Pin #4 — atan2 unchanged. Pin #5 —
-   .webm shows full-shell context.
-7. Unit-test check: pin #7 — if /api/events/<id> ships, the
-   projection MUST be covered.
+6. Editorial check: pins A + E from UI-6 audit — verify the
+   offline page does NOT add chrome / dashboard hints; the
+   crow stays the visual centre.
+7. SW scope check — service-worker-allowed header set, root
+   scope verified by manual fetch in DevTools.
 ```
 
 ## Pre-reads for next session
 
 ```text
-1. docs/ui/ui-0-design-brief.md §5.4 (SHADOW — --shadow-2 is
-   reserved for the drawer) + §5.5 (motion durations: panel
-   240ms ease-out for the drawer slide) + §6 (UI-7 roadmap
-   entry).
-2. docs/ui/screenshots/UI-6-livemap/README.md — the precedent
-   for "what to look at" structure.
-3. src/karasu/ui/static/css/timeline.css — feature CSS split
-   pattern; drawer.css mirrors it.
-4. src/karasu/ui/static/index.html — current shell layout +
-   the JS pattern from UI-6 (event delegation, click handling).
-5. src/karasu/ui/server.py — add /api/events/<id> here ONLY
-   if the audit asks for it; UI-7 can land without a server
-   change.
+1. docs/ui/ui-0-design-brief.md §6 (UI-8 roadmap entry).
+2. docs/ui/screenshots/UI-7-detail/README.md — the precedent
+   for the "what to look at" + Codex pins A-E structure.
+3. src/karasu/ui/static/css/crow.css — the existing four
+   state classes; .crow.offline mirrors the .waiting tilt
+   pattern.
+4. src/karasu/ui/static/index.html — manifest + SW registration
+   slot in the head + a tiny boot-time call.
+5. src/karasu/ui/server.py — _content_type_for already handles
+   .json (manifest) and .js (sw); the asset handler needs the
+   Service-Worker-Allowed header for sw.js.
 ```
 
 ## Chunk size estimate
 
 ```text
-Code:       ~250 LOC (drawer.css + index.html extension +
-            highlighter ~50 LOC + tests if endpoint ships)
-Assets:     no new SVG (the drawer is pure CSS / type)
-Docs:       ~80 LOC (screenshots README)
-Tests:      single-event projection if endpoint ships
+Code:       ~250 LOC (manifest.json + sw.js + offline.html +
+            index.html extension + crow.css extension + server
+            header tweak)
+Assets:     2 PNGs (192 + 512) generated from crow.svg
+Docs:       ~80 LOC (sprites_spec extension + screenshots README)
+Tests:      none (no new server projection per pin C)
 Total:      under the 400 LOC budget.
 ```
 
 ## Do NOT do yet
 
 ```text
-- Do NOT animate anything outside .drawer during the slide.
-  Pin #1 + #2 binding.
-- Do NOT import highlight.js / prism / shiki. The token-driven
-  vanilla highlighter is the editorial choice.
-- Do NOT introduce node "selected" animations (pulse, glow).
-  Pin #6 binding.
-- Do NOT crop the .webm to the drawer alone. Pin #5 binding.
+- Do NOT cache /api/events / /api/health / /api/meta. Bus
+  state must hit the live server; the SW is for the static
+  shell only.
+- Do NOT add Workbox, Vite-PWA, or any SW framework. Vanilla
+  per UI-0 §4.
 - Do NOT introduce a build step.
-- Do NOT introduce write paths to the bus.
-- Do NOT tag @codex review. Audits stay operator-mediated.
+- Do NOT introduce write paths to the bus (UI-10+).
+- Do NOT add motion to anything outside the existing crow
+  states. Pin B from Codex UI-6 audit binding.
+- Do NOT add a sw.js cache that grows unbounded — quota /
+  expiry contract documented in the file.
+- Do NOT tag @codex review.
 ```
 
 ## Anchor for the previous sessions
 
-- **UI-6 (Live Map + crow flight) PR open.** `_flight_route`
-  projects the LATEST event to a `(source, target)` pair on
-  `/api/health.flight` (additive). Five domain nodes painted
-  on a static SVG canvas (user / karasu / claude / codex /
-  github); the SECOND canonical asset (`crow-flight.svg`,
-  adapted from game-icons.net "crow-dive" by Lorc, CC BY 3.0)
-  flies between them on bus advances. 22 unit tests + 2
-  HTTP-level tests pin the projection BEFORE the visual code
-  lands (pin #7). Layout: side-by-side ≥1280 px, stacked
-  below; empty-state hero stays the first impression. SVG-
-  element bug self-caught in autonomous review:
-  `crowFlight.hidden=false` on an `<svg>` creates a non-
-  reflecting expando (the IDL `hidden` property is HTMLElement-
-  only); fix uses `removeAttribute('hidden')` /
-  `setAttribute('hidden','')`. 8 PNGs + 1 .webm 242 KB
-  full-shell 1024×640.
-- UI-5 (canonical crow + state animations) merged 2026-05-04
-  via PR #74 (`904111a`). Three audit rounds before APPROVED.
-- UI-4 (event timeline) merged 2026-05-03 via PR #72.
-- UI-3 (application shell) merged 2026-05-03 via PR #70.
-- 421/422 pytest on Windows local (399 prior + 22 new
-  `_flight_route` tests). The same single preexisting failure
+- **UI-7 (Detail panel) PR open** (`feat/ui-7-detail`, stacked
+  on `feat/ui-6-livemap`). Lateral drawer slides in from the
+  right when the operator clicks a timeline row OR a Live Map
+  node; vanilla 5-token JSON highlighter; close via X /
+  click-outside / Esc. Map-node click resolves to the latest
+  event whose `_flight_route` pair touches the node (source
+  OR target); empty result shows the editorial sentence
+  branch. Server side empty by design — pin C cumplido by
+  absence. Pointer-events fix on `.live-map-svg` (none) +
+  `.map-node` (bounding-box). 6 PNGs + 1 .webm (336 KB,
+  1024×640 full-shell).
+- **UI-6 (Live Map + crow flight)** APPROVED-with-observations
+  by Codex (PR #78). P2 applied as follow-up `a2b9fef`. Five
+  pins (A-E) for UI-7+ propagated; UI-7 honoured all five.
+- UI-5 merged 2026-05-04 via PR #74 (`904111a`).
+- UI-4 merged 2026-05-03 via PR #72.
+- UI-3 merged 2026-05-03 via PR #70.
+- 421/422 pytest on Windows local (399 + 22 flight_route).
+  The same single preexisting failure
   (`test_valid_asset_under_static_dir_is_served`, Windows
   CRLF) remains; CI Linux green.
-- Karasu HEAD post-merge: TBD (UI-6 PR open, awaiting audit).
+- Karasu HEAD post-merge: TBD (UI-6 + UI-7 PRs open, awaiting
+  audit + merge).

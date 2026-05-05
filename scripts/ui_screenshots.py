@@ -351,6 +351,49 @@ UI10_SCARS = [
     },
 ]
 
+UI11A_AGENT_RESPONSE = {
+    "id": "ui11a-ar-001",
+    "timestamp": "2026-05-05T15:15:00Z",
+    "type": "agent_response",
+    "source": "adapter",
+    "data": {
+        "correlates": "ui11a-fc-001",
+        "path": "src/karasu/ui/server.py",
+        "classification": "implementation",
+        "priority": "normal",
+    },
+    "dispatch": {
+        "agent": "claude_code",
+        "status": "completed",
+        "trust_level": 2,
+    },
+    "response": {
+        "content": "UI-11a trust display is ready for review.",
+        "requires_human": False,
+    },
+}
+
+UI11A_EVENTS = [
+    {
+        "id": "ui11a-fc-001",
+        "timestamp": "2026-05-05T15:14:30Z",
+        "type": "file_change",
+        "source": "watcher",
+        "data": {
+            "path": "src/karasu/ui/server.py",
+            "classification": "implementation",
+            "priority": "normal",
+        },
+        "dispatch": {
+            "agent": "claude_code",
+            "status": "dispatched",
+            "trust_level": 2,
+        },
+        "response": {},
+    },
+    UI11A_AGENT_RESPONSE,
+]
+
 
 STATE_CORPORA: dict[str, list[dict]] = {
     "idle": _BASELINE,
@@ -669,14 +712,23 @@ CAPTURES: dict[str, list[dict]] = {
             "full_page": True,
         },
     ],
-    # UI-7 — Detail drawer captures.
+    # UI-11a — trust gradient read display.
     #
-    # Opens the drawer via Playwright click() on either a timeline
-    # row or a map node, asserts the drawer settled, and screenshots
-    # the full shell. Each PNG seeds the same UI-6 corpora so the
-    # underlying surface (map + timeline) is the same across the
-    # set; only the drawer state varies.
-        # UI-10 — scar revoke flow.
+    # Opens the existing drawer on an agent_response event and
+    # verifies the read-only trust_level row is visible. No modal,
+    # no Adjust button, no POST path in this chunk.
+    "UI-11a-trust-display": [
+        {
+            "name": "00-drawer-trust-visible.png",
+            "url": "/",
+            "seed_events": UI11A_EVENTS,
+            "wait_ms": 3500,
+            "click": ".event-row:first-child",
+            "post_click_wait_ms": 500,
+            "full_page": False,
+        },
+    ],
+    # UI-10 — scar revoke flow.
     #
     # Drawer is opened against a human_decision event so the
     # .drawer-scars section is visible; ScarEngine is seeded
@@ -814,6 +866,13 @@ CAPTURES: dict[str, list[dict]] = {
             "full_page": False,
         },
     ],
+    # UI-7 — Detail drawer captures.
+    #
+    # Opens the drawer via Playwright click() on either a timeline
+    # row or a map node, asserts the drawer settled, and screenshots
+    # the full shell. Each PNG seeds the same UI-6 corpora so the
+    # underlying surface (map + timeline) is the same across the
+    # set; only the drawer state varies.
     "UI-7-detail": [
         {
             # Closed state — drawer hidden, shell as UI-6 left it.

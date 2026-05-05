@@ -348,7 +348,11 @@
      human_decision, the .drawer-scars section appears below the
      JSON body with one row per active scar + a single Revoke verb
      each. The Revoke verb opens the .modal confirmation primitive.
-     Pin §11.6.1: revoke lives only inside the drawer. -->
+     Pin §11.6.1: revoke lives only inside the drawer.
+
+     UI-11a extension: when the drawer's open event is an
+     agent_response, .drawer-trust-row renders the trust_level the
+     dispatch carried. Read-only only: no Adjust button until UI-11b. -->
 <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
 <aside class="drawer" id="event-drawer" hidden
        role="dialog" aria-modal="false" aria-labelledby="drawer-type">
@@ -358,6 +362,7 @@
         <button class="drawer-close" id="drawer-close"
                 type="button" aria-label="Close detail panel">×</button>
     </header>
+    <div class="drawer-trust-row" id="drawer-trust-row" hidden></div>
     <pre class="drawer-body" id="drawer-body"></pre>
     <section class="drawer-scars" id="drawer-scars" hidden
              aria-labelledby="drawer-scars-title">
@@ -610,6 +615,28 @@ function agentToNode(agent) {
     return null;
 }
 
+function renderDrawerTrust(event) {
+    /* UI-11a — read-only trust display. The row is drawer-earned
+     * on agent_response events only; no Adjust affordance appears
+     * until UI-11b. Unsupported values stay visible as raw ints
+     * with an explicit tag instead of being coerced. */
+    const row = document.getElementById('drawer-trust-row');
+    if (!event || event.type !== 'agent_response') {
+        row.setAttribute('hidden', '');
+        row.textContent = '';
+        return;
+    }
+    const level = event.trust_level;
+    if (level === null || level === undefined) {
+        row.textContent = 'trust_level: —';
+        row.removeAttribute('hidden');
+        return;
+    }
+    const unsupported = ![0, 1, 2].includes(Number(level));
+    row.textContent = 'trust_level: ' + level + (unsupported ? ' (unsupported)' : '');
+    row.removeAttribute('hidden');
+}
+
 function openDrawer(event) {
     /* event = the projected event object, or null when the click
      * target had no event to show (e.g. a node with no traffic
@@ -633,6 +660,7 @@ function openDrawer(event) {
         body.classList.add('is-empty');
         body.textContent = 'This node has not seen traffic yet.';
     }
+    renderDrawerTrust(event);
 
     /* UI-10 — drawer scars section. Brief §1: revoke verb is
      * earned by drilling into a human_decision event. The list

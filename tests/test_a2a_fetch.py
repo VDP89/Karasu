@@ -24,7 +24,9 @@ import pytest
 from karasu.a2a import (
     AGENT_CARD_PATH,
     DEFAULT_FETCH_RETRIES,
+    DEFAULT_FETCH_RETRY_HTTP_STATUSES,
     DEFAULT_FETCH_TIMEOUT,
+    RECOMMENDED_RETRY_HTTP_STATUSES,
     AgentCardFetchError,
     build_karasu_card,
     fetch_card,
@@ -509,3 +511,354 @@ def test_cmd_peers_passes_retries_through(capsys) -> None:
         )
     assert rc == 2
     assert mock_urlopen.call_count == 3
+
+
+# ---------------------------------------------------------------------------
+# fetch_card — opt-in retry on transient HTTP statuses (issue #66)
+# ---------------------------------------------------------------------------
+
+
+def _http_error(code: int) -> HTTPError:
+    return HTTPError(
+        url="http://example.invalid",
+        code=code,
+        msg=f"HTTP {code}",
+        hdrs=None,  # type: ignore[arg-type]
+        fp=None,
+    )
+
+
+def test_fetch_card_default_retry_http_statuses_is_empty() -> None:
+    """Pin the default at empty so opting into retry on HTTP errors is
+    always an explicit caller decision; existing callers preserve
+    their byte-for-byte single-shot-on-HTTP behaviour."""
+    assert DEFAULT_FETCH_RETRY_HTTP_STATUSES == frozenset()
+    assert isinstance(DEFAULT_FETCH_RETRY_HTTP_STATUSES, frozenset)
+
+
+def test_fetch_card_recommended_retry_set_is_502_503_504() -> None:
+    """The recommended-but-not-default set surfaces from the module so
+    the CLI --help text and any programmatic caller can reach for the
+    canonical "transient proxy errors" set without re-deriving it."""
+    assert RECOMMENDED_RETRY_HTTP_STATUSES == frozenset({502, 503, 504})
+
+
+def test_fetch_card_retries_on_status_in_retry_set_then_succeeds() -> None:
+    """503 then 200 with retries=1 + retry_http_statuses={503} —
+    fetch_card retries once, gets the payload on attempt 2."""
+    payload = b'{"name": "peer", "skills": []}'
+    with patch("karasu.a2a.fetch.urlopen") as mock_urlopen, patch(
+        "karasu.a2a.fetch._sleep_backoff"
+    ) as mock_sleep:
+        mock_urlopen.side_effect = [
+            _http_error(503),
+            _mock_response(payload),
+        ]
+        result = fetch_card(
+            "http://example.invalid",
+            retries=1,
+            retry_http_statuses=frozenset({503}),
+        )
+    assert result == {"name": "peer", "skills": []}
+    assert mock_urlopen.call_count == 2
+    assert mock_sleep.call_count == 1
+
+
+def test_fetch_card_does_not_retry_on_status_outside_retry_set() -> None:
+    """500 with retry_http_statuses={502, 503, 504} — 500 is OUT of
+    the set, so it surfaces immediately even with retries available.
+    Pin the discrimination so a future refactor cannot accidentally
+    widen the retry surface."""
+    with patch("karasu.a2a.fetch.urlopen") as mock_urlopen, patch(
+        "karasu.a2a.fetch._sleep_backoff"
+    ) as mock_sleep:
+        mock_urlopen.side_effect = _http_error(500)
+        with pytest.raises(AgentCardFetchError, match="HTTP 500"):
+            fetch_card(
+                "http://example.invalid",
+                retries=3,
+                retry_http_statuses=RECOMMENDED_RETRY_HTTP_STATUSES,
+            )
+    assert mock_urlopen.call_count == 1
+    mock_sleep.assert_not_called()
+
+
+def test_fetch_card_retries_status_then_url_error_share_budget() -> None:
+    """502 → URLError → 200 with retries=2 + retry_http_statuses={502}.
+    Verifies the "transient = transient" intuition from issue #66:
+    a single shared budget covers both kinds of retryable failure."""
+    payload = b'{"name": "peer", "skills": []}'
+    with patch("karasu.a2a.fetch.urlopen") as mock_urlopen, patch(
+        "karasu.a2a.fetch._sleep_backoff"
+    ) as mock_sleep:
+        mock_urlopen.side_effect = [
+            _http_error(502),
+            URLError("tcp reset"),
+            _mock_response(payload),
+        ]
+        result = fetch_card(
+            "http://example.invalid",
+            retries=2,
+            retry_http_statuses=frozenset({502}),
+        )
+    assert result == {"name": "peer", "skills": []}
+    assert mock_urlopen.call_count == 3
+    assert mock_sleep.call_count == 2
+
+
+def test_fetch_card_retries_exhausted_on_status_raises_last_http_error() -> None:
+    """All attempts return 503 with retries=2 + retry_http_statuses=
+    {503}. urlopen called 3 times, then AgentCardFetchError surfaces
+    the HTTP code from the final attempt."""
+    with patch("karasu.a2a.fetch.urlopen") as mock_urlopen, patch(
+        "karasu.a2a.fetch._sleep_backoff"
+    ) as mock_sleep:
+        mock_urlopen.side_effect = _http_error(503)
+        with pytest.raises(AgentCardFetchError, match="HTTP 503"):
+            fetch_card(
+                "http://example.invalid",
+                retries=2,
+                retry_http_statuses=frozenset({503}),
+            )
+    assert mock_urlopen.call_count == 3
+    # No sleep after the final (failing) attempt — same convention
+    # as the URLError exhaustion test above.
+    assert mock_sleep.call_count == 2
+
+
+def test_fetch_card_rejects_non_int_retry_status() -> None:
+    """frozenset({'502'}) is a programmer error, not a typo to
+    silently coerce. Fail-fast at the validation pass, before any
+    HTTP attempt fires."""
+    with pytest.raises(ValueError, match="retry_http_statuses"):
+        fetch_card(
+            "http://example.invalid",
+            retry_http_statuses=frozenset({"502"}),  # type: ignore[arg-type]
+        )
+
+
+def test_fetch_card_rejects_bool_retry_status() -> None:
+    """bool is a subclass of int in Python; True would silently coerce
+    to 1, which is not a valid HTTP status. Reject explicitly."""
+    with pytest.raises(ValueError, match="retry_http_statuses"):
+        fetch_card(
+            "http://example.invalid",
+            retry_http_statuses=frozenset({True}),  # type: ignore[arg-type]
+        )
+
+
+def test_fetch_card_rejects_out_of_range_retry_status() -> None:
+    """Below 100 or >= 600 is not an HTTP status; a 60 in the set is
+    almost certainly a typo for 600 / 504. Surface immediately so the
+    operator notices."""
+    with pytest.raises(ValueError, match="100-599"):
+        fetch_card(
+            "http://example.invalid",
+            retry_http_statuses=frozenset({99}),
+        )
+    with pytest.raises(ValueError, match="100-599"):
+        fetch_card(
+            "http://example.invalid",
+            retry_http_statuses=frozenset({600}),
+        )
+
+
+def test_fetch_card_empty_retry_set_preserves_pre_issue_66_semantics() -> None:
+    """503 with retries=5 + retry_http_statuses=frozenset() — single-
+    shot HTTP behaviour preserved exactly. This is the contract pin
+    that callers from before issue #66 rely on; double-checked here
+    even though test_fetch_card_does_not_retry_on_http_error already
+    covers the no-explicit-set path."""
+    with patch("karasu.a2a.fetch.urlopen") as mock_urlopen, patch(
+        "karasu.a2a.fetch._sleep_backoff"
+    ) as mock_sleep:
+        mock_urlopen.side_effect = _http_error(503)
+        with pytest.raises(AgentCardFetchError, match="HTTP 503"):
+            fetch_card(
+                "http://example.invalid",
+                retries=5,
+                retry_http_statuses=frozenset(),
+            )
+    assert mock_urlopen.call_count == 1
+    mock_sleep.assert_not_called()
+
+
+def test_cmd_peers_passes_retry_http_statuses_through() -> None:
+    """--retry-http-statuses 502,503,504 reaches fetch_card with the
+    parsed frozenset. With retries=1 and a 503 then a 200, urlopen is
+    called twice and the CLI exits 0."""
+    from karasu.__main__ import main
+
+    payload = b'{"name": "peer", "skills": []}'
+    with patch("karasu.a2a.fetch.urlopen") as mock_urlopen, patch(
+        "karasu.a2a.fetch._sleep_backoff"
+    ):
+        mock_urlopen.side_effect = [
+            _http_error(503),
+            _mock_response(payload),
+        ]
+        rc = main(
+            [
+                "peers",
+                "--json",
+                "--retries",
+                "1",
+                "--retry-http-statuses",
+                "502,503,504",
+                "http://127.0.0.1:1",
+            ]
+        )
+    assert rc == 0
+    assert mock_urlopen.call_count == 2
+
+
+def test_cmd_peers_retry_http_statuses_default_is_empty(capsys) -> None:
+    """No --retry-http-statuses → fetch_card receives frozenset(). A
+    503 surfaces on attempt 1 even with --retries=3. Pin the CLI
+    default so a future change cannot silently turn on HTTP retries
+    for every existing operator."""
+    from karasu.__main__ import main
+
+    with patch("karasu.a2a.fetch.urlopen") as mock_urlopen, patch(
+        "karasu.a2a.fetch._sleep_backoff"
+    ):
+        mock_urlopen.side_effect = _http_error(503)
+        rc = main(
+            [
+                "peers",
+                "--retries",
+                "3",
+                "http://127.0.0.1:1",
+            ]
+        )
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "HTTP 503" in captured.err
+    assert mock_urlopen.call_count == 1
+
+
+def test_cmd_peers_rejects_non_integer_retry_http_statuses(capsys) -> None:
+    """``--retry-http-statuses 502,abc`` fails fast at argparse
+    parsing time; no HTTP attempt fires."""
+    from karasu.__main__ import main
+
+    with patch("karasu.a2a.fetch.urlopen") as mock_urlopen:
+        with pytest.raises(SystemExit) as exc_info:
+            main(
+                [
+                    "peers",
+                    "--retry-http-statuses",
+                    "502,abc",
+                    "http://127.0.0.1:1",
+                ]
+            )
+    # argparse exits 2 on a usage error.
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "comma-separated integers" in captured.err
+    mock_urlopen.assert_not_called()
+
+
+def test_cmd_peers_rejects_out_of_range_retry_http_statuses(capsys) -> None:
+    """``--retry-http-statuses 99`` (below 100) fails fast — a 99 in
+    the set is almost always a typo, never a legitimate status."""
+    from karasu.__main__ import main
+
+    with patch("karasu.a2a.fetch.urlopen") as mock_urlopen:
+        with pytest.raises(SystemExit) as exc_info:
+            main(
+                [
+                    "peers",
+                    "--retry-http-statuses",
+                    "99",
+                    "http://127.0.0.1:1",
+                ]
+            )
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "100-599" in captured.err
+    mock_urlopen.assert_not_called()
+
+
+def test_cmd_peers_empty_retry_http_statuses_string_yields_empty_set(
+    capsys,
+) -> None:
+    """``--retry-http-statuses ''`` is the explicit-empty case
+    (rare in practice, but argparse accepts the value). Pinned so a
+    future caller scripting ``--retry-http-statuses "$VAR"`` against
+    an unset env var does not blow up."""
+    from karasu.__main__ import main
+
+    with patch("karasu.a2a.fetch.urlopen") as mock_urlopen, patch(
+        "karasu.a2a.fetch._sleep_backoff"
+    ):
+        mock_urlopen.side_effect = _http_error(503)
+        rc = main(
+            [
+                "peers",
+                "--retries",
+                "3",
+                "--retry-http-statuses",
+                "",
+                "http://127.0.0.1:1",
+            ]
+        )
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "HTTP 503" in captured.err
+    # Empty set means single-shot semantics, even with --retries=3.
+    assert mock_urlopen.call_count == 1
+
+
+def test_fetch_card_retries_zero_with_populated_set_still_single_shot() -> None:
+    """retries=0 + retry_http_statuses={503} — the budget wins.
+
+    Pinned in response to the Codex round-1 audit on commit fe926ab
+    (P2): even with a populated retry set, a zero budget means
+    single-shot. The set is the WHICH; retries is the HOW MANY.
+    A future refactor that silently couples "populated set" with
+    "always one extra attempt" is caught here."""
+    with patch("karasu.a2a.fetch.urlopen") as mock_urlopen, patch(
+        "karasu.a2a.fetch._sleep_backoff"
+    ) as mock_sleep:
+        mock_urlopen.side_effect = _http_error(503)
+        with pytest.raises(AgentCardFetchError, match="HTTP 503"):
+            fetch_card(
+                "http://example.invalid",
+                retries=0,
+                retry_http_statuses=frozenset({503}),
+            )
+    assert mock_urlopen.call_count == 1
+    mock_sleep.assert_not_called()
+
+
+def test_fetch_card_retries_each_recommended_status_individually() -> None:
+    """502, 503, 504 each trigger retry when the operator opts into
+    RECOMMENDED_RETRY_HTTP_STATUSES.
+
+    Pinned in response to the Codex round-1 audit on commit fe926ab
+    (P2): the recommended-set constant test pins the membership of
+    the constant; this test pins the per-status retry BEHAVIOUR so
+    a future refactor that drops one of the three from the dispatch
+    path (e.g. an off-by-one in the membership check, or a typo
+    re-binding the constant) is caught."""
+    payload = b'{"name": "peer", "skills": []}'
+    for status in (502, 503, 504):
+        with patch("karasu.a2a.fetch.urlopen") as mock_urlopen, patch(
+            "karasu.a2a.fetch._sleep_backoff"
+        ):
+            mock_urlopen.side_effect = [
+                _http_error(status),
+                _mock_response(payload),
+            ]
+            result = fetch_card(
+                "http://example.invalid",
+                retries=1,
+                retry_http_statuses=RECOMMENDED_RETRY_HTTP_STATUSES,
+            )
+        assert result == {"name": "peer", "skills": []}, (
+            f"status {status} did not retry to success"
+        )
+        assert mock_urlopen.call_count == 2, (
+            f"status {status} did not retry exactly once"
+        )

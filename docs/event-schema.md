@@ -11,7 +11,7 @@ this log — there is no other shared state.
   "id": "uuid",
   "timestamp": "ISO-8601",
   "type": "file_change | git_event | agent_response | human_decision",
-  "source": "watcher | adapter | interface",
+  "source": "watcher | adapter | interface | ui",
   "data": {
     "path": "relative/path",
     "change_type": "created | modified | deleted",
@@ -51,7 +51,7 @@ this log — there is no other shared state.
 ## `human_decision` payloads
 
 `human_decision` events come from operator-driven write paths.
-Two surfaces produce them today:
+Three surfaces produce them today:
 
 - **Telegram** (`source = "interface"`) — `/correct` and `/scar`
   commands carry `data.user` (Telegram user id) and `data.text`
@@ -94,6 +94,39 @@ Two surfaces produce them today:
   see a different shape when it came from the UI but they
   ignore it (the controller filters on `text` startswith
   `/scar` / `/correct`, which the UI variant does not carry).
+
+- **UI trust adjust** (`source = "ui"`, UI-11b) - the operator
+  surface's `POST /api/agents/{name}/trust` endpoint records an
+  intent to change one configured adapter's trust level for the
+  next watcher run. It does not mutate a running adapter instance.
+
+  ```json
+  {
+    "type": "human_decision",
+    "source": "ui",
+    "data": {
+      "action": "trust_adjust",
+      "agent": "<adapter-name>",
+      "trust_before": 1,
+      "trust_after": 2,
+      "reason": "<optional, only present when supplied>"
+    }
+  }
+  ```
+
+  - `data.action` - fixed string `"trust_adjust"` for trust
+    adjustments.
+  - `data.agent` - adapter name from the configured UI list.
+  - `data.trust_before` - integer trust level before the
+    adjustment, limited to the documented UI range `{0, 1, 2}`.
+  - `data.trust_after` - selected integer trust level, also
+    limited to `{0, 1, 2}`.
+  - `data.reason` - optional, free text. Empty / whitespace-only
+    reasons are omitted from the payload entirely.
+
+  Unsupported configured values outside `{0, 1, 2}` are read-only:
+  `/api/agents` surfaces them with an unsupported tag and the POST
+  path rejects mutation from that state.
 
 ## Priority semantics
 

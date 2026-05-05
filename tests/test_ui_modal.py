@@ -46,9 +46,15 @@ playwright = pytest.importorskip("playwright.sync_api")
 def modal_http(tmp_path: Path) -> Iterator[tuple[str, int, Path, Path]]:
     original_event_log = ui_server.EVENT_LOG
     original_scars_path = ui_server.SCARS_PATH
+    original_config_path = ui_server.CONFIG_PATH
     bus = tmp_path / "events.jsonl"
     scars_dir = tmp_path / "scars"
-    ui_server.configure(event_log=bus, scars_path=scars_dir)
+    config_path = tmp_path / "karasu.yaml"
+    ui_server.configure(
+        event_log=bus,
+        scars_path=scars_dir,
+        config_path=config_path,
+    )
     server = ThreadingHTTPServer(("127.0.0.1", 0), ui_server.UIHandler)
     thread = threading.Thread(
         target=server.serve_forever, name="karasu-ui-modal-test", daemon=True
@@ -64,6 +70,7 @@ def modal_http(tmp_path: Path) -> Iterator[tuple[str, int, Path, Path]]:
         ui_server.configure(
             event_log=original_event_log,
             scars_path=original_scars_path,
+            config_path=original_config_path,
         )
 
 
@@ -96,6 +103,56 @@ def _seed_bus_and_scars(bus: Path, scars_dir: Path) -> str:
         json.dumps(scar) + "\n", encoding="utf-8"
     )
     return scar_id
+
+
+def _seed_agent_response(bus: Path) -> None:
+    bus.parent.mkdir(parents=True, exist_ok=True)
+    events = [
+        {
+            "id": "trust-fc-001",
+            "timestamp": "2026-05-05T13:00:00Z",
+            "type": "file_change",
+            "source": "watcher",
+            "data": {
+                "path": "src/karasu/ui/server.py",
+                "classification": "implementation",
+            },
+            "dispatch": {
+                "agent": "claude_code",
+                "status": "dispatched",
+                "trust_level": 1,
+            },
+            "response": {},
+        },
+        {
+            "id": "trust-ar-001",
+            "timestamp": "2026-05-05T13:00:02Z",
+            "type": "agent_response",
+            "source": "adapter",
+            "data": {
+                "correlates": "trust-fc-001",
+                "path": "src/karasu/ui/server.py",
+                "classification": "implementation",
+            },
+            "dispatch": {
+                "agent": "claude_code",
+                "status": "completed",
+                "trust_level": 1,
+            },
+            "response": {
+                "content": "ready",
+                "requires_human": False,
+            },
+        },
+    ]
+    bus.write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n",
+        encoding="utf-8",
+    )
+    ui_server.CONFIG_PATH.write_text(
+        json.dumps({"agents": {"claude_code": {"trust_level": 1}}}),
+        encoding="utf-8",
+    )
 
 
 def _bus_lines(bus: Path) -> list[str]:
@@ -313,3 +370,209 @@ def test_modal_backdrop_click_closes_only_modal(
             assert page.locator("#event-drawer.is-open").count() == 1
         finally:
             browser.close()
+
+
+def test_trust_cancel_does_not_mutate_or_emit(
+    modal_http: tuple[str, int, Path, Path],
+) -> None:
+    """UI-11b cancel path: Adjust opens the trust modal, Cancel
+    closes it, the bus is unchanged, and config trust remains at
+    the original level."""
+    host, port, bus, _ = modal_http
+    _seed_agent_response(bus)
+    initial_lines = _bus_lines(bus)
+
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            context = browser.new_context()
+            page = context.new_page()
+            page.goto(f"http://{host}:{port}/")
+            page.wait_for_load_state("networkidle")
+            page.wait_for_selector(".event-row", timeout=5000)
+            page.locator(".event-row").first.click()
+            page.wait_for_selector(
+                "#drawer-trust-row .drawer-trust-adjust", timeout=5000
+            )
+            page.locator("#drawer-trust-row .drawer-trust-adjust").click()
+            page.locator("#trust-modal").wait_for(
+                state="visible", timeout=2000
+            )
+            page.locator("#trust-modal-cancel").click()
+            page.locator("#trust-modal").wait_for(
+                state="hidden", timeout=2000
+            )
+            assert page.locator("#event-drawer.is-open").count() == 1
+        finally:
+            browser.close()
+
+    assert _bus_lines(bus) == initial_lines
+    assert ui_server._list_agents()[0]["trust_level"] == 1
+
+
+def test_trust_confirm_emits_event_and_annotates_drawer(
+    modal_http: tuple[str, int, Path, Path],
+) -> None:
+    """Confirm path: POST fires, config updates for the next
+    watcher run, a trust_adjust event lands on the bus, and the
+    drawer shows the recorded-intent annotation."""
+    host, port, bus, _ = modal_http
+    _seed_agent_response(bus)
+    initial_lines = _bus_lines(bus)
+
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            context = browser.new_context()
+            page = context.new_page()
+            page.goto(f"http://{host}:{port}/")
+            page.wait_for_load_state("networkidle")
+            page.wait_for_selector(".event-row", timeout=5000)
+            page.locator(".event-row").first.click()
+            page.wait_for_selector(
+                "#drawer-trust-row .drawer-trust-adjust", timeout=5000
+            )
+            page.locator("#drawer-trust-row .drawer-trust-adjust").click()
+            page.locator("#trust-modal").wait_for(
+                state="visible", timeout=2000
+            )
+            page.locator('input[name="trust-level"][value="2"]').check()
+            page.locator("#trust-modal-reason").fill("  dogfood branch  ")
+            page.locator("#trust-modal-confirm").click()
+            page.locator("#trust-modal").wait_for(
+                state="hidden", timeout=3000
+            )
+            page.locator("#drawer-trust-row .drawer-trust-note").wait_for(
+                state="visible", timeout=3000
+            )
+            assert "Recorded intent. Applies after watch restart." in (
+                page.locator("#drawer-trust-row .drawer-trust-note").inner_text()
+            )
+        finally:
+            browser.close()
+
+    after_lines = _bus_lines(bus)
+    assert len(after_lines) == len(initial_lines) + 1
+    event = json.loads(after_lines[-1])
+    assert event["type"] == "human_decision"
+    assert event["source"] == "ui"
+    assert event["data"] == {
+        "action": "trust_adjust",
+        "agent": "claude_code",
+        "trust_before": 1,
+        "trust_after": 2,
+        "reason": "dogfood branch",
+    }
+    assert ui_server._list_agents()[0]["trust_level"] == 2
+
+
+def test_trust_esc_closes_modal_first_then_drawer(
+    modal_http: tuple[str, int, Path, Path],
+) -> None:
+    host, port, bus, _ = modal_http
+    _seed_agent_response(bus)
+
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            context = browser.new_context()
+            page = context.new_page()
+            page.goto(f"http://{host}:{port}/")
+            page.wait_for_load_state("networkidle")
+            page.wait_for_selector(".event-row", timeout=5000)
+            page.locator(".event-row").first.click()
+            page.wait_for_selector(
+                "#drawer-trust-row .drawer-trust-adjust", timeout=5000
+            )
+            page.locator("#drawer-trust-row .drawer-trust-adjust").click()
+            page.locator("#trust-modal").wait_for(
+                state="visible", timeout=2000
+            )
+            page.keyboard.press("Escape")
+            page.locator("#trust-modal").wait_for(
+                state="hidden", timeout=2000
+            )
+            assert page.locator("#event-drawer.is-open").count() == 1
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(400)
+            assert page.locator("#event-drawer.is-open").count() == 0
+        finally:
+            browser.close()
+
+
+def test_trust_backdrop_click_closes_only_modal(
+    modal_http: tuple[str, int, Path, Path],
+) -> None:
+    host, port, bus, _ = modal_http
+    _seed_agent_response(bus)
+
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            context = browser.new_context()
+            page = context.new_page()
+            page.goto(f"http://{host}:{port}/")
+            page.wait_for_load_state("networkidle")
+            page.wait_for_selector(".event-row", timeout=5000)
+            page.locator(".event-row").first.click()
+            page.wait_for_selector(
+                "#drawer-trust-row .drawer-trust-adjust", timeout=5000
+            )
+            page.locator("#drawer-trust-row .drawer-trust-adjust").click()
+            page.locator("#trust-modal").wait_for(
+                state="visible", timeout=2000
+            )
+            page.evaluate("document.getElementById('modal-backdrop').click()")
+            page.locator("#trust-modal").wait_for(
+                state="hidden", timeout=2000
+            )
+            assert page.locator("#event-drawer.is-open").count() == 1
+        finally:
+            browser.close()
+
+
+def test_trust_whitespace_reason_is_omitted(
+    modal_http: tuple[str, int, Path, Path],
+) -> None:
+    host, port, bus, _ = modal_http
+    _seed_agent_response(bus)
+
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            context = browser.new_context()
+            page = context.new_page()
+            page.goto(f"http://{host}:{port}/")
+            page.wait_for_load_state("networkidle")
+            page.wait_for_selector(".event-row", timeout=5000)
+            page.locator(".event-row").first.click()
+            page.wait_for_selector(
+                "#drawer-trust-row .drawer-trust-adjust", timeout=5000
+            )
+            page.locator("#drawer-trust-row .drawer-trust-adjust").click()
+            page.locator("#trust-modal").wait_for(
+                state="visible", timeout=2000
+            )
+            page.locator('input[name="trust-level"][value="0"]').check()
+            page.locator("#trust-modal-reason").fill("   ")
+            page.locator("#trust-modal-confirm").click()
+            page.locator("#trust-modal").wait_for(
+                state="hidden", timeout=3000
+            )
+        finally:
+            browser.close()
+
+    event = json.loads(_bus_lines(bus)[-1])
+    assert event["data"]["action"] == "trust_adjust"
+    assert event["data"]["trust_after"] == 0
+    assert "reason" not in event["data"]

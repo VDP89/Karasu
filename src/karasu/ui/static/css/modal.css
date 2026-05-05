@@ -185,6 +185,16 @@
     color: var(--fg-1);
 }
 
+.modal-confirm {
+    color: var(--fg-1);
+    border-color: var(--fg-3);
+}
+
+.modal-confirm:hover {
+    background: var(--bg-2);
+    border-color: var(--fg-2);
+}
+
 .modal-revoke {
     /* Destructive button. Per brief §3.5 + §5.1 scope
      * discipline: --danger MUST NOT be used outside
@@ -208,6 +218,63 @@
 .modal-revoke:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+}
+
+.modal-action:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.modal .modal-trust-options {
+    border: 0;
+    padding: 0;
+    margin: var(--space-4) 0 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.modal .modal-trust-option {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--fg-3);
+    border-radius: var(--radius-1);
+    color: var(--fg-2);
+    cursor: pointer;
+    transition:
+        color var(--duration-micro) var(--ease-out),
+        background-color var(--duration-micro) var(--ease-out),
+        border-color var(--duration-micro) var(--ease-out);
+}
+
+.modal .modal-trust-option:hover {
+    background: var(--bg-2);
+}
+
+.modal .modal-trust-option:focus-within,
+.modal .modal-trust-option:has(input:checked) {
+    color: var(--fg-1);
+    border-color: var(--accent);
+}
+
+.modal .modal-trust-option input {
+    margin: 0;
+    accent-color: var(--accent);
+}
+
+.modal .modal-trust-level {
+    font-family: var(--font-mono);
+    font-size: var(--fs-16);
+    color: var(--fg-1);
+}
+
+.modal .modal-trust-description {
+    font-family: var(--font-display);
+    font-size: var(--fs-14);
+    line-height: var(--lh-body);
 }
 
 

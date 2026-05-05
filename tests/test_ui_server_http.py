@@ -469,6 +469,127 @@ def test_api_agents_non_integer_trust_level_is_unsupported(
     ]
 
 
+def test_post_agent_trust_returns_204_updates_config_and_emits_event(
+    ui_http: tuple[str, int]
+) -> None:
+    """UI-11b success shape: 204 empty body, config trust updated
+    for the next watcher run, and a trust_adjust human_decision
+    lands on the bus."""
+    host, port = ui_http
+    _write_config({
+        "agents": {
+            "claude_code": {
+                "trust_level": 1,
+                "handles": ["implementation"],
+            },
+        }
+    })
+    body = json.dumps({
+        "trust_level": 2,
+        "reason": "  dogfood can mutate this branch  ",
+    }).encode("utf-8")
+
+    status, response_body, _ = _post(
+        host, port, "/api/agents/claude_code/trust", body=body
+    )
+
+    assert status == 204
+    assert response_body == b""
+
+    status, agents_body, _ = _get(host, port, "/api/agents")
+    assert status == 200
+    assert json.loads(agents_body)[0]["trust_level"] == 2
+
+    raw = ui_server.EVENT_LOG.read_text(encoding="utf-8").splitlines()
+    event = json.loads(raw[-1])
+    assert event["type"] == "human_decision"
+    assert event["source"] == "ui"
+    assert event["data"] == {
+        "action": "trust_adjust",
+        "agent": "claude_code",
+        "trust_before": 1,
+        "trust_after": 2,
+        "reason": "dogfood can mutate this branch",
+    }
+
+
+def test_post_agent_trust_whitespace_reason_omits_field(
+    ui_http: tuple[str, int]
+) -> None:
+    """Empty / whitespace-only reason is omitted, matching the
+    UI-10 revoke convention."""
+    host, port = ui_http
+    _write_config({"agents": {"claude_code": {"trust_level": 1}}})
+    body = json.dumps({"trust_level": 0, "reason": "   "}).encode("utf-8")
+
+    status, _, _ = _post(host, port, "/api/agents/claude_code/trust", body=body)
+
+    assert status == 204
+    raw = ui_server.EVENT_LOG.read_text(encoding="utf-8").splitlines()
+    event = json.loads(raw[-1])
+    assert event["data"]["action"] == "trust_adjust"
+    assert event["data"]["trust_before"] == 1
+    assert event["data"]["trust_after"] == 0
+    assert "reason" not in event["data"]
+
+
+def test_post_agent_trust_unknown_agent_returns_404(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _write_config({"agents": {"claude_code": {"trust_level": 1}}})
+
+    status, _, _ = _post(
+        host,
+        port,
+        "/api/agents/no_such_agent/trust",
+        body=json.dumps({"trust_level": 2}).encode("utf-8"),
+    )
+
+    assert status == 404
+    assert not ui_server.EVENT_LOG.exists()
+
+
+def test_post_agent_trust_unsupported_current_level_returns_422(
+    ui_http: tuple[str, int]
+) -> None:
+    """A configured unsupported value is visible/read-only and
+    cannot be mutated through the UI-11b POST path."""
+    host, port = ui_http
+    _write_config({"agents": {"claude_code": {"trust_level": 3}}})
+
+    status, _, _ = _post(
+        host,
+        port,
+        "/api/agents/claude_code/trust",
+        body=json.dumps({"trust_level": 2}).encode("utf-8"),
+    )
+
+    assert status == 422
+    assert not ui_server.EVENT_LOG.exists()
+    _, agents_body, _ = _get(host, port, "/api/agents")
+    assert json.loads(agents_body)[0]["trust_level"] == 3
+
+
+def test_post_agent_trust_invalid_target_level_returns_422(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _write_config({"agents": {"claude_code": {"trust_level": 1}}})
+
+    status, _, _ = _post(
+        host,
+        port,
+        "/api/agents/claude_code/trust",
+        body=json.dumps({"trust_level": 4}).encode("utf-8"),
+    )
+
+    assert status == 422
+    assert not ui_server.EVENT_LOG.exists()
+    _, agents_body, _ = _get(host, port, "/api/agents")
+    assert json.loads(agents_body)[0]["trust_level"] == 1
+
+
 # ---------------------------------------------------------------------------
 # /assets/sw.js — Service-Worker-Allowed: / header (UI-8 P1#1 pin)
 # ---------------------------------------------------------------------------

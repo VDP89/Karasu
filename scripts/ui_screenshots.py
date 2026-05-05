@@ -394,6 +394,58 @@ UI11A_EVENTS = [
     UI11A_AGENT_RESPONSE,
 ]
 
+UI11B_AGENT_RESPONSE = {
+    "id": "ui11b-ar-001",
+    "timestamp": "2026-05-05T16:15:00Z",
+    "type": "agent_response",
+    "source": "adapter",
+    "data": {
+        "correlates": "ui11b-fc-001",
+        "path": "src/karasu/ui/server.py",
+        "classification": "implementation",
+        "priority": "normal",
+    },
+    "dispatch": {
+        "agent": "claude_code",
+        "status": "completed",
+        "trust_level": 1,
+    },
+    "response": {
+        "content": "Trust adjust write path is ready for review.",
+        "requires_human": False,
+    },
+}
+
+UI11B_EVENTS = [
+    {
+        "id": "ui11b-fc-001",
+        "timestamp": "2026-05-05T16:14:30Z",
+        "type": "file_change",
+        "source": "watcher",
+        "data": {
+            "path": "src/karasu/ui/server.py",
+            "classification": "implementation",
+            "priority": "normal",
+        },
+        "dispatch": {
+            "agent": "claude_code",
+            "status": "dispatched",
+            "trust_level": 1,
+        },
+        "response": {},
+    },
+    UI11B_AGENT_RESPONSE,
+]
+
+UI11B_CONFIG = {
+    "agents": {
+        "claude_code": {
+            "trust_level": 1,
+            "handles": ["implementation"],
+        }
+    }
+}
+
 
 STATE_CORPORA: dict[str, list[dict]] = {
     "idle": _BASELINE,
@@ -725,6 +777,101 @@ CAPTURES: dict[str, list[dict]] = {
             "wait_ms": 3500,
             "click": ".event-row:first-child",
             "post_click_wait_ms": 500,
+            "full_page": False,
+        },
+    ],
+    # UI-11b - trust gradient write affordance.
+    #
+    # Drawer-earned only: every PNG opens from a concrete
+    # agent_response row. The modal copy and post-confirm drawer
+    # annotation both state that the change is recorded intent for
+    # the next watcher run, not live adapter mutation.
+    "UI-11b-trust-write": [
+        {
+            "name": "00-drawer-with-adjust.png",
+            "url": "/",
+            "seed_events": UI11B_EVENTS,
+            "seed_config": UI11B_CONFIG,
+            "wait_ms": 3500,
+            "click": ".event-row:first-child",
+            "post_click_wait_ms": 500,
+            "full_page": False,
+        },
+        {
+            "name": "01-modal-default.png",
+            "url": "/",
+            "seed_events": UI11B_EVENTS,
+            "seed_config": UI11B_CONFIG,
+            "wait_ms": 3500,
+            "click": ".event-row:first-child",
+            "post_click_wait_ms": 400,
+            "eval_js": (
+                "document.querySelector("
+                "  '#drawer-trust-row .drawer-trust-adjust'"
+                ").click()"
+            ),
+            "post_eval_wait_ms": 400,
+            "full_page": False,
+        },
+        {
+            "name": "02-modal-with-reason.png",
+            "url": "/",
+            "seed_events": UI11B_EVENTS,
+            "seed_config": UI11B_CONFIG,
+            "wait_ms": 3500,
+            "click": ".event-row:first-child",
+            "post_click_wait_ms": 400,
+            "eval_js": (
+                "document.querySelector("
+                "  '#drawer-trust-row .drawer-trust-adjust'"
+                ").click();"
+                "document.querySelector("
+                "  'input[name=\"trust-level\"][value=\"2\"]'"
+                ").click();"
+                "const r = document.getElementById('trust-modal-reason');"
+                "r.value = 'dogfood branch';"
+                "r.dispatchEvent(new Event('input'));"
+            ),
+            "post_eval_wait_ms": 400,
+            "full_page": False,
+        },
+        {
+            "name": "03-modal-reduced-motion.png",
+            "url": "/",
+            "seed_events": UI11B_EVENTS,
+            "seed_config": UI11B_CONFIG,
+            "reduced_motion": True,
+            "wait_ms": 3500,
+            "click": ".event-row:first-child",
+            "post_click_wait_ms": 400,
+            "eval_js": (
+                "document.querySelector("
+                "  '#drawer-trust-row .drawer-trust-adjust'"
+                ").click()"
+            ),
+            "post_eval_wait_ms": 400,
+            "full_page": False,
+        },
+        {
+            "name": "04-post-confirm-annotation.png",
+            "url": "/",
+            "seed_events": UI11B_EVENTS,
+            "seed_config": UI11B_CONFIG,
+            "wait_ms": 3500,
+            "click": ".event-row:first-child",
+            "post_click_wait_ms": 400,
+            "eval_js": (
+                "document.querySelector("
+                "  '#drawer-trust-row .drawer-trust-adjust'"
+                ").click();"
+                "document.querySelector("
+                "  'input[name=\"trust-level\"][value=\"2\"]'"
+                ").click();"
+                "document.getElementById('trust-modal-reason').value = "
+                "'dogfood branch';"
+                "document.getElementById('trust-modal-confirm').click();"
+            ),
+            "post_eval_wait_ms": 1400,
             "full_page": False,
         },
     ],
@@ -1248,6 +1395,47 @@ RECORDINGS: dict[str, dict] = {
             {"wait_ms": 800},
         ],
     },
+    "UI-11b-trust-write": {
+        "viewport": {"width": 1024, "height": 640},
+        "url": "/",
+        "frames": [
+            {
+                "seed_events": UI11B_EVENTS,
+                "seed_config": UI11B_CONFIG,
+                "wait_ms": 1200,
+            },
+            {
+                "eval_js": "document.querySelector('.event-row').click()",
+                "wait_ms": 900,
+            },
+            {
+                "eval_js": (
+                    "document.querySelector("
+                    "  '#drawer-trust-row .drawer-trust-adjust'"
+                    ").click()"
+                ),
+                "wait_ms": 900,
+            },
+            {
+                "eval_js": (
+                    "document.querySelector("
+                    "  'input[name=\"trust-level\"][value=\"2\"]'"
+                    ").click();"
+                    "const r = document.getElementById('trust-modal-reason');"
+                    "r.value = 'dogfood branch';"
+                    "r.dispatchEvent(new Event('input'));"
+                ),
+                "wait_ms": 600,
+            },
+            {
+                "eval_js": (
+                    "document.getElementById('trust-modal-confirm').click()"
+                ),
+                "wait_ms": 1500,
+            },
+            {"wait_ms": 800},
+        ],
+    },
     "UI-7-detail": {
         "viewport": {"width": 1024, "height": 640},
         "url": "/",
@@ -1314,6 +1502,7 @@ def _start_server(workdir: Path, port: int) -> http.server.ThreadingHTTPServer:
     ui_server.configure(
         event_log=workdir / ".karasu" / "events.jsonl",
         scars_path=workdir / ".karasu" / "scars",
+        config_path=workdir / "karasu.yaml",
     )
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", port), ui_server.UIHandler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -1326,6 +1515,7 @@ def _seed_workdir(
     populate: bool = True,
     events: list[dict] | None = None,
     scars: list[dict] | None = None,
+    config: dict | None = None,
 ) -> None:
     """Reset the synthetic bus + scar rules before each capture.
 
@@ -1362,6 +1552,13 @@ def _seed_workdir(
         if scars:
             for scar in scars:
                 fh.write(json.dumps(scar) + "\n")
+
+    config_path = workdir / "karasu.yaml"
+    if config is None:
+        if config_path.exists():
+            config_path.unlink()
+    else:
+        config_path.write_text(json.dumps(config), encoding="utf-8")
 
 
 def _resolve_seed_events(plan: dict) -> list[dict] | None:
@@ -1496,6 +1693,7 @@ def _capture(slug: str, port: int, out_dir: Path, workdir: Path) -> None:
                     populate=plan.get("seed", True),
                     events=seed_events,
                     scars=plan.get("seed_scars"),
+                    config=plan.get("seed_config"),
                 )
                 page.goto(f"http://127.0.0.1:{port}{plan['url']}")
                 page.wait_for_load_state("networkidle")
@@ -1583,6 +1781,7 @@ def _record_video(slug: str, port: int, workdir: Path) -> None:
                     workdir,
                     events=_resolve_seed_events(first),
                     scars=first.get("seed_scars"),
+                    config=first.get("seed_config"),
                 )
                 page.goto(f"http://127.0.0.1:{port}{plan['url']}")
                 page.wait_for_load_state("networkidle")
@@ -1595,6 +1794,7 @@ def _record_video(slug: str, port: int, workdir: Path) -> None:
                             workdir,
                             events=seed_events,
                             scars=frame.get("seed_scars"),
+                            config=frame.get("seed_config"),
                         )
                         # Force an immediate /api/health + /api/events
                         # round-trip so the next CSS class swap fires

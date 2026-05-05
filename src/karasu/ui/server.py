@@ -9,6 +9,7 @@ on each request and exposes:
   GET  /api/health                server + crow state summary
   GET  /api/meta                  version + configured bus path (UI-3)
   GET  /api/agents                configured adapters + trust levels (UI-11a)
+  POST /api/agents/{name}/trust   persist trust intent + emit bus event (UI-11b)
   GET  /api/scars                 active scars list (UI-10)
   POST /api/scars/{id}/revoke     append revoke + emit bus event (UI-10)
   GET  /assets/...                static assets (fonts, sprites, css)
@@ -33,11 +34,12 @@ from __future__ import annotations
 import gzip
 import json
 import re
+import yaml
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, unquote
 
 # UI-9 follow-up — content types worth compressing on the wire.
 # woff2 fonts and PNG icons are already compressed; gzip-ing
@@ -93,12 +95,14 @@ CONFIG_PATH = Path("karasu.yaml")
 # server is the second line of defence. 4 KiB matches the
 # pattern UI-7 used for the cap on review-comment bodies.
 _REVOKE_BODY_MAX_BYTES = 4096
+_TRUST_BODY_MAX_BYTES = 4096
 
 # UI-10 — scar id character set (brief §10.1). Mirrored on the
 # wire and in the URL pattern so an id outside the regex is a
 # server-side bug, not a UI input concern.
 _SCAR_ID_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
 _REVOKE_PATH_RE = re.compile(r"^/api/scars/([A-Za-z0-9._:-]+)/revoke$")
+_TRUST_PATH_RE = re.compile(r"^/api/agents/([A-Za-z0-9._:-]+)/trust$")
 
 # Sentinels returned by ``UIHandler._read_revoke_reason`` so the
 # caller can map distinct error shapes to distinct HTTP statuses
@@ -107,6 +111,7 @@ _REVOKE_PATH_RE = re.compile(r"^/api/scars/([A-Za-z0-9._:-]+)/revoke$")
 _MALFORMED_BODY = object()
 _BODY_TOO_LARGE = object()
 _BODY_NOT_OBJECT = object()
+_INVALID_TRUST_LEVEL = object()
 
 # Default page size for /api/events. Operator can override via
 # ?limit=N (capped at MAX_EVENT_LIMIT to bound memory in the
@@ -437,6 +442,8 @@ def _list_agents() -> list[dict[str, Any]]:
     from karasu.__main__ import _load_config, _normalize_handles
 
     config = _load_config(CONFIG_PATH)
+    if not isinstance(config, dict):
+        return []
     agents_cfg = config.get("agents", {}) or {}
     if not isinstance(agents_cfg, dict):
         return []
@@ -475,6 +482,46 @@ def _list_agents() -> list[dict[str, Any]]:
     return out
 
 
+def _configured_agent_record(name: str) -> dict[str, Any] | None:
+    """Return one active /api/agents record by adapter name."""
+    for record in _list_agents():
+        if record.get("name") == name:
+            return record
+    return None
+
+
+def _persist_agent_trust(name: str, trust_level: int) -> None:
+    """Persist ``agents.<name>.trust_level`` in ``CONFIG_PATH``.
+
+    UI-11b is intent-only with respect to live adapter instances:
+    this helper never reaches into ``karasu watch``. It updates the
+    configured value so the recorded intent becomes effective after
+    the operator restarts the watcher.
+    """
+    from karasu.__main__ import _load_config
+
+    config = _load_config(CONFIG_PATH)
+    if not isinstance(config, dict):
+        config = {}
+    agents_cfg = config.setdefault("agents", {})
+    if not isinstance(agents_cfg, dict):
+        agents_cfg = {}
+        config["agents"] = agents_cfg
+    raw = agents_cfg.get(name)
+    if not isinstance(raw, dict):
+        raw = {}
+        agents_cfg[name] = raw
+    raw["trust_level"] = trust_level
+
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = CONFIG_PATH.with_name(f"{CONFIG_PATH.name}.tmp")
+    tmp.write_text(
+        yaml.safe_dump(config, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+    tmp.replace(CONFIG_PATH)
+
+
 def _emit_human_decision(action: str, data: dict[str, Any]) -> None:
     """Append a ``human_decision`` event to the configured bus.
 
@@ -494,9 +541,8 @@ class UIHandler(BaseHTTPRequestHandler):
     """HTTP handler.
 
     GET routes are read-only sinks over the bus (and over the
-    ScarEngine for ``/api/scars``). The POST route added in
-    UI-10 (``/api/scars/{id}/revoke``) is the operator surface's
-    first write path — local-only, single-scar, network-only
+    ScarEngine for ``/api/scars``). The POST routes added in
+    UI-10 / UI-11b are local-only, drawer-earned, network-only
     (the SW handler from UI-8 already pins ``/api/*`` to
     network-only), 204 on success."""
 
@@ -700,13 +746,14 @@ class UIHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 — BaseHTTPRequestHandler API
         """Write paths.
 
-        UI-10 ships the only POST route: scar revoke. Returns
-        204 with no body on success, per brief §3-E. Single-scar
-        only — batch revokes are a UI-12+ concern.
+        UI-10 ships scar revoke. UI-11b adds trust adjust. Both
+        return 204 with no body on success and emit auditable
+        ``human_decision`` events.
         """
         path, _, _ = self.path.partition("?")
-        m = _REVOKE_PATH_RE.match(path)
-        if m is None:
+        revoke = _REVOKE_PATH_RE.match(path)
+        trust = _TRUST_PATH_RE.match(path)
+        if revoke is None and trust is None:
             # Method-not-allowed for paths the GET handler knows
             # about (so a stray POST to /api/health gets a 405,
             # not a 404 that hides the typo); 404 for everything
@@ -727,7 +774,11 @@ class UIHandler(BaseHTTPRequestHandler):
             self._send(404, b"not found", "text/plain")
             return
 
-        scar_id = m.group(1)
+        if trust is not None:
+            self._handle_trust_post(unquote(trust.group(1)))
+            return
+
+        scar_id = revoke.group(1)
         # The path regex already accepted only [A-Za-z0-9._:-]+;
         # double-check via the canonical id regex to fail loud if
         # the two ever diverge.
@@ -769,6 +820,53 @@ class UIHandler(BaseHTTPRequestHandler):
         # returns 204) is verified by the HTTP shape lock.
         self._send(204, b"", "application/octet-stream")
 
+    def _handle_trust_post(self, agent_name: str) -> None:
+        """Handle ``POST /api/agents/{name}/trust``.
+
+        UI-11b is drawer-earned and intent-only: the endpoint
+        persists the configured trust value for the next watcher
+        run, emits a bus event, and never mutates a live adapter
+        instance.
+        """
+        record = _configured_agent_record(agent_name)
+        if record is None:
+            self._send(404, b"agent not found", "text/plain")
+            return
+        trust_before = record.get("trust_level")
+        if record.get("unsupported") or trust_before not in _SUPPORTED_TRUST_LEVELS:
+            self._send(422, b"unsupported current trust_level", "text/plain")
+            return
+
+        payload = self._read_trust_adjust_body()
+        if payload is _MALFORMED_BODY:
+            self._send(422, b"malformed json", "text/plain")
+            return
+        if payload is _BODY_TOO_LARGE:
+            self._send(413, b"payload too large", "text/plain")
+            return
+        if payload is _BODY_NOT_OBJECT:
+            self._send(422, b"json body must be an object", "text/plain")
+            return
+        if payload is _INVALID_TRUST_LEVEL:
+            self._send(422, b"invalid trust_level", "text/plain")
+            return
+
+        assert isinstance(payload, dict)
+        trust_after = payload["trust_after"]
+        _persist_agent_trust(agent_name, trust_after)
+
+        event_data: dict[str, Any] = {
+            "agent": agent_name,
+            "trust_before": trust_before,
+            "trust_after": trust_after,
+        }
+        reason = payload.get("reason")
+        if reason:
+            event_data["reason"] = reason
+        _emit_human_decision("trust_adjust", event_data)
+
+        self._send(204, b"", "application/octet-stream")
+
     def _read_revoke_reason(self) -> "str | None | object":
         """Read + validate the optional ``{reason}`` body.
 
@@ -803,6 +901,45 @@ class UIHandler(BaseHTTPRequestHandler):
             return None
         trimmed = raw_reason.strip()
         return trimmed or None
+
+    def _read_trust_adjust_body(self) -> "dict[str, Any] | object":
+        """Read + validate the UI-11b trust adjust JSON body.
+
+        The documented body is ``{"trust_level": 0|1|2}`` with an
+        optional string ``reason``. Reasons are trimmed and omitted
+        when empty, matching the UI-10 revoke convention.
+        """
+        try:
+            declared = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            declared = 0
+        if declared > _TRUST_BODY_MAX_BYTES:
+            return _BODY_TOO_LARGE
+        if declared == 0:
+            return _BODY_NOT_OBJECT
+        body = self.rfile.read(declared)
+        if not body:
+            return _BODY_NOT_OBJECT
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return _MALFORMED_BODY
+        if not isinstance(payload, dict):
+            return _BODY_NOT_OBJECT
+
+        raw_trust = payload.get("trust_level")
+        if isinstance(raw_trust, bool) or not isinstance(raw_trust, int):
+            return _INVALID_TRUST_LEVEL
+        if raw_trust not in _SUPPORTED_TRUST_LEVELS:
+            return _INVALID_TRUST_LEVEL
+
+        out: dict[str, Any] = {"trust_after": raw_trust}
+        raw_reason = payload.get("reason")
+        if isinstance(raw_reason, str):
+            trimmed = raw_reason.strip()
+            if trimmed:
+                out["reason"] = trimmed
+        return out
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         # The default handler logs to stderr in apache combined

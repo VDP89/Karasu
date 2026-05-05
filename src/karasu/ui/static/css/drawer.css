@@ -130,12 +130,56 @@
  * typographic rather than button-like; UI-11b earns the Adjust
  * affordance separately. */
 .drawer-trust-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-3);
     padding: var(--space-3) var(--space-5);
     font-family: var(--font-mono);
     font-size: var(--fs-14);
     color: var(--fg-2);
     background: var(--bg-0);
     box-shadow: var(--shadow-1);
+}
+
+.drawer-trust-value {
+    flex: 1 1 auto;
+}
+
+.drawer-trust-adjust {
+    flex: 0 0 auto;
+    font-family: var(--font-display);
+    font-size: var(--fs-12);
+    font-weight: var(--weight-ui);
+    padding: var(--space-1) var(--space-3);
+    border: 1px solid var(--fg-3);
+    border-radius: var(--radius-1);
+    color: var(--fg-1);
+    background: transparent;
+    cursor: pointer;
+    transition:
+        color var(--duration-micro) var(--ease-out),
+        background-color var(--duration-micro) var(--ease-out),
+        border-color var(--duration-micro) var(--ease-out);
+}
+
+.drawer-trust-adjust:hover {
+    border-color: var(--fg-2);
+    background: var(--bg-2);
+}
+
+.drawer-trust-adjust:focus {
+    outline: none;
+    box-shadow: var(--focus-ring);
+}
+
+.drawer-trust-note {
+    flex: 1 0 100%;
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: var(--fs-12);
+    line-height: var(--lh-body);
+    color: var(--fg-2);
 }
 
 /* --- drawer body ----------------------------------------------- */

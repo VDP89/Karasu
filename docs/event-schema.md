@@ -48,6 +48,53 @@ this log — there is no other shared state.
 - **`response`** — populated by adapters and consumed by the
   reporter. `requires_human` is set by the trust gradient.
 
+## `human_decision` payloads
+
+`human_decision` events come from operator-driven write paths.
+Two surfaces produce them today:
+
+- **Telegram** (`source = "interface"`) — `/correct` and `/scar`
+  commands carry `data.user` (Telegram user id) and `data.text`
+  (the raw command line). The redacted variants used for unknown
+  / unauthorized callers omit the body.
+
+- **UI scar revoke** (`source = "ui"`, UI-10) — the operator
+  surface's `POST /api/scars/{id}/revoke` endpoint emits an
+  additive payload pinned by the UI-10 brief §3-D:
+
+  ```json
+  {
+    "type": "human_decision",
+    "source": "ui",
+    "data": {
+      "action": "scar_revoke",
+      "scar_id": "<existing-scar-id>",
+      "reason": "<optional, only present when supplied>"
+    }
+  }
+  ```
+
+  - `data.action` — fixed string `"scar_revoke"` for revoke
+    events. Future write paths may add other action strings;
+    consumers should treat the field as a discriminator.
+  - `data.scar_id` — the id of the scar the operator revoked.
+    The character set is `[A-Za-z0-9._:-]+` (URL-safe; pinned
+    by the HTTP shape lock in
+    `tests/test_ui_server_http.py`).
+  - `data.reason` — optional, free text. Brief §10.2 + the
+    HTTP shape lock: empty / whitespace-only reasons MUST NOT
+    serialise as `""` or `null` — the field is omitted from
+    the payload entirely.
+
+  The fields are **additive**. Pre-UI-10 `human_decision`
+  consumers (the controller resubmit reaction in
+  `controller.loop`, the telegram redaction logic) do not
+  read them; they see the same `{user, text}` shape they
+  always have when the event came from Telegram, and they
+  see a different shape when it came from the UI but they
+  ignore it (the controller filters on `text` startswith
+  `/scar` / `/correct`, which the UI variant does not carry).
+
 ## Priority semantics
 
 `data.priority` on an `agent_response` is the **effective**

@@ -678,6 +678,7 @@ def cmd_ui(args: argparse.Namespace) -> int:
         host=args.host,
         port=args.port,
         event_log=_bus_path(config),
+        scars_path=_scars_path(config),
     )
     return 0
 

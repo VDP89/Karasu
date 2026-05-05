@@ -298,6 +298,60 @@ FLIGHT_CORPORA: dict[str, list[dict]] = {
 }
 
 
+# UI-10 — operator surface needs a human_decision event for the
+# drawer to render the revoke section, plus at least one active
+# scar in ScarEngine so the section reads as actionable. The
+# corpus pairs a /scar audit record on the bus with an
+# already-recorded scar so the drawer + the modal both have
+# something to show.
+UI10_HUMAN_DECISION = {
+    "id": "ui10-hd-001",
+    "timestamp": "2026-05-05T11:00:30Z",
+    "type": "human_decision",
+    "source": "interface",
+    "data": {
+        "user": 12345,
+        "text": "/scar prio=high *.py",
+    },
+    "dispatch": {},
+    "response": {},
+}
+
+UI10_FILE_CHANGE = {
+    "id": "ui10-fc-001",
+    "timestamp": "2026-05-05T11:00:00Z",
+    "type": "file_change",
+    "source": "watcher",
+    "data": {
+        "path": "src/karasu/example.py",
+        "change_type": "modified",
+        "classification": "code_change",
+        "priority": "normal",
+    },
+    "dispatch": {},
+    "response": {},
+}
+
+UI10_EVENTS = [UI10_FILE_CHANGE, UI10_HUMAN_DECISION]
+
+UI10_SCARS = [
+    {
+        "id": "ui10-scar-001",
+        "trigger": {"classification": "code_change", "path": "*.py"},
+        "correction": {"priority": "high"},
+        "source_event": "ui10-fc-001",
+        "created": "2026-05-05T10:55:00.000+00:00",
+    },
+    {
+        "id": "ui10-scar-002",
+        "trigger": {"classification": "code_change", "path": "tests/*"},
+        "correction": {"priority": "low"},
+        "source_event": None,
+        "created": "2026-05-05T10:58:00.000+00:00",
+    },
+]
+
+
 STATE_CORPORA: dict[str, list[dict]] = {
     "idle": _BASELINE,
     "processing": _BASELINE
@@ -622,6 +676,144 @@ CAPTURES: dict[str, list[dict]] = {
     # the full shell. Each PNG seeds the same UI-6 corpora so the
     # underlying surface (map + timeline) is the same across the
     # set; only the drawer state varies.
+        # UI-10 — scar revoke flow.
+    #
+    # Drawer is opened against a human_decision event so the
+    # .drawer-scars section is visible; ScarEngine is seeded
+    # with two active scars so the section reads as actionable.
+    # The PNGs walk: drawer with revoke button → modal default
+    # → modal with operator-typed reason → modal under
+    # prefers-reduced-motion (the chromatic whitelist contract
+    # from UI-2 covers it; the audit verifies the PNG) → post-
+    # revoke surface (one scar gone, one remaining).
+    "UI-10-scar-revoke": [
+        {
+            # Drawer open on the human_decision event with the
+            # revoke section visible. Pin §11.6.1 (revoke lives
+            # only inside the existing drawer) — the audit can
+            # see both that the section IS in the drawer AND
+            # that no toolbar / floating button competes.
+            "name": "00-drawer-with-revoke.png",
+            "url": "/",
+            "seed_events": UI10_EVENTS,
+            "seed_scars": UI10_SCARS,
+            "wait_ms": 3500,
+            # The first .event-row click resolves to the most
+            # recent event, which is the human_decision (latest
+            # by timestamp).
+            "click": ".event-row:first-child",
+            "post_click_wait_ms": 500,
+            "full_page": False,
+        },
+        {
+            # Modal default state — opened by clicking the first
+            # Revoke button in the drawer's scars section. Pin
+            # §11.6.2 (modal mandatory; no inline shortcut).
+            "name": "01-modal-default.png",
+            "url": "/",
+            "seed_events": UI10_EVENTS,
+            "seed_scars": UI10_SCARS,
+            "wait_ms": 3500,
+            "click": ".event-row:first-child",
+            "post_click_wait_ms": 400,
+            "eval_js": (
+                "document.querySelector("
+                "  '#drawer-scars-list .drawer-scar-revoke'"
+                ").click()"
+            ),
+            "post_eval_wait_ms": 400,
+            "full_page": False,
+        },
+        {
+            # Modal with the operator's typed reason — verifies
+            # the textarea renders without breaking the layout
+            # and that the focus ring sits on the right element.
+            "name": "02-modal-with-reason.png",
+            "url": "/",
+            "seed_events": UI10_EVENTS,
+            "seed_scars": UI10_SCARS,
+            "wait_ms": 3500,
+            "click": ".event-row:first-child",
+            "post_click_wait_ms": 400,
+            "eval_js": (
+                "(() => {"
+                "  document.querySelector("
+                "    '#drawer-scars-list .drawer-scar-revoke'"
+                "  ).click();"
+                "  const r = document.getElementById('modal-reason');"
+                "  r.value = 'workflow changed; rule no longer applies';"
+                "  r.focus();"
+                "})()"
+            ),
+            "post_eval_wait_ms": 400,
+            "full_page": False,
+        },
+        {
+            # Modal with prefers-reduced-motion: reduce. The
+            # backdrop's opacity transition is NOT on the UI-2
+            # chromatic whitelist, so it becomes effectively
+            # instant — the modal still appears; the slide-in
+            # is suppressed. PNG audit verifies the structural
+            # integrity (no flicker, no half-faded backdrop).
+            "name": "03-modal-reduced-motion.png",
+            "url": "/",
+            "seed_events": UI10_EVENTS,
+            "seed_scars": UI10_SCARS,
+            "reduced_motion": True,
+            "wait_ms": 3500,
+            "click": ".event-row:first-child",
+            "post_click_wait_ms": 400,
+            "eval_js": (
+                "document.querySelector("
+                "  '#drawer-scars-list .drawer-scar-revoke'"
+                ").click()"
+            ),
+            "post_eval_wait_ms": 400,
+            "full_page": False,
+        },
+        {
+            # Post-revoke surface — one scar revoked via direct
+            # ScarEngine call (mirrors the POST path); drawer
+            # re-fetches /api/scars and the section now reads
+            # as one-row instead of two. Pin §11.6.4 (operator
+            # MUST see the revocation). The PNG verifies the
+            # annotation is visible without the operator having
+            # to infer it from the timeline.
+            "name": "04-post-revoke-surface.png",
+            "url": "/",
+            "seed_events": UI10_EVENTS,
+            # Only the second scar remains active.
+            "seed_scars": [UI10_SCARS[1]],
+            "wait_ms": 3500,
+            "click": ".event-row:first-child",
+            "post_click_wait_ms": 400,
+            "full_page": False,
+        },
+        {
+            # Optional hover state on the destructive button.
+            # Brief §11 def of done: PNG is encouraged (not
+            # blocking) for future regression coverage of the
+            # --danger token's hover alias.
+            "name": "05-modal-revoke-hover.png",
+            "url": "/",
+            "seed_events": UI10_EVENTS,
+            "seed_scars": UI10_SCARS,
+            "wait_ms": 3500,
+            "click": ".event-row:first-child",
+            "post_click_wait_ms": 400,
+            "eval_js": (
+                "document.querySelector("
+                "  '#drawer-scars-list .drawer-scar-revoke'"
+                ").click()"
+            ),
+            "post_eval_wait_ms": 400,
+            # post_eval_hover (NOT pre-eval hover) so the hover
+            # targets the modal Revoke button after the modal
+            # is open.
+            "post_eval_hover": "#modal-revoke",
+            "full_page": False,
+        },
+    ],
     "UI-7-detail": [
         {
             # Closed state — drawer hidden, shell as UI-6 left it.
@@ -936,6 +1128,67 @@ RECORDINGS: dict[str, dict] = {
     # timeline renders stacked under the map in this recording —
     # which is fine: the drawer slide is the audit focus and
     # both layouts trigger the same drawer.
+    # UI-10 — full revoke flow: drawer open, modal open, modal
+    # confirm, drawer re-renders the scars list. Pin §11.6.6
+    # (audit gate on .webm: must read as deliberate ScarEngine
+    # action, not settings-panel management). 1024x640 viewport
+    # per pin #5 from UI-3 audit (full-shell context).
+    "UI-10-scar-revoke": {
+        "viewport": {"width": 1024, "height": 640},
+        "url": "/",
+        "frames": [
+            # Boot: human_decision event on bus, two active
+            # scars. Drawer closed.
+            {
+                "seed_events": UI10_EVENTS,
+                "seed_scars": UI10_SCARS,
+                "wait_ms": 1200,
+            },
+            # Click the timeline row → drawer opens with the
+            # human_decision detail + the active-scars section.
+            {
+                "eval_js": (
+                    "document.querySelector('.event-row').click()"
+                ),
+                "wait_ms": 900,
+            },
+            # Click the first scar's Revoke button → modal opens.
+            {
+                "eval_js": (
+                    "document.querySelector("
+                    "  '#drawer-scars-list .drawer-scar-revoke'"
+                    ").click()"
+                ),
+                "wait_ms": 900,
+            },
+            # Type a reason so the textarea is part of the
+            # operator-feel verification.
+            {
+                "eval_js": (
+                    "(() => {"
+                    "  const r = document.getElementById('modal-reason');"
+                    "  r.value = 'workflow changed';"
+                    "  r.dispatchEvent(new Event('input'));"
+                    "})()"
+                ),
+                "wait_ms": 600,
+            },
+            # Click Revoke → POST /api/scars/{id}/revoke fires;
+            # modal closes; drawer re-fetches /api/scars (the
+            # revoked scar disappears from the list); the
+            # human_decision event the bus emitted lands on
+            # /api/events by the next tick.
+            {
+                "eval_js": (
+                    "document.getElementById('modal-revoke').click()"
+                ),
+                "wait_ms": 1500,
+            },
+            # Settle frame so the operator sees the post-revoke
+            # state for a beat before the recording cuts.
+            {"wait_ms": 800},
+        ],
+    },
     "UI-7-detail": {
         "viewport": {"width": 1024, "height": 640},
         "url": "/",
@@ -985,17 +1238,24 @@ def _free_port() -> int:
 def _start_server(workdir: Path, port: int) -> http.server.ThreadingHTTPServer:
     """Start the UI server reading ``workdir/.karasu/events.jsonl``.
 
-    Uses ``ui_server.configure`` to point EVENT_LOG at the
-    synthetic bus instead of ``os.chdir``. Changing the process
-    cwd would leave the tempdir locked on Windows when
-    ``TemporaryDirectory`` runs cleanup, raising a misleading
+    Uses ``ui_server.configure`` to point EVENT_LOG and SCARS_PATH
+    at the synthetic surfaces instead of ``os.chdir``. Changing
+    the process cwd would leave the tempdir locked on Windows
+    when ``TemporaryDirectory`` runs cleanup, raising a misleading
     PermissionError after the screenshots have already been
     captured successfully.
+
+    UI-10 added the ``scars_path`` configure argument so the
+    drawer's /api/scars + POST /revoke flow exercises a per-run
+    isolated rules directory.
     """
     sys.path.insert(0, str(REPO_ROOT / "src"))
     from karasu.ui import server as ui_server
 
-    ui_server.configure(workdir / ".karasu" / "events.jsonl")
+    ui_server.configure(
+        event_log=workdir / ".karasu" / "events.jsonl",
+        scars_path=workdir / ".karasu" / "scars",
+    )
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", port), ui_server.UIHandler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     time.sleep(0.2)
@@ -1006,8 +1266,9 @@ def _seed_workdir(
     workdir: Path,
     populate: bool = True,
     events: list[dict] | None = None,
+    scars: list[dict] | None = None,
 ) -> None:
-    """Reset the synthetic bus before each capture.
+    """Reset the synthetic bus + scar rules before each capture.
 
     ``populate=True`` writes the four-event corpus; ``populate=
     False`` clears the file so the page renders against an
@@ -1015,9 +1276,15 @@ def _seed_workdir(
     provided it overrides the default corpus regardless of
     ``populate`` — UI-5 uses this to seed a state-specific
     event tail so the precedence-winning ``_crow_state`` lands
-    on the desired display state. Re-running the helper between
-    captures keeps the surface deterministic without relying on
-    the previous capture's cleanup.
+    on the desired display state.
+
+    UI-10 added ``scars``: a list of scar dicts written to
+    ``.karasu/scars/scars.jsonl`` so the drawer's revoke flow
+    has something to render. ``None`` (default) clears the
+    file so the section reads as the "no active scars" branch.
+    Re-running the helper between captures keeps the surface
+    deterministic without relying on the previous capture's
+    cleanup.
     """
     bus = workdir / ".karasu" / "events.jsonl"
     bus.parent.mkdir(parents=True, exist_ok=True)
@@ -1028,6 +1295,14 @@ def _seed_workdir(
         elif populate:
             for event in SYNTHETIC_EVENTS:
                 fh.write(json.dumps(event) + "\n")
+
+    scars_dir = workdir / ".karasu" / "scars"
+    scars_dir.mkdir(parents=True, exist_ok=True)
+    scars_file = scars_dir / "scars.jsonl"
+    with scars_file.open("w", encoding="utf-8") as fh:
+        if scars:
+            for scar in scars:
+                fh.write(json.dumps(scar) + "\n")
 
 
 def _resolve_seed_events(plan: dict) -> list[dict] | None:
@@ -1092,6 +1367,19 @@ def _apply_step(page, plan: dict) -> None:
         page.wait_for_timeout(plan["post_click_wait_ms"])
     if "eval_js" in plan:
         page.evaluate(plan["eval_js"])
+    if "post_eval_wait_ms" in plan:
+        # Settle window between an eval that opens an animated
+        # element (e.g. UI-10's modal slide-in) and the
+        # screenshot. Separate from ``wait_ms`` so the eval
+        # timing is explicit.
+        page.wait_for_timeout(plan["post_eval_wait_ms"])
+    if "post_eval_hover" in plan:
+        # Hover applied AFTER eval_js so a step that opens an
+        # element via JS (e.g. UI-10's modal) can hover one of
+        # the now-visible children. The pre-eval ``hover`` step
+        # would target an element that does not exist yet and
+        # time out.
+        page.locator(plan["post_eval_hover"]).hover()
 
 
 def _capture(slug: str, port: int, out_dir: Path, workdir: Path) -> None:
@@ -1148,6 +1436,7 @@ def _capture(slug: str, port: int, out_dir: Path, workdir: Path) -> None:
                     workdir,
                     populate=plan.get("seed", True),
                     events=seed_events,
+                    scars=plan.get("seed_scars"),
                 )
                 page.goto(f"http://127.0.0.1:{port}{plan['url']}")
                 page.wait_for_load_state("networkidle")
@@ -1232,7 +1521,9 @@ def _record_video(slug: str, port: int, workdir: Path) -> None:
                 # — no perceptible class swap on first paint.
                 first = plan["frames"][0]
                 _seed_workdir(
-                    workdir, events=_resolve_seed_events(first)
+                    workdir,
+                    events=_resolve_seed_events(first),
+                    scars=first.get("seed_scars"),
                 )
                 page.goto(f"http://127.0.0.1:{port}{plan['url']}")
                 page.wait_for_load_state("networkidle")
@@ -1241,7 +1532,11 @@ def _record_video(slug: str, port: int, workdir: Path) -> None:
                 for frame in plan["frames"][1:]:
                     seed_events = _resolve_seed_events(frame)
                     if seed_events is not None:
-                        _seed_workdir(workdir, events=seed_events)
+                        _seed_workdir(
+                            workdir,
+                            events=seed_events,
+                            scars=frame.get("seed_scars"),
+                        )
                         # Force an immediate /api/health + /api/events
                         # round-trip so the next CSS class swap fires
                         # without waiting for the 3 s polling tick.

@@ -1,0 +1,329 @@
+/* modal.css — UI-10 confirmation modal primitive.
+ *
+ * The first destructive-action surface on the operator UI:
+ * scar revoke. The modal is a single primitive that future
+ * UI-11+ chunks can reuse (trust adjust, push subscription,
+ * etc.) without reshaping its tokens.
+ *
+ * UI-10 brief §3-B (CONFIRMED 2026-05-04): "Modal overlay
+ * using --shadow-2 (the elevation token UI-0 §5.4 reserves
+ * for the drawer; the modal sits one layer above)."
+ *
+ * §3.5 operator pin: "Mutation explicit → the modal is non-
+ * skippable. No inline-confirm shortcut, no keyboard
+ * accelerator that bypasses the modal in UI-10. The friction
+ * IS the design."
+ *
+ * Codex pins on the brief audit (PR #83):
+ *   #1 Revoke lives only inside the existing detail drawer.
+ *   #2 Modal confirmation is mandatory; no inline shortcut.
+ *   #5 Cancel closes only the modal; first Esc closes modal,
+ *      second Esc closes drawer.
+ *   #6 The implementation .webm must read as deliberate
+ *      ScarEngine action, not settings-panel management —
+ *      "visually quieter than the read-only watchtower"
+ *      (§3.5).
+ *
+ * Reduced motion: reset.css restricts transition-property to
+ * a chromatic whitelist; the backdrop's opacity is NOT on the
+ * whitelist, so it becomes effectively instant under
+ * prefers-reduced-motion: reduce. Colour and focus-ring
+ * remain animated. Same contract as the drawer in UI-7.
+ */
+
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--duration-panel) var(--ease-out);
+    z-index: var(--z-overlay);
+}
+
+.modal-backdrop.modal-open {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    max-width: 480px;
+    width: calc(100% - 2 * var(--space-6));
+    background: var(--bg-1);
+    border-radius: var(--radius-2);
+    box-shadow: var(--shadow-2);
+    padding: var(--space-6);
+    z-index: var(--z-modal);
+    /* role="dialog" + aria-modal="true" handle the a11y
+     * semantics; CSS just makes the visual layer correct. */
+}
+
+.modal[hidden] {
+    display: none;
+}
+
+.modal-title {
+    font-family: var(--font-display);
+    font-size: var(--fs-20);
+    font-weight: var(--weight-display);
+    line-height: var(--lh-display);
+    letter-spacing: var(--tracking-display);
+    color: var(--fg-1);
+    margin: 0;
+}
+
+.modal-lede {
+    /* Editorial sentence above the scar quote. Per brief
+     * §3.5: "single-column, single-sentence above the scar
+     * quote". Mirrors the hero copy voice from UI-3. */
+    font-family: var(--font-display);
+    font-size: var(--fs-16);
+    line-height: var(--lh-body);
+    color: var(--fg-2);
+    margin: var(--space-3) 0 0 0;
+}
+
+.modal-quote {
+    /* The scar's stored correction text, quoted verbatim so
+     * the operator sees what is being revoked. JetBrains Mono
+     * because the correction is structured data (JSON-shaped). */
+    font-family: var(--font-mono);
+    font-size: var(--fs-14);
+    line-height: var(--lh-body);
+    color: var(--fg-1);
+    background: var(--bg-2);
+    padding: var(--space-3);
+    border-radius: var(--radius-1);
+    margin: var(--space-4) 0 0 0;
+    /* Long correction strings wrap rather than overflow the
+     * modal box. white-space: pre-wrap keeps the literal
+     * spacing of the JSON (operator-readable) while still
+     * flowing. */
+    white-space: pre-wrap;
+    word-break: break-word;
+    /* Cap the height so a pathological correction text does
+     * not push the modal off-screen. Vertical scroll inside
+     * the quote box is acceptable for this audit-rare case. */
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.modal-reason-label {
+    display: block;
+    font-family: var(--font-display);
+    font-size: var(--fs-14);
+    color: var(--fg-2);
+    margin: var(--space-4) 0 var(--space-2) 0;
+}
+
+.modal-reason {
+    /* Optional reason textarea. Brief §10.2: empty / whitespace
+     * MUST NOT block the revoke; the Revoke button stays
+     * enabled regardless. The cap matches the server-side
+     * _REVOKE_BODY_MAX_BYTES so the client and server agree
+     * on the boundary. */
+    width: 100%;
+    box-sizing: border-box;
+    font-family: var(--font-mono);
+    font-size: var(--fs-14);
+    line-height: var(--lh-body);
+    color: var(--fg-1);
+    background: var(--bg-2);
+    border: 1px solid var(--fg-3);
+    border-radius: var(--radius-1);
+    padding: var(--space-2);
+    resize: vertical;
+    min-height: calc(var(--fs-14) * var(--lh-body) * 2 + 2 * var(--space-2));
+    transition: border-color var(--duration-micro) var(--ease-out);
+}
+
+.modal-reason:focus {
+    outline: none;
+    box-shadow: var(--focus-ring);
+    border-color: var(--accent);
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    margin-top: var(--space-6);
+}
+
+.modal-action {
+    /* Base for both Cancel and Revoke. Buttons are typographic,
+     * not chromed: no gradients, no rounded pills, no glow.
+     * Linear / Vercel / Stripe Press anchors hold (brief §2). */
+    font-family: var(--font-display);
+    font-size: var(--fs-14);
+    font-weight: var(--weight-ui);
+    padding: var(--space-2) var(--space-4);
+    border: 1px solid transparent;
+    border-radius: var(--radius-1);
+    background: transparent;
+    cursor: pointer;
+    transition:
+        color var(--duration-micro) var(--ease-out),
+        background-color var(--duration-micro) var(--ease-out),
+        border-color var(--duration-micro) var(--ease-out);
+}
+
+.modal-action:focus {
+    outline: none;
+    box-shadow: var(--focus-ring);
+}
+
+.modal-cancel {
+    color: var(--fg-2);
+}
+
+.modal-cancel:hover {
+    color: var(--fg-1);
+}
+
+.modal-revoke {
+    /* Destructive button. Per brief §3.5 + §5.1 scope
+     * discipline: --danger MUST NOT be used outside
+     * destructive confirmation buttons in modals. The fill
+     * is editorial (text on bg-0) so the colour-on-button
+     * surface is unambiguous against the modal background. */
+    color: var(--bg-0);
+    background: var(--danger);
+    border-color: var(--danger);
+}
+
+.modal-revoke:hover {
+    /* Subtle hover state — no glow, no scale. Just a darker
+     * fill to read as "primed". The same hex with reduced
+     * lightness via colour-mix keeps the editorial palette
+     * intact without introducing a new token. */
+    background: color-mix(in srgb, var(--danger) 85%, var(--bg-0) 15%);
+    border-color: color-mix(in srgb, var(--danger) 85%, var(--bg-0) 15%);
+}
+
+.modal-revoke:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+
+/* --- Drawer revoke affordance --------------------------------------
+ *
+ * Brief §1: revoke lives inside the existing detail drawer (UI-7).
+ * Pin §11.6.1: revoke lives only there. The section below the
+ * pretty-printed JSON shows active scars when the drawer's open
+ * event is a human_decision; each active scar gets a single
+ * Revoke verb that opens the confirmation modal.
+ *
+ * The list is editorial, not dashboard: one row per scar, no
+ * icons / badges / status pills (the active list IS active —
+ * revoked scars disappear, no struck-through state in UI-10).
+ * If ScarEngine grows status / revoked_at fields in a future
+ * chunk, the drawer can show them; UI-10 brief §10.5 deferred
+ * that.
+ */
+
+.drawer-scars {
+    /* Sits under the JSON body inside the drawer. The drawer
+     * itself already has the editorial padding; the section
+     * spacing aligns the eye between the JSON and the scars
+     * list without competing chrome. */
+    padding: var(--space-4) var(--space-6);
+    border-top: 1px solid var(--fg-3);
+}
+
+.drawer-scars[hidden] {
+    display: none;
+}
+
+.drawer-scars-title {
+    font-family: var(--font-display);
+    font-size: var(--fs-12);
+    font-weight: var(--weight-ui);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-2);
+    margin: 0 0 var(--space-3) 0;
+}
+
+.drawer-scars-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.drawer-scar-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3);
+}
+
+.drawer-scar-text {
+    font-family: var(--font-mono);
+    font-size: var(--fs-12);
+    line-height: var(--lh-body);
+    color: var(--fg-1);
+    margin: 0;
+    flex: 1;
+    /* Single-line preview; full text lives in the modal quote
+     * box. The clamp keeps the drawer surface calm — a long
+     * correction does not push the Revoke button off-row. */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.drawer-scar-revoke {
+    /* Mirrors the modal Revoke action button but as the inline
+     * affordance inside the drawer. Pre-confirmation exception
+     * to the §5.1 scope discipline (Codex P2 follow-up on
+     * PR #85): this button uses --danger as the entry-point
+     * styling for the SAME destructive verb the modal then
+     * confirms. Click here ONLY opens the modal — mutation
+     * never happens at this surface. Any new use of --danger
+     * outside (a) modal confirmation buttons or (b) this
+     * drawer pre-confirmation pattern is a P2 audit finding;
+     * see tokens.css for the alias contract. */
+    flex-shrink: 0;
+    font-family: var(--font-display);
+    font-size: var(--fs-12);
+    font-weight: var(--weight-ui);
+    padding: var(--space-1) var(--space-3);
+    border: 1px solid var(--danger);
+    border-radius: var(--radius-1);
+    color: var(--danger);
+    background: transparent;
+    cursor: pointer;
+    transition:
+        color var(--duration-micro) var(--ease-out),
+        background-color var(--duration-micro) var(--ease-out);
+}
+
+.drawer-scar-revoke:hover {
+    color: var(--bg-0);
+    background: var(--danger);
+}
+
+.drawer-scar-revoke:focus {
+    outline: none;
+    box-shadow: var(--focus-ring);
+}
+
+.drawer-scars-empty {
+    /* Editorial line when the human_decision event has no
+     * active scars to revoke (e.g. the operator's /scar was
+     * already revoked in a prior session). The drawer still
+     * opens; the section reads as completed, not broken. */
+    font-family: var(--font-display);
+    font-size: var(--fs-14);
+    color: var(--fg-2);
+    margin: 0;
+}

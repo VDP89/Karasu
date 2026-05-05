@@ -23,6 +23,7 @@
 <link rel="preload" href="/assets/css/crow.css" as="style">
 <link rel="preload" href="/assets/css/map.css" as="style">
 <link rel="preload" href="/assets/css/drawer.css" as="style">
+<link rel="preload" href="/assets/css/modal.css" as="style">
 <link rel="stylesheet" href="/assets/css/tokens.css">
 <link rel="stylesheet" href="/assets/css/reset.css">
 <link rel="stylesheet" href="/assets/css/base.css">
@@ -30,6 +31,7 @@
 <link rel="stylesheet" href="/assets/css/crow.css">
 <link rel="stylesheet" href="/assets/css/map.css">
 <link rel="stylesheet" href="/assets/css/drawer.css">
+<link rel="stylesheet" href="/assets/css/modal.css">
 <style>
 /* index.html — application shell rules.
  *
@@ -340,7 +342,13 @@
      element so JSON.stringify(..., null, 2) renders with native
      indentation. The 5-class highlighter in the script block
      wraps tokens with the json-key / json-string / json-number /
-     json-bool / json-null classes from drawer.css. -->
+     json-bool / json-null classes from drawer.css.
+
+     UI-10 extension: when the drawer's open event is a
+     human_decision, the .drawer-scars section appears below the
+     JSON body with one row per active scar + a single Revoke verb
+     each. The Revoke verb opens the .modal confirmation primitive.
+     Pin §11.6.1: revoke lives only inside the drawer. -->
 <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
 <aside class="drawer" id="event-drawer" hidden
        role="dialog" aria-modal="false" aria-labelledby="drawer-type">
@@ -351,7 +359,44 @@
                 type="button" aria-label="Close detail panel">×</button>
     </header>
     <pre class="drawer-body" id="drawer-body"></pre>
+    <section class="drawer-scars" id="drawer-scars" hidden
+             aria-labelledby="drawer-scars-title">
+        <h2 class="drawer-scars-title" id="drawer-scars-title">Active scars</h2>
+        <ul class="drawer-scars-list" id="drawer-scars-list"></ul>
+        <p class="drawer-scars-empty" id="drawer-scars-empty" hidden>
+            No active scars to revoke.
+        </p>
+    </section>
 </aside>
+
+<!-- UI-10 — Confirmation modal primitive.
+     Brief §3-B + §3.5: modal is non-skippable, sits above the
+     drawer using --shadow-2 elevation token. Single primitive that
+     UI-11+ can reuse without reshaping its tokens.
+     Pin §11.6.5: Cancel closes only the modal; first Esc closes
+     modal, second Esc closes drawer. -->
+<div class="modal-backdrop" id="modal-backdrop"></div>
+<div class="modal" id="revoke-modal" hidden role="dialog" aria-modal="true"
+     aria-labelledby="modal-title" aria-describedby="modal-lede">
+    <h2 class="modal-title" id="modal-title">Revoke this scar?</h2>
+    <p class="modal-lede" id="modal-lede">
+        The correction below will stop applying on the next dispatch.
+        The bus records the revocation; the act is final.
+    </p>
+    <pre class="modal-quote" id="modal-quote"></pre>
+    <label class="modal-reason-label" for="modal-reason">
+        Reason (optional)
+    </label>
+    <textarea class="modal-reason" id="modal-reason"
+              maxlength="3500"
+              aria-describedby="modal-reason-hint"></textarea>
+    <div class="modal-actions">
+        <button class="modal-action modal-cancel" id="modal-cancel"
+                type="button">Cancel</button>
+        <button class="modal-action modal-revoke" id="modal-revoke"
+                type="button">Revoke</button>
+    </div>
+</div>
 <script>
 const REFRESH_MS = 3000;
 
@@ -589,6 +634,18 @@ function openDrawer(event) {
         body.textContent = 'This node has not seen traffic yet.';
     }
 
+    /* UI-10 — drawer scars section. Brief §1: revoke verb is
+     * earned by drilling into a human_decision event. The list
+     * is populated lazily so opening a non-human_decision drawer
+     * does not pay the /api/scars round-trip. */
+    const isHumanDecision = !!event && event.type === 'human_decision';
+    if (isHumanDecision) {
+        renderDrawerScars();  /* fires the fetch; renders on resolve */
+    } else {
+        const section = document.getElementById('drawer-scars');
+        section.setAttribute('hidden', '');
+    }
+
     drawer.removeAttribute('hidden');
     backdrop.removeAttribute('hidden');
     /* Force layout flush so the transition fires from the off-
@@ -650,8 +707,170 @@ function wireDrawer() {
 
     backdrop.addEventListener('click', closeDrawer);
     closeBtn.addEventListener('click', closeDrawer);
+    /* UI-10 §11.6.5: Esc precedence is modal-first.
+     * Click-outside the drawer closes it (existing UI-7 behaviour);
+     * click-outside the modal (modal backdrop) closes ONLY the
+     * modal — drawer stays open. Wiring for the modal lives in
+     * wireModal() below; this handler only responds when the modal
+     * is closed. */
     document.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Escape') closeDrawer();
+        if (ev.key !== 'Escape') return;
+        if (isModalOpen()) return;  /* modal handler runs first */
+        closeDrawer();
+    });
+}
+
+/* --- UI-10 drawer scars section + modal -------------------------- */
+
+let activeRevokeScarId = null;  /* the scar id the modal is targeting */
+
+async function renderDrawerScars() {
+    /* Fetch /api/scars on every drawer open so the list reflects
+     * the moment of inspection — a scar revoked from another tab
+     * (or via the Telegram path) does not stale here. The
+     * round-trip is sub-ms on local-only deployments. */
+    const section = document.getElementById('drawer-scars');
+    const list = document.getElementById('drawer-scars-list');
+    const empty = document.getElementById('drawer-scars-empty');
+    section.removeAttribute('hidden');
+    list.replaceChildren();
+    empty.setAttribute('hidden', '');
+
+    let scars = [];
+    try {
+        const r = await fetch('/api/scars');
+        if (r.ok) {
+            const payload = await r.json();
+            scars = Array.isArray(payload.scars) ? payload.scars : [];
+        }
+    } catch { /* network failure: render the empty branch */ }
+
+    if (!scars.length) {
+        empty.removeAttribute('hidden');
+        return;
+    }
+
+    for (const scar of scars) {
+        const row = document.createElement('li');
+        row.className = 'drawer-scar-row';
+
+        const text = document.createElement('p');
+        text.className = 'drawer-scar-text';
+        text.textContent = scar.correction_text || '';
+        text.title = scar.correction_text || '';
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'drawer-scar-revoke';
+        btn.textContent = 'Revoke';
+        btn.dataset.scarId = scar.id;
+        btn.addEventListener('click', () => openModal(scar));
+
+        row.append(text, btn);
+        list.append(row);
+    }
+}
+
+function openModal(scar) {
+    /* Brief §3-B: modal is the friction. No inline-confirm
+     * shortcut. The modal sits ABOVE the drawer (z-index in
+     * modal.css); the drawer stays open underneath. */
+    activeRevokeScarId = scar.id;
+    const modal = document.getElementById('revoke-modal');
+    const backdrop = document.getElementById('modal-backdrop');
+    const quote = document.getElementById('modal-quote');
+    const reason = document.getElementById('modal-reason');
+    const revokeBtn = document.getElementById('modal-revoke');
+
+    quote.textContent = scar.correction_text || '';
+    reason.value = '';
+    revokeBtn.disabled = false;
+    /* Pin §11.6.5: focus precedence. The Cancel button is the
+     * first focusable so a stray Enter does not confirm by
+     * accident — destructive verb gets the second-tab seat. */
+    modal.removeAttribute('hidden');
+    backdrop.classList.add('modal-open');
+    /* Force layout flush before the focus call so the modal is
+     * actually rendered when we focus into it. */
+    void modal.getBoundingClientRect();
+    document.getElementById('modal-cancel').focus();
+}
+
+function closeModal() {
+    activeRevokeScarId = null;
+    const modal = document.getElementById('revoke-modal');
+    const backdrop = document.getElementById('modal-backdrop');
+    backdrop.classList.remove('modal-open');
+    modal.setAttribute('hidden', '');
+}
+
+function isModalOpen() {
+    return !document.getElementById('revoke-modal').hasAttribute('hidden');
+}
+
+async function confirmRevoke() {
+    /* Pin §11.6.3: POST returns 204; UI does NOT depend on
+     * response body to render the post-revoke state. The drawer
+     * re-fetches /api/scars (the just-revoked scar is gone) and
+     * the human_decision event the bus emits lands on the next
+     * /api/events tick — the timeline annotation is automatic. */
+    if (!activeRevokeScarId) return;
+    const scarId = activeRevokeScarId;
+    const reasonField = document.getElementById('modal-reason');
+    const revokeBtn = document.getElementById('modal-revoke');
+    revokeBtn.disabled = true;
+
+    const trimmed = (reasonField.value || '').trim();
+    const body = trimmed ? JSON.stringify({ reason: trimmed }) : '';
+    const init = {
+        method: 'POST',
+        headers: trimmed ? { 'Content-Type': 'application/json' } : {},
+        body: body || null,
+    };
+
+    let ok = false;
+    try {
+        const r = await fetch(
+            '/api/scars/' + encodeURIComponent(scarId) + '/revoke',
+            init
+        );
+        ok = r.status === 204;
+    } catch { /* network failure: leave modal open so operator retries */ }
+
+    if (!ok) {
+        revokeBtn.disabled = false;
+        return;
+    }
+
+    closeModal();
+    /* §10.4 + §11.6.4: the drawer must visibly annotate the
+     * revocation. Re-rendering the scars section pulls the
+     * fresh /api/scars where the just-revoked id is gone; the
+     * post-revoke state is implicit (the row disappears). The
+     * human_decision event lands on the timeline by the next
+     * tick — operator SEES the act, not infers it. */
+    renderDrawerScars();
+}
+
+function wireModal() {
+    const cancelBtn = document.getElementById('modal-cancel');
+    const revokeBtn = document.getElementById('modal-revoke');
+    const backdrop = document.getElementById('modal-backdrop');
+
+    cancelBtn.addEventListener('click', closeModal);
+    revokeBtn.addEventListener('click', confirmRevoke);
+    /* Backdrop click closes the modal but leaves the drawer
+     * open (pin §11.6.5). */
+    backdrop.addEventListener('click', closeModal);
+
+    /* Pin §11.6.5: first Esc closes modal, second Esc closes
+     * drawer. The drawer-side Esc handler skips when the modal
+     * is open; this handler runs only at the modal layer. */
+    document.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Escape') return;
+        if (!isModalOpen()) return;
+        ev.stopPropagation();
+        closeModal();
     });
 }
 
@@ -847,6 +1066,7 @@ async function tick() {
 loadMeta();
 tick();
 wireDrawer();
+wireModal();
 registerServiceWorker();
 setInterval(tick, REFRESH_MS);
 </script>

@@ -3,24 +3,35 @@
 Stdlib-only ThreadingHTTPServer. Reads ``.karasu/events.jsonl``
 on each request and exposes:
 
-  GET /                static index.html (the UI shell)
-  GET /design-system   UI-2 token documentation page
-  GET /api/events      paginated event projection
-  GET /api/health      server + crow state summary
-  GET /api/meta        version + configured bus path (UI-3)
-  GET /assets/...      static assets (fonts, sprites, css)
+  GET  /                          static index.html (the UI shell)
+  GET  /design-system             UI-2 token documentation page
+  GET  /api/events                paginated event projection
+  GET  /api/health                server + crow state summary
+  GET  /api/meta                  version + configured bus path (UI-3)
+  GET  /api/scars                 active scars list (UI-10)
+  POST /api/scars/{id}/revoke     append revoke + emit bus event (UI-10)
+  GET  /assets/...                static assets (fonts, sprites, css)
 
 The projection in ``_project_event`` mirrors the bus schema as
 of UI-1: the additive fields landed during chunks 4a/4b/4c +
 the chain-cap implementation are surfaced so downstream UI
 chunks (timeline, detail panel, Live Map) can render the full
 audit picture without extra round-trips.
+
+UI-10 introduces the surface's first write path. The POST
+endpoint is local-only (the operator IS the human running the
+process — no auth in this brief; UI-12+ deployed surfaces earn
+their own auth design). Every successful revoke appends a
+``human_decision`` event to the bus with
+``data.action="scar_revoke"`` so the timeline annotates the
+revocation by the next ``/api/events`` tick.
 """
 
 from __future__ import annotations
 
 import gzip
 import json
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import metadata as importlib_metadata
 from pathlib import Path
@@ -63,6 +74,33 @@ _STATIC_CACHE_MAX_AGE = 86400
 # without a config file.
 EVENT_LOG = Path(".karasu/events.jsonl")
 STATIC_DIR = Path(__file__).parent / "static"
+
+# Default scar rules path. Same configure-or-default contract as
+# ``EVENT_LOG``: ``cmd_ui`` overrides via ``configure(...)`` so
+# ``karasu ui`` honours ``scars.rules_path`` from ``karasu.yaml``;
+# tests override directly. The default mirrors
+# ``karasu.__main__.DEFAULT_SCARS`` so a fresh checkout works.
+SCARS_PATH = Path(".karasu/scars/")
+
+# UI-10 — bound on the POST body for /api/scars/{id}/revoke.
+# Modal textarea caps the operator's reason on the client; the
+# server is the second line of defence. 4 KiB matches the
+# pattern UI-7 used for the cap on review-comment bodies.
+_REVOKE_BODY_MAX_BYTES = 4096
+
+# UI-10 — scar id character set (brief §10.1). Mirrored on the
+# wire and in the URL pattern so an id outside the regex is a
+# server-side bug, not a UI input concern.
+_SCAR_ID_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
+_REVOKE_PATH_RE = re.compile(r"^/api/scars/([A-Za-z0-9._:-]+)/revoke$")
+
+# Sentinels returned by ``UIHandler._read_revoke_reason`` so the
+# caller can map distinct error shapes to distinct HTTP statuses
+# without raising. ``object()`` per sentinel so identity checks
+# are unambiguous.
+_MALFORMED_BODY = object()
+_BODY_TOO_LARGE = object()
+_BODY_NOT_OBJECT = object()
 
 # Default page size for /api/events. Operator can override via
 # ?limit=N (capped at MAX_EVENT_LIMIT to bound memory in the
@@ -332,10 +370,64 @@ def _parse_limit(query: str) -> int:
     return max(1, min(value, MAX_EVENT_LIMIT))
 
 
+def _list_active_scars() -> list[dict[str, Any]]:
+    """Project the active (non-revoked) scars for ``GET /api/scars``.
+
+    Brief §10.5: only the fields ScarEngine exposes naturally
+    ship in the projection — ``id``, ``correction_text``,
+    ``created_at``. ``status`` / ``revoked_at`` /
+    ``applied_count`` / ``last_applied_at`` would require new
+    plumbing in ScarEngine and are explicitly deferred (the UI
+    annotates revoked scars from request context + the emitted
+    ``human_decision`` event instead, per pin §11.6.4).
+
+    ``correction_text`` is a deterministic JSON serialisation of
+    the correction dict — sorted keys + ``ensure_ascii=False`` —
+    so the operator surface can quote the rule the original
+    ``/scar`` command produced. Stable text is what the modal
+    quote contract assumes.
+    """
+    from karasu.scars import ScarEngine
+
+    engine = ScarEngine(SCARS_PATH)
+    out: list[dict[str, Any]] = []
+    for scar in engine.all():
+        out.append(
+            {
+                "id": scar.id,
+                "correction_text": json.dumps(
+                    scar.correction, ensure_ascii=False, sort_keys=True
+                ),
+                "created_at": scar.created,
+            }
+        )
+    return out
+
+
+def _emit_human_decision(action: str, data: dict[str, Any]) -> None:
+    """Append a ``human_decision`` event to the configured bus.
+
+    UI-10 is the first write path on the UI surface; the helper
+    is intentionally tiny so the audit trail is obvious. Lazy
+    import keeps the read-only paths free of the import cost.
+    """
+    from karasu.eventbus.jsonl_bus import Event, JsonlEventBus
+
+    payload: dict[str, Any] = {"action": action}
+    payload.update(data)
+    bus = JsonlEventBus(EVENT_LOG)
+    bus.append(Event(type="human_decision", source="ui", data=payload))
+
+
 class UIHandler(BaseHTTPRequestHandler):
-    """HTTP handler. Read-only; no POST routes today (write paths
-    arrive in UI-10+ and MUST go through ScarEngine /
-    human_decision events, never through direct bus mutation)."""
+    """HTTP handler.
+
+    GET routes are read-only sinks over the bus (and over the
+    ScarEngine for ``/api/scars``). The POST route added in
+    UI-10 (``/api/scars/{id}/revoke``) is the operator surface's
+    first write path — local-only, single-scar, network-only
+    (the SW handler from UI-8 already pins ``/api/*`` to
+    network-only), 204 on success."""
 
     def _send(
         self,
@@ -431,6 +523,14 @@ class UIHandler(BaseHTTPRequestHandler):
             )
             return
 
+        # UI-10 — active scars list. Companion read endpoint to
+        # the POST revoke pathway: the drawer fetches this to
+        # render the scar's stored correction text inside the
+        # confirmation modal.
+        if path == "/api/scars":
+            self._send_json({"scars": _list_active_scars()})
+            return
+
         if path in ("/", "/index.html"):
             html = (STATIC_DIR / "index.html").read_bytes()
             self._send(200, html, "text/html; charset=utf-8")
@@ -519,6 +619,112 @@ class UIHandler(BaseHTTPRequestHandler):
 
         self._send(404, b"not found", "text/plain")
 
+    def do_POST(self) -> None:  # noqa: N802 — BaseHTTPRequestHandler API
+        """Write paths.
+
+        UI-10 ships the only POST route: scar revoke. Returns
+        204 with no body on success, per brief §3-E. Single-scar
+        only — batch revokes are a UI-12+ concern.
+        """
+        path, _, _ = self.path.partition("?")
+        m = _REVOKE_PATH_RE.match(path)
+        if m is None:
+            # Method-not-allowed for paths the GET handler knows
+            # about (so a stray POST to /api/health gets a 405,
+            # not a 404 that hides the typo); 404 for everything
+            # else.
+            if path in (
+                "/",
+                "/index.html",
+                "/offline.html",
+                "/design-system",
+                "/api/events",
+                "/api/health",
+                "/api/meta",
+                "/api/scars",
+            ):
+                self._send(405, b"method not allowed", "text/plain")
+                return
+            self._send(404, b"not found", "text/plain")
+            return
+
+        scar_id = m.group(1)
+        # The path regex already accepted only [A-Za-z0-9._:-]+;
+        # double-check via the canonical id regex to fail loud if
+        # the two ever diverge.
+        if not _SCAR_ID_RE.match(scar_id):
+            self._send(400, b"invalid scar id", "text/plain")
+            return
+
+        reason = self._read_revoke_reason()
+        if reason is _MALFORMED_BODY:
+            self._send(422, b"malformed json", "text/plain")
+            return
+        if reason is _BODY_TOO_LARGE:
+            self._send(413, b"payload too large", "text/plain")
+            return
+        if reason is _BODY_NOT_OBJECT:
+            self._send(422, b"json body must be an object", "text/plain")
+            return
+
+        from karasu.scars import ScarEngine
+
+        engine = ScarEngine(SCARS_PATH)
+        if not engine.revoke(scar_id, reason=reason):
+            # Scar id unknown OR already revoked. Same shape so
+            # the UI does not need to distinguish — the operator
+            # already saw the scar disappear from the active
+            # list.
+            self._send(404, b"scar not found or already revoked", "text/plain")
+            return
+
+        event_data: dict[str, Any] = {"scar_id": scar_id}
+        if reason:
+            event_data["reason"] = reason
+        _emit_human_decision("scar_revoke", event_data)
+
+        # 204 No Content — brief §3-E: the endpoint is
+        # intentionally empty so the UI re-fetches /api/scars
+        # and reads the human_decision event from /api/events
+        # to annotate the post-revoke state. Pin §11.6.3 (POST
+        # returns 204) is verified by the HTTP shape lock.
+        self._send(204, b"", "application/octet-stream")
+
+    def _read_revoke_reason(self) -> "str | None | object":
+        """Read + validate the optional ``{reason}`` body.
+
+        Returns:
+          * ``str`` (trimmed, non-empty) — the operator's reason.
+          * ``None`` — body absent OR ``reason`` field missing /
+            empty after trim. Brief §10.2: empty reason MUST
+            NOT block the revoke.
+          * One of the ``_MALFORMED_BODY`` /
+            ``_BODY_TOO_LARGE`` / ``_BODY_NOT_OBJECT`` sentinels
+            — caller maps to the matching HTTP status.
+        """
+        try:
+            declared = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            declared = 0
+        if declared > _REVOKE_BODY_MAX_BYTES:
+            return _BODY_TOO_LARGE
+        if declared == 0:
+            return None
+        body = self.rfile.read(declared)
+        if not body:
+            return None
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return _MALFORMED_BODY
+        if not isinstance(payload, dict):
+            return _BODY_NOT_OBJECT
+        raw_reason = payload.get("reason")
+        if not isinstance(raw_reason, str):
+            return None
+        trimmed = raw_reason.strip()
+        return trimmed or None
+
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         # The default handler logs to stderr in apache combined
         # format which competes with karasu's own logging. Quiet
@@ -539,34 +745,48 @@ def _content_type_for(path: Path) -> str:
     }.get(suffix, "application/octet-stream")
 
 
-def configure(event_log: Path) -> None:
-    """Override the bus path read by ``/api/events`` and
-    ``/api/health``.
+def configure(
+    event_log: Path,
+    scars_path: Path | None = None,
+) -> None:
+    """Override the paths the UI server reads from / writes to.
 
     Called by ``cmd_ui`` (so ``karasu ui`` honours
-    ``event_bus.path`` in ``karasu.yaml``) and by tests. Pure
-    mutation of the module global; subsequent requests see the
-    new value on the next read because ``_read_events`` reads
-    ``EVENT_LOG`` at call time.
+    ``event_bus.path`` and ``scars.rules_path`` in
+    ``karasu.yaml``) and by tests. Pure mutation of the module
+    globals; subsequent requests see the new values on the next
+    read because ``_read_events`` and ``_list_active_scars``
+    resolve the globals at call time.
+
+    UI-10 added the optional ``scars_path`` parameter. Omitting
+    it leaves ``SCARS_PATH`` at its pre-existing default; tests
+    and ``cmd_ui`` pass an explicit path.
     """
-    global EVENT_LOG
+    global EVENT_LOG, SCARS_PATH
     EVENT_LOG = event_log
+    if scars_path is not None:
+        SCARS_PATH = scars_path
 
 
 def run_ui_server(
     host: str = "127.0.0.1",
     port: int = 8787,
     event_log: Path | None = None,
+    scars_path: Path | None = None,
 ) -> None:
     """Start the UI HTTP server. Blocks until interrupted.
 
     ``event_log`` overrides the default ``.karasu/events.jsonl``
-    bus path. ``cmd_ui`` passes the resolved value from
-    ``karasu.yaml``; callers that omit the kwarg get the
-    pre-existing default.
+    bus path; ``scars_path`` overrides the default
+    ``.karasu/scars/`` rules directory (UI-10). ``cmd_ui``
+    passes both resolved from ``karasu.yaml``; callers that
+    omit either kwarg keep the pre-existing default.
     """
-    if event_log is not None:
-        configure(event_log)
+    if event_log is not None or scars_path is not None:
+        configure(
+            event_log=event_log if event_log is not None else EVENT_LOG,
+            scars_path=scars_path,
+        )
     server = ThreadingHTTPServer((host, port), UIHandler)
     print(f"karasu ui → http://{host}:{port}")
     try:

@@ -49,7 +49,11 @@ from karasu.ui import server as ui_server
 @pytest.fixture
 def ui_http(tmp_path: Path) -> Iterator[tuple[str, int]]:
     original_event_log = ui_server.EVENT_LOG
-    ui_server.configure(tmp_path / "events.jsonl")
+    original_scars_path = ui_server.SCARS_PATH
+    ui_server.configure(
+        event_log=tmp_path / "events.jsonl",
+        scars_path=tmp_path / "scars",
+    )
     server = ThreadingHTTPServer(("127.0.0.1", 0), ui_server.UIHandler)
     thread = threading.Thread(
         target=server.serve_forever, name="karasu-ui-http-test", daemon=True
@@ -62,7 +66,10 @@ def ui_http(tmp_path: Path) -> Iterator[tuple[str, int]]:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5.0)
-        ui_server.configure(original_event_log)
+        ui_server.configure(
+            event_log=original_event_log,
+            scars_path=original_scars_path,
+        )
 
 
 def _get(
@@ -80,6 +87,47 @@ def _get(
     except HTTPError as exc:
         headers = {k.lower(): v for k, v in exc.headers.items()}
         return exc.code, exc.read(), headers
+
+
+def _post(
+    host: str,
+    port: int,
+    path: str,
+    body: bytes = b"",
+    content_type: str = "application/json",
+) -> tuple[int, bytes, dict[str, str]]:
+    """POST ``body`` to ``path`` on the test server.
+
+    Returns ``(status, body, headers)`` with headers
+    case-insensitive lower-cased like ``_get``. Empty body is
+    legal — the revoke endpoint accepts no body for the "no
+    reason" path."""
+    url = f"http://{host}:{port}{path}"
+    headers = {"Content-Type": content_type}
+    if body:
+        headers["Content-Length"] = str(len(body))
+    request = Request(url, data=body, method="POST", headers=headers)
+    try:
+        with urlopen(request, timeout=5.0) as response:
+            response_headers = {k.lower(): v for k, v in response.headers.items()}
+            return response.status, response.read(), response_headers
+    except HTTPError as exc:
+        response_headers = {k.lower(): v for k, v in exc.headers.items()}
+        return exc.code, exc.read(), response_headers
+
+
+def _seed_scar(correction: dict | None = None) -> str:
+    """Record one Scar via ScarEngine; return its id."""
+    from karasu.scars import Scar, ScarEngine
+
+    engine = ScarEngine(ui_server.SCARS_PATH)
+    scar = engine.record(
+        Scar(
+            trigger={"classification": "high", "path": "*.py"},
+            correction=correction or {"priority": "high"},
+        )
+    )
+    return scar.id
 
 
 def _seed(events: list[dict]) -> None:
@@ -429,3 +477,253 @@ def test_manifest_top_level_shape_lock(
     # prompt to render correctly across platforms.
     icon_sizes = {icon["sizes"] for icon in manifest["icons"]}
     assert {"192x192", "512x512"}.issubset(icon_sizes)
+
+
+# ---------------------------------------------------------------------------
+# UI-10 — /api/scars + POST /api/scars/{id}/revoke shape locks
+# ---------------------------------------------------------------------------
+#
+# UI-10 brief §10.5: the /api/scars list ships only the fields
+# ScarEngine exposes naturally. ``status`` / ``revoked_at`` /
+# ``applied_count`` / ``last_applied_at`` are intentionally
+# omitted — the UI synthesises the post-revoke annotation from
+# request context + the human_decision event the bus emits.
+
+SCARS_LIST_KEYS = frozenset({"id", "correction_text", "created_at"})
+
+
+def test_api_scars_empty_list_when_no_scars(ui_http: tuple[str, int]) -> None:
+    """No scars recorded → ``{"scars": []}``."""
+    host, port = ui_http
+    status, body, _ = _get(host, port, "/api/scars")
+    assert status == 200
+    assert json.loads(body) == {"scars": []}
+
+
+def test_api_scars_projection_shape_lock(ui_http: tuple[str, int]) -> None:
+    """Each scar projects to exactly the SCARS_LIST_KEYS set."""
+    host, port = ui_http
+    _seed_scar()
+    status, body, _ = _get(host, port, "/api/scars")
+    assert status == 200
+    payload = json.loads(body)
+    assert "scars" in payload
+    assert len(payload["scars"]) == 1
+    record = payload["scars"][0]
+    assert set(record.keys()) == SCARS_LIST_KEYS
+    assert isinstance(record["id"], str)
+    assert isinstance(record["correction_text"], str)
+    assert isinstance(record["created_at"], str)
+
+
+def test_api_scars_excludes_revoked(ui_http: tuple[str, int]) -> None:
+    """A revoked scar disappears from the list — the active /
+    revoked split lives in ScarEngine, the UI surface mirrors
+    it. Annotation in the drawer is the UI's responsibility."""
+    from karasu.scars import ScarEngine
+
+    host, port = ui_http
+    scar_id = _seed_scar()
+    second_id = _seed_scar({"priority": "low"})
+    engine = ScarEngine(ui_server.SCARS_PATH)
+    assert engine.revoke(scar_id) is True
+    status, body, _ = _get(host, port, "/api/scars")
+    assert status == 200
+    ids = [s["id"] for s in json.loads(body)["scars"]]
+    assert ids == [second_id]
+
+
+def test_post_revoke_returns_204_on_success(ui_http: tuple[str, int]) -> None:
+    """Brief §3-E + §11.6.3: POST returns 204 with no body on
+    success. The annotation contract derives from re-fetching
+    /api/scars and the emitted human_decision event."""
+    host, port = ui_http
+    scar_id = _seed_scar()
+    status, body, _ = _post(
+        host, port, f"/api/scars/{scar_id}/revoke"
+    )
+    assert status == 204
+    assert body == b""
+
+
+def test_post_revoke_emits_human_decision_event(
+    ui_http: tuple[str, int]
+) -> None:
+    """Bus event after a successful revoke MUST be a
+    ``human_decision`` with ``data.action="scar_revoke"`` and
+    ``data.scar_id`` set; ``data.reason`` only present when the
+    operator supplied one."""
+    host, port = ui_http
+    scar_id = _seed_scar()
+    status, _, _ = _post(host, port, f"/api/scars/{scar_id}/revoke")
+    assert status == 204
+    raw = ui_server.EVENT_LOG.read_text(encoding="utf-8").splitlines()
+    # Newest event is the last line.
+    event = json.loads(raw[-1])
+    assert event["type"] == "human_decision"
+    assert event["source"] == "ui"
+    assert event["data"]["action"] == "scar_revoke"
+    assert event["data"]["scar_id"] == scar_id
+    # No reason supplied → field omitted (brief §10.2).
+    assert "reason" not in event["data"]
+
+
+def test_post_revoke_with_reason_carries_into_event(
+    ui_http: tuple[str, int]
+) -> None:
+    """A trimmed non-empty ``reason`` lands on ``data.reason``."""
+    host, port = ui_http
+    scar_id = _seed_scar()
+    body = json.dumps({"reason": "  not applicable anymore  "}).encode("utf-8")
+    status, _, _ = _post(
+        host, port, f"/api/scars/{scar_id}/revoke", body=body
+    )
+    assert status == 204
+    raw = ui_server.EVENT_LOG.read_text(encoding="utf-8").splitlines()
+    event = json.loads(raw[-1])
+    # Trim runs through the server, not just through the client.
+    assert event["data"]["reason"] == "not applicable anymore"
+
+
+def test_post_revoke_empty_string_reason_omits_field(
+    ui_http: tuple[str, int]
+) -> None:
+    """Brief §10.2: empty / whitespace-only reason MUST be
+    omitted from the event payload, not serialised as ``""``."""
+    host, port = ui_http
+    scar_id = _seed_scar()
+    body = json.dumps({"reason": "   "}).encode("utf-8")
+    status, _, _ = _post(
+        host, port, f"/api/scars/{scar_id}/revoke", body=body
+    )
+    assert status == 204
+    raw = ui_server.EVENT_LOG.read_text(encoding="utf-8").splitlines()
+    event = json.loads(raw[-1])
+    assert "reason" not in event["data"]
+
+
+def test_post_revoke_unknown_id_returns_404(ui_http: tuple[str, int]) -> None:
+    host, port = ui_http
+    status, _, _ = _post(host, port, "/api/scars/no-such-id/revoke")
+    assert status == 404
+
+
+def test_post_revoke_already_revoked_returns_404(
+    ui_http: tuple[str, int]
+) -> None:
+    """Idempotent at the server boundary: a second revoke for
+    the same id is a 404, no second event emitted. The UI
+    treats both as 'gone'."""
+    host, port = ui_http
+    scar_id = _seed_scar()
+    assert _post(host, port, f"/api/scars/{scar_id}/revoke")[0] == 204
+    bus_lines_after_first = ui_server.EVENT_LOG.read_text(encoding="utf-8").splitlines()
+    status, _, _ = _post(host, port, f"/api/scars/{scar_id}/revoke")
+    assert status == 404
+    bus_lines_after_second = ui_server.EVENT_LOG.read_text(encoding="utf-8").splitlines()
+    assert bus_lines_after_first == bus_lines_after_second
+
+
+def test_post_revoke_invalid_id_chars_returns_404(
+    ui_http: tuple[str, int]
+) -> None:
+    """Brief §10.1: scar id is [A-Za-z0-9._:-]+ — characters
+    outside that set fail the path regex and return 404 (i.e.
+    "the scar id at this URL does not exist"). Tests pass URL-
+    legal characters that are nonetheless not in the contract:
+    ``+`` (URL-reserved but not in the contract) and ``%2F``
+    (a percent-encoded slash that does NOT decode into a id
+    segment). Spaces would be ideal coverage but urllib rejects
+    them client-side before the request is sent."""
+    host, port = ui_http
+    # ``+`` is URL-legal but absent from the contract regex.
+    status, _, _ = _post(host, port, "/api/scars/has+plus/revoke")
+    assert status == 404
+    # ``%2F`` reaches the server as the literal three characters
+    # ``%``, ``2``, ``F`` — none of which are in the regex.
+    status, _, _ = _post(host, port, "/api/scars/has%2Fslash/revoke")
+    assert status == 404
+
+
+def test_post_revoke_malformed_json_returns_422(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    scar_id = _seed_scar()
+    status, _, _ = _post(
+        host, port, f"/api/scars/{scar_id}/revoke", body=b"not json"
+    )
+    assert status == 422
+
+
+def test_post_revoke_non_object_json_returns_422(
+    ui_http: tuple[str, int]
+) -> None:
+    """A JSON list at the top level is not the documented shape."""
+    host, port = ui_http
+    scar_id = _seed_scar()
+    status, _, _ = _post(
+        host, port, f"/api/scars/{scar_id}/revoke", body=b"[\"reason\"]"
+    )
+    assert status == 422
+
+
+def test_post_revoke_oversized_body_returns_413(
+    ui_http: tuple[str, int]
+) -> None:
+    """Body cap matches the modal textarea cap on the client.
+    A hostile peer flooding the endpoint cannot drain memory."""
+    host, port = ui_http
+    scar_id = _seed_scar()
+    huge = b"x" * (ui_server._REVOKE_BODY_MAX_BYTES + 1)
+    status, _, _ = _post(
+        host, port, f"/api/scars/{scar_id}/revoke", body=huge
+    )
+    assert status == 413
+
+
+def test_post_revoke_empty_body_succeeds(ui_http: tuple[str, int]) -> None:
+    """Brief §10.2: the modal Revoke button stays enabled
+    regardless of the textarea state. An empty body is valid."""
+    host, port = ui_http
+    scar_id = _seed_scar()
+    status, _, _ = _post(host, port, f"/api/scars/{scar_id}/revoke", body=b"")
+    assert status == 204
+
+
+def test_post_to_get_endpoint_returns_405(ui_http: tuple[str, int]) -> None:
+    """A POST to /api/health (GET endpoint) is method-not-allowed
+    so a typo / wrong-route call surfaces explicitly instead of
+    silently 404-ing."""
+    host, port = ui_http
+    status, _, _ = _post(host, port, "/api/health")
+    assert status == 405
+
+
+def test_post_to_unknown_path_returns_404(ui_http: tuple[str, int]) -> None:
+    host, port = ui_http
+    status, _, _ = _post(host, port, "/no/such/path")
+    assert status == 404
+
+
+def test_get_to_revoke_endpoint_returns_404(ui_http: tuple[str, int]) -> None:
+    """The revoke route is POST-only. GET on the same path falls
+    through to the 404 branch (no GET handler matches)."""
+    host, port = ui_http
+    scar_id = _seed_scar()
+    status, _, _ = _get(host, port, f"/api/scars/{scar_id}/revoke")
+    assert status == 404
+
+
+def test_post_revoke_then_scars_list_excludes_it(
+    ui_http: tuple[str, int]
+) -> None:
+    """End-to-end shape lock: revoke via POST, then GET
+    /api/scars must not include the revoked id."""
+    host, port = ui_http
+    scar_id = _seed_scar()
+    second_id = _seed_scar({"priority": "low"})
+    assert _post(host, port, f"/api/scars/{scar_id}/revoke")[0] == 204
+    _, body, _ = _get(host, port, "/api/scars")
+    ids = [s["id"] for s in json.loads(body)["scars"]]
+    assert ids == [second_id]

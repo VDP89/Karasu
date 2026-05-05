@@ -8,11 +8,13 @@
 > chunk after this one (N == 12) executes against the
 > decisions recorded here.
 >
-> **STATUS:** DRAFT — operator sign-off pending on §3 + §10
-> proposals. Codex audit pending out-of-band post sign-off.
-> Open questions in §10 are NOT pre-decided; the document
-> lists default proposals so the operator and Codex have a
-> concrete shape to ratify or amend.
+> **STATUS:** APPROVED-with-observations + operator
+> sign-off complete (Victor, 2026-05-05: "confirmado").
+> Codex audit closed at round 2 of 5 (round 1
+> CHANGES-REQUIRED → fixes applied; round 2
+> APPROVED-with-observations + 1 P2 + tightening pin
+> 16, both applied). All §3 (A-J) + §10 (1-10)
+> PROPOSALs ratified verbatim per default. Mergeable.
 
 ## 0 · Why this brief exists
 
@@ -195,11 +197,12 @@ Material defaults / Tailwind defaults / component-library
 chrome / install banners / update toasts / connection badges
 all forbidden.
 
-## 3 · Proposed decisions (operator sign-off pending)
+## 3 · Confirmed decisions (operator sign-off complete 2026-05-05)
 
-All decisions below are PROPOSALS. The operator may accept,
-amend, or reject; Codex audits the resulting set before any
-UI-12 code branch opens.
+All decisions below confirmed binding by Victor on
+2026-05-05 ("Confirmado" — every PROPOSAL default
+accepted as the binding contract; Codex audit closed at
+round 2 with no remaining blockers).
 
 ```text
 A) Surface for the push opt-in affordance:
@@ -236,7 +239,7 @@ A) Surface for the push opt-in affordance:
      - Auto-prompt on first visit (rejected: pin §0.5.7
        modal-mandatory + UI-8 pin #5 no-banners; auto-
        prompts violate the editorial restraint anchor).
-   [PROPOSAL — operator sign-off pending]
+   [CONFIRMED 2026-05-05]
 
 B) Confirmation flow:
    PROPOSAL — Modal overlay, .modal primitive (UI-10).
@@ -251,14 +254,14 @@ B) Confirmation flow:
    modal is the FRICTION before the browser prompt fires
    so the operator does not see a permission dialog they
    did not deliberately request.
-   [PROPOSAL — operator sign-off pending]
+   [CONFIRMED 2026-05-05]
 
 C) Authentication:
    PROPOSAL — None for UI-12. Same as UI-10 + UI-11:
    surface is operator-local (127.0.0.1). A future
    deployed surface earns its own auth design + its own
    brief (UI-13+).
-   [PROPOSAL — operator sign-off pending]
+   [CONFIRMED 2026-05-05]
 
 D) Bus event schema for push subscribe / unsubscribe:
    PROPOSAL — Reuse `human_decision` (no new event type)
@@ -299,7 +302,7 @@ D) Bus event schema for push subscribe / unsubscribe:
      - NOT exposed via /api/push response bodies.
    Raw PushSubscription fields (endpoint URL, p256dh,
    auth) NEVER appear on the bus under any circumstance.
-   [PROPOSAL — operator sign-off pending]
+   [CONFIRMED 2026-05-05]
 
 E) Server endpoints for push:
    PROPOSAL —
@@ -365,7 +368,7 @@ E) Server endpoints for push:
    PushManager.subscribe() with this key as
    applicationServerKey. The private half NEVER appears
    in any /api/* response.
-   [PROPOSAL — operator sign-off pending]
+   [CONFIRMED 2026-05-05]
 
 F) Persistence — push subscription store:
    PROPOSAL — separate JSON file alongside the bus, path
@@ -423,7 +426,7 @@ F) Persistence — push subscription store:
        carry sensitive material).
      - SQLite (rejected: introduces a stateful dep where
        a flat JSON suffices; UI-0 §4 minimalism).
-   [PROPOSAL — operator sign-off pending]
+   [CONFIRMED 2026-05-05]
 
 G) Notification categories (fixed enum):
    PROPOSAL — three categories, each opt-in independently
@@ -452,7 +455,7 @@ G) Notification categories (fixed enum):
    Unsupported categories on disk (e.g. "broadcast") are
    surfaced read-only with an "unsupported" tag in
    GET /api/push (pin §0.5.4 carry-forward).
-   [PROPOSAL — operator sign-off pending]
+   [CONFIRMED 2026-05-05]
 
 H) Notification copy (server-side):
    PROPOSAL — single editorial line per category. No body
@@ -468,7 +471,7 @@ H) Notification copy (server-side):
    Tag: "karasu" (singular tag; new pushes replace
    pending ones rather than stacking — operator gets
    the latest pulse, not a notification queue).
-   [PROPOSAL — operator sign-off pending]
+   [CONFIRMED 2026-05-05]
 
 I) sw.js delta (UI-8 frozen-pin negotiation):
    PROPOSAL — additive only:
@@ -505,7 +508,7 @@ I) sw.js delta (UI-8 frozen-pin negotiation):
    gate the merge of UI-12b. Any future SW chunk
    re-runs this test as the UI-8 fetch-ordering
    regression gate.
-   [PROPOSAL — operator sign-off pending]
+   [CONFIRMED 2026-05-05]
 
 J) Single chunk or multi:
    PROPOSAL — three chunks:
@@ -540,7 +543,7 @@ J) Single chunk or multi:
    chunk that introduces the runtime dep (if §10.5
    negotiates it in); separating it from the surface
    chunks keeps the dep audit isolated.
-   [PROPOSAL — operator sign-off pending]
+   [CONFIRMED 2026-05-05]
 ```
 
 ## 3.5 · Operator pin (binding when sign-off lands)
@@ -980,7 +983,7 @@ All §3 decisions need confirmation. Plus:
    urgencies); four+ proliferates the modal without
    clear demand. The three are derivable from event
    shape so no per-event tagging is required.
-   [PROPOSAL]
+   [CONFIRMED 2026-05-05]
 
 2. Default categories on first subscribe:
    PROPOSAL — all three pre-checked. Rationale: the
@@ -993,7 +996,8 @@ All §3 decisions need confirmation. Plus:
    ALTERNATIVE — "attention" only pre-checked; the
    other two opt-in. More conservative; ensures the
    operator deliberately picks each.
-   [PROPOSAL — operator picks default]
+   [CONFIRMED 2026-05-05 — all three pre-checked per
+   PROPOSAL default]
 
 3. Subscription store path default:
    PROPOSAL — `karasu-push.json` next to the bus
@@ -1002,8 +1006,9 @@ All §3 decisions need confirmation. Plus:
    ALTERNATIVE — `~/.karasu/push.json` (per-user, not
    per-repo). More appropriate if the operator runs
    multiple Karasu instances against the same browser.
-   [PROPOSAL — operator picks default; the --push-store
-   flag covers the other case either way]
+   [CONFIRMED 2026-05-05 — `karasu-push.json` next to
+   the bus per PROPOSAL default; --push-store flag
+   covers the per-user case if needed]
 
 4. VAPID key rotation:
    PROPOSAL — none for UI-12. Keys generated once on
@@ -1012,7 +1017,7 @@ All §3 decisions need confirmation. Plus:
    subscriptions to the public key); operator must
    manually delete the store + re-subscribe every
    browser. Auto-rotation is a UI-13+ concern.
-   [PROPOSAL]
+   [CONFIRMED 2026-05-05]
 
 5. Runtime dependency gap (UI-12c):
    This is THE binding decision. Web Push requires
@@ -1071,8 +1076,9 @@ All §3 decisions need confirmation. Plus:
    The UI-12c PR body restates this exception
    verbatim in its description; Codex re-audit on
    UI-12c verifies the import scope.
-   [PROPOSAL — operator sign-off binding; Codex
-   audit on UI-12c PR re-verifies]
+   [CONFIRMED 2026-05-05 — option (a) `cryptography`
+   binding; Codex audit on UI-12c PR re-verifies the
+   import scope]
 
 6. Endpoint hash on the bus:
    PROPOSAL — SHA-256 of the endpoint URL, hex-
@@ -1082,7 +1088,7 @@ All §3 decisions need confirmation. Plus:
    The full endpoint URL is sensitive (it routes to
    the operator's specific browser via FCM/APNs/
    autopush) and stays out of the bus.
-   [PROPOSAL]
+   [CONFIRMED 2026-05-05]
 
 7. Empty modal close UX:
    PROPOSAL — same as UI-10 §10.6 + UI-11 §10.6.
@@ -1090,7 +1096,7 @@ All §3 decisions need confirmation. Plus:
    (if open). Footer affordance does NOT
    participate in Esc precedence (it is not modal
    chrome).
-   [PROPOSAL]
+   [CONFIRMED 2026-05-05]
 
 8. Modal lede copy:
    PROPOSAL — single sentence, paralleling UI-11
@@ -1102,7 +1108,9 @@ All §3 decisions need confirmation. Plus:
      "Confirming will ask your browser for
       notification permission."
    No marketing copy, no exclamation, no emoji.
-   [PROPOSAL — operator-tunable copy]
+   [CONFIRMED 2026-05-05 — copy as proposed; remains
+   operator-tunable in the UI-12b PR if a sharper
+   line emerges during implementation]
 
 9. Browser support fallback:
    PROPOSAL — feature-detect at server load time
@@ -1114,7 +1122,7 @@ All §3 decisions need confirmation. Plus:
    unsupported" with no click handler. iOS Safari
    < 16.4, Firefox in private mode, etc all hit
    this path.
-   [PROPOSAL]
+   [CONFIRMED 2026-05-05]
 
 10. Dogfood coverage:
     PROPOSAL — UI-12c lands with a docs/local-
@@ -1122,7 +1130,7 @@ All §3 decisions need confirmation. Plus:
     one browser, trigger an attention event,
     confirm the push arrives". Mirrors how Phase 3
     dogfood validated /scar end-to-end.
-    [PROPOSAL]
+    [CONFIRMED 2026-05-05]
 ```
 
 ## 11 · Definition of "done"
@@ -1272,37 +1280,38 @@ endpoint). Pins 1-15 are unchanged from round 1.
 ## 12 · Status
 
 ```text
-Brief status:        APPROVED-with-observations — Codex
-                     round 2 (2026-05-05). Round 1
-                     verdict was CHANGES-REQUIRED; all 8
-                     findings (2 P0 + 4 P1 + 2 P2)
-                     addressed and verified satisfied in
-                     round 2. Round 2 introduced one new
-                     P2 (§3-E raw endpoint must be marked
-                     request-local secret) plus an
-                     optional tightening (16th pin); both
-                     applied in this commit.
-                     Mergeable.
-Operator sign-off:   PENDING on §3 + §10 proposals.
-                     Codex substantively endorsed each
-                     via Q1-Q7 yes-with-conditions
-                     (round 1) and verified-satisfied
-                     (round 2); explicit operator sign-
-                     off on each PROPOSAL still required
-                     before merge per the UI-11 lifecycle
-                     precedent.
-Codex audit:         Round 1: CHANGES-REQUIRED.
+Brief status:        APPROVED-with-observations + operator
+                     sign-off complete. Mergeable.
+Operator sign-off:   COMPLETE (Victor, 2026-05-05:
+                     "Confirmado"). Every §3 (A-J) +
+                     §10 (1-10) PROPOSAL accepted as the
+                     binding contract per default. The
+                     two §10 questions with explicit
+                     ALTERNATIVE branches resolved via
+                     PROPOSAL default:
+                       §10.2 — all three categories
+                               pre-checked on first
+                               subscribe.
+                       §10.3 — `karasu-push.json` next
+                               to events.jsonl;
+                               --push-store flag covers
+                               the per-user case.
+Codex audit:         Round 1: CHANGES-REQUIRED (2 P0 + 4
+                     P1 + 2 P2; all 8 fixed in branch).
                      Round 2: APPROVED-with-observations
-                     (1 P2, 0 P1, 0 P0; tightening pin 16
-                     accepted). Sixteen §11.6 pins
-                     ratified as binding.
-Implementation:      BLOCKED until brief merges.
+                     (1 P2 + tightening pin 16; both
+                     applied). Sixteen §11.6 pins
+                     ratified as binding. Audit loop
+                     CLOSED at 2 of 5 rounds consumed.
+Implementation:      UNBLOCKED on merge.
                      UI-12a (read display) ships first per
                      pin §0.5.1 carry-forward; UI-12b
                      (opt-in surface) follows; UI-12c
                      (server-side emit) closes the chunk.
-Loop budget:         2 of 5 rounds consumed. Audit loop
-                     CLOSED.
+                     UI-12c additionally re-audits the
+                     §10.5 / §11.6.13 cryptography
+                     exception (named, scoped, non-
+                     generalising) on its own PR.
 ```
 
 The brief follows the lifecycle `ui-10-design-brief.md` (PR

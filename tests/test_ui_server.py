@@ -264,15 +264,16 @@ def test_api_events_returns_empty_when_log_missing(
 def test_run_ui_server_kwarg_calls_configure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """``run_ui_server(event_log=PATH, scars_path=PATH)`` must
+    """``run_ui_server(event_log=PATH, scars_path=PATH, ...)`` must
     propagate through ``configure`` so the module globals flip
     before the server starts serving. Verified without actually
     binding by patching ``ThreadingHTTPServer`` to a no-op.
 
     UI-10 extended ``configure`` with the ``scars_path`` kwarg
     so the surface can resolve ``ScarEngine`` against the
-    operator's configured rules directory; the test now pins
-    both kwargs reach ``configure``."""
+    operator's configured rules directory; UI-12a extends it
+    with ``push_store_path`` for the read-only push surface.
+    The test pins all four kwargs reach ``configure``."""
     captured: dict[str, Path | None] = {}
 
     real_configure = ui_server.configure
@@ -281,14 +282,17 @@ def test_run_ui_server_kwarg_calls_configure(
         event_log: Path,
         scars_path: Path | None = None,
         config_path: Path | None = None,
+        push_store_path: Path | None = None,
     ) -> None:
         captured["event_log"] = event_log
         captured["scars_path"] = scars_path
         captured["config_path"] = config_path
+        captured["push_store_path"] = push_store_path
         real_configure(
             event_log=event_log,
             scars_path=scars_path,
             config_path=config_path,
+            push_store_path=push_store_path,
         )
 
     class _ServerStub:
@@ -306,15 +310,18 @@ def test_run_ui_server_kwarg_calls_configure(
 
     target_log = tmp_path / "custom.jsonl"
     target_scars = tmp_path / "custom-scars"
+    target_push_store = tmp_path / "custom-push.json"
     ui_server.run_ui_server(
         host="127.0.0.1",
         port=0,
         event_log=target_log,
         scars_path=target_scars,
+        push_store_path=target_push_store,
     )
     assert captured["event_log"] == target_log
     assert captured["scars_path"] == target_scars
     assert captured["config_path"] is None
+    assert captured["push_store_path"] == target_push_store
 
 
 # ---------------------------------------------------------------------------

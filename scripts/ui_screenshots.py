@@ -1266,6 +1266,49 @@ CAPTURES: dict[str, list[dict]] = {
             "full_page": True,
         },
     ],
+
+    # UI-12a — push notification read display.
+    # Two PNGs land in this chunk:
+    #   "off"     — supported browser, empty store. The default
+    #               state on a fresh checkout. No eval_js
+    #               override needed; loadPushState reads
+    #               /api/push, sees subscription_count=0, and
+    #               renders ``Notifications: off`` with the
+    #               neutral --fg-2 colour.
+    #   "denied"  — operator denied the OS-level Notification
+    #               permission. Cannot be reached via Playwright
+    #               permission API directly (Notification
+    #               permission is read-only); we override
+    #               browserPushSupport() on window so the
+    #               function returns 'denied' regardless of the
+    #               real browser state, then call loadPushState()
+    #               again so the footer affordance updates with
+    #               the --warn colour. The operator-feel pin
+    #               (§11.6.11 — passive read-only) is preserved
+    #               by the production CSS, not by the override.
+    "UI-12-push": [
+        {
+            "name": "00-footer-push-off.png",
+            "url": "/",
+            "seed": False,
+            "wait_ms": 800,
+            "full_page": False,
+        },
+        {
+            "name": "01-footer-push-denied.png",
+            "url": "/",
+            "seed": False,
+            "wait_ms": 800,
+            "eval_js": (
+                "window.browserPushSupport = function () {"
+                "  return 'denied';"
+                "};"
+                "window.loadPushState();"
+            ),
+            "post_eval_wait_ms": 200,
+            "full_page": False,
+        },
+    ],
 }
 
 # Recording plan per slug. Each entry is a single video capture:

@@ -180,6 +180,24 @@
     padding-left: var(--space-3);
 }
 
+/* UI-12a — push notification read affordance.
+   Brief §3-A binding: QUIET TEXT ONLY, never CTA. Pre-opt-in
+   weight is identical to the build-version line; the "on" /
+   "denied" / "unsupported" words receive the chromatic accent
+   so the operator can scan state from the corner without
+   reading the prefix. Pin §11.6.11: unsupported environments
+   degrade to PASSIVE READ-ONLY (no click handler in UI-12a). */
+.footer-push .footer-push-state {
+    color: var(--fg-2);
+}
+.footer-push.is-on .footer-push-state {
+    color: var(--accent);
+}
+.footer-push.is-denied .footer-push-state,
+.footer-push.is-unsupported .footer-push-state {
+    color: var(--warn);
+}
+
 /* --- narrow viewport adjustments -------------------------------- */
 
 @media (max-width: 720px) {
@@ -331,6 +349,17 @@
         <span class="meta" id="footer-version">v—</span>
         <span class="meta" id="footer-last-event">no events yet</span>
         <span class="meta" id="footer-crow">crow: idle</span>
+        <!-- UI-12a — push read display. Quiet text affordance
+             (brief §3-A: never CTA). Pre-opt-in weight matches
+             the build-version line; post-opt-in (UI-12b+)
+             switches the "on" word to --accent. UI-12a only
+             renders the read state from /api/push +
+             browser-feature-detected unsupported / denied
+             (brief §10.9). No click handler in this chunk. -->
+        <span class="meta footer-push" id="footer-push"
+              aria-label="Push notification status">
+            Notifications: <span class="footer-push-state">—</span>
+        </span>
     </footer>
 
 </div>
@@ -470,6 +499,80 @@ async function loadMeta() {
             }
         } catch { /* private mode / storage disabled — skip */ }
     } catch { /* keep placeholders if /api/meta is unreachable */ }
+}
+
+/* UI-12a — push read display.
+ *
+ * Reads /api/push for the server-side push state, then folds
+ * in the browser's own feature detection (PushManager,
+ * Notification.permission). Per UI-12 brief §10.9 the server
+ * is always "supported" and the client owns the
+ * "unsupported" / "denied" branches; pin §11.6.11 binds the
+ * client to PASSIVE READ-ONLY rendering for both — no click
+ * handler, no retry prompt, no Home-Screen-install nudge.
+ *
+ * UI-12a renders four legible states on the footer:
+ *   unsupported   browser missing PushManager / Notification.
+ *   denied        operator denied the OS permission.
+ *   off           supported and ready, but no subscription
+ *                 yet (UI-12b earns the subscribe path).
+ *   on            at least one subscription is recorded.
+ *
+ * The state class on .footer-push gets set so the CSS rule
+ * picks the chromatic accent for each branch (--accent for
+ * "on", --warn for "denied" / "unsupported"). The state TEXT
+ * lands in the inner span so the prefix "Notifications: " is
+ * never mid-coloured. */
+function browserPushSupport() {
+    if (typeof navigator === 'undefined') return 'unsupported';
+    if (!('serviceWorker' in navigator)) return 'unsupported';
+    if (typeof window === 'undefined') return 'unsupported';
+    if (!('PushManager' in window)) return 'unsupported';
+    if (!('Notification' in window)) return 'unsupported';
+    if (Notification.permission === 'denied') return 'denied';
+    return 'supported';
+}
+
+function renderPushFooter(label, stateClass) {
+    const root = document.getElementById('footer-push');
+    const slot = root.querySelector('.footer-push-state');
+    slot.textContent = label;
+    root.classList.remove(
+        'is-on', 'is-off', 'is-denied', 'is-unsupported'
+    );
+    root.classList.add(stateClass);
+}
+
+async function loadPushState() {
+    const browser = browserPushSupport();
+    if (browser === 'unsupported') {
+        renderPushFooter('unsupported', 'is-unsupported');
+        return;
+    }
+    if (browser === 'denied') {
+        renderPushFooter('denied', 'is-denied');
+        return;
+    }
+    try {
+        const r = await fetch('/api/push');
+        if (!r.ok) {
+            /* UI-12a: server-side error (e.g. malformed store).
+             * Surface as "unsupported" rather than "off" so the
+             * operator sees something is wrong; UI-12c's emit
+             * path will surface a structured error to the
+             * server console too. */
+            renderPushFooter('unsupported', 'is-unsupported');
+            return;
+        }
+        const payload = await r.json();
+        if (payload.subscription_count > 0) {
+            renderPushFooter('on', 'is-on');
+        } else {
+            renderPushFooter('off', 'is-off');
+        }
+    } catch {
+        renderPushFooter('unsupported', 'is-unsupported');
+    }
 }
 
 /* UI-8 — service worker registration.
@@ -1300,6 +1403,7 @@ async function tick() {
 }
 
 loadMeta();
+loadPushState();
 tick();
 wireDrawer();
 wireModal();

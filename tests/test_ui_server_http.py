@@ -51,10 +51,12 @@ def ui_http(tmp_path: Path) -> Iterator[tuple[str, int]]:
     original_event_log = ui_server.EVENT_LOG
     original_scars_path = ui_server.SCARS_PATH
     original_config_path = ui_server.CONFIG_PATH
+    original_push_store_path = ui_server.PUSH_STORE_PATH
     ui_server.configure(
         event_log=tmp_path / "events.jsonl",
         scars_path=tmp_path / "scars",
         config_path=tmp_path / "karasu.yaml",
+        push_store_path=tmp_path / "karasu-push.json",
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), ui_server.UIHandler)
     thread = threading.Thread(
@@ -72,6 +74,7 @@ def ui_http(tmp_path: Path) -> Iterator[tuple[str, int]]:
             event_log=original_event_log,
             scars_path=original_scars_path,
             config_path=original_config_path,
+            push_store_path=original_push_store_path,
         )
 
 
@@ -981,3 +984,188 @@ def test_post_revoke_then_scars_list_excludes_it(
     _, body, _ = _get(host, port, "/api/scars")
     ids = [s["id"] for s in json.loads(body)["scars"]]
     assert ids == [second_id]
+
+
+# ---------------------------------------------------------------------------
+# /api/push — shape lock (UI-12a)
+# ---------------------------------------------------------------------------
+
+PUSH_RESPONSE_KEYS = frozenset({
+    "state",
+    "categories",
+    "subscription_count",
+    "vapid_public_key",
+})
+
+
+def test_api_push_shape_lock_empty_store(
+    ui_http: tuple[str, int]
+) -> None:
+    """Top-level /api/push response keys are CONTRACT for UI-12a.
+    With no store on disk, the projection MUST surface the
+    documented enum + zero count + null public key + the
+    server-side ``"supported"`` baseline (the client owns the
+    "unsupported" / "denied" branches per UI-12 brief §10.9).
+
+    Adding a field to the response requires updating
+    PUSH_RESPONSE_KEYS in the SAME PR (UI-11 §11.6.2 carry-
+    forward — projection contract changes co-locate with the
+    visual that depends on them)."""
+    host, port = ui_http
+    status, body, headers = _get(host, port, "/api/push")
+    assert status == 200
+    assert headers["content-type"].startswith("application/json")
+
+    payload = json.loads(body)
+    assert set(payload.keys()) == PUSH_RESPONSE_KEYS, (
+        f"/api/push key set drift:\n"
+        f"  missing: {PUSH_RESPONSE_KEYS - set(payload)}\n"
+        f"  extra:   {set(payload) - PUSH_RESPONSE_KEYS}"
+    )
+
+    assert payload["state"] == "supported"
+    assert payload["categories"] == [
+        "attention",
+        "errors",
+        "corrections",
+    ]
+    assert payload["subscription_count"] == 0
+    assert payload["vapid_public_key"] is None
+
+
+def test_api_push_with_populated_store(
+    ui_http: tuple[str, int]
+) -> None:
+    """Pin the count + public-key projection against a hand-
+    written store so a future refactor cannot silently
+    drop either field. Two subscriptions and a non-null public
+    key land on the wire."""
+    host, port = ui_http
+    store_path = ui_server.PUSH_STORE_PATH
+    store_path.write_text(
+        json.dumps({
+            "vapid": {
+                "public": "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCC_0",
+                "private": "private-key-MUST-NOT-leak",
+            },
+            "subscriptions": [
+                {
+                    "endpoint": "https://fcm.googleapis.com/x",
+                    "endpoint_hash": "abc123",
+                    "keys": {"p256dh": "p256-1", "auth": "auth-1"},
+                    "categories": ["attention"],
+                    "created_at": "2026-05-05T00:00:00Z",
+                },
+                {
+                    "endpoint": "https://updates.push.services.mozilla.com/y",
+                    "endpoint_hash": "def456",
+                    "keys": {"p256dh": "p256-2", "auth": "auth-2"},
+                    "categories": ["attention", "errors"],
+                    "created_at": "2026-05-05T01:00:00Z",
+                },
+            ],
+        }),
+        encoding="utf-8",
+    )
+    status, body, _ = _get(host, port, "/api/push")
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["subscription_count"] == 2
+    assert (
+        payload["vapid_public_key"]
+        == "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCC_0"
+    )
+
+
+def test_api_push_does_not_leak_raw_endpoint_or_keys(
+    ui_http: tuple[str, int]
+) -> None:
+    """Pin §11.6.5 + §11.6.16 binding — raw endpoint, p256dh,
+    auth, and the VAPID *private* key MUST NEVER appear on
+    /api/* responses. This test asserts the negative shape so
+    a future refactor that loosens projection accidentally
+    fails CI before the leak ships."""
+    host, port = ui_http
+    store_path = ui_server.PUSH_STORE_PATH
+    raw_endpoint = "https://fcm.googleapis.com/secret-routing-token"
+    p256dh = "p256-secret-must-not-leak"
+    auth_key = "auth-secret-must-not-leak"
+    private_vapid = "private-key-secret-must-not-leak"
+    store_path.write_text(
+        json.dumps({
+            "vapid": {
+                "public": "public-ok-to-surface",
+                "private": private_vapid,
+            },
+            "subscriptions": [
+                {
+                    "endpoint": raw_endpoint,
+                    "endpoint_hash": "hash-ok-to-surface",
+                    "keys": {"p256dh": p256dh, "auth": auth_key},
+                    "categories": ["attention"],
+                    "created_at": "2026-05-05T00:00:00Z",
+                },
+            ],
+        }),
+        encoding="utf-8",
+    )
+    status, body, _ = _get(host, port, "/api/push")
+    assert status == 200
+    body_text = body.decode("utf-8")
+    for forbidden in (raw_endpoint, p256dh, auth_key, private_vapid):
+        assert forbidden not in body_text, (
+            f"forbidden secret material {forbidden!r} appeared "
+            f"on /api/push response — pin §11.6 privacy contract "
+            f"violation"
+        )
+
+
+def test_api_push_malformed_store_surfaces_500(
+    ui_http: tuple[str, int]
+) -> None:
+    """A malformed store is a real condition (operator
+    hand-edited the file, disk corruption, etc.). Surface as
+    a 500 rather than silently coercing to an empty count;
+    the operator's recourse is to delete the file and let
+    UI-12b re-bootstrap."""
+    host, port = ui_http
+    store_path = ui_server.PUSH_STORE_PATH
+    store_path.write_text("{ this is not valid JSON", encoding="utf-8")
+    status, _, _ = _get(host, port, "/api/push")
+    assert status == 500
+
+
+def test_api_push_top_level_array_in_store_surfaces_500(
+    ui_http: tuple[str, int]
+) -> None:
+    """A2A-style: a JSON array at the root is unambiguously not
+    a push store. Surface immediately rather than letting the
+    response choke on a missing ``subscriptions`` field."""
+    host, port = ui_http
+    store_path = ui_server.PUSH_STORE_PATH
+    store_path.write_text("[1, 2, 3]", encoding="utf-8")
+    status, _, _ = _get(host, port, "/api/push")
+    assert status == 500
+
+
+def test_api_push_subscriptions_not_a_list_degrades_to_zero(
+    ui_http: tuple[str, int]
+) -> None:
+    """Partial / wrong-shape sub-objects degrade gracefully:
+    the count falls to 0 and the public key falls to null
+    rather than blowing up the surface. The operator still
+    sees a usable footer affordance."""
+    host, port = ui_http
+    store_path = ui_server.PUSH_STORE_PATH
+    store_path.write_text(
+        json.dumps({
+            "vapid": "not-an-object",
+            "subscriptions": "not-a-list",
+        }),
+        encoding="utf-8",
+    )
+    status, body, _ = _get(host, port, "/api/push")
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["subscription_count"] == 0
+    assert payload["vapid_public_key"] is None

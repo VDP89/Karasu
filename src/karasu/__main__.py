@@ -715,6 +715,7 @@ def cmd_ui(args: argparse.Namespace) -> int:
         event_log=_bus_path(config),
         scars_path=_scars_path(config),
         config_path=args.config,
+        push_store_path=args.push_store,
     )
     return 0
 
@@ -778,6 +779,19 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=8787,
         help="HTTP bind port (default: 8787)",
+    )
+    ui.add_argument(
+        "--push-store",
+        type=Path,
+        default=Path("karasu-push.json"),
+        metavar="PATH",
+        help=(
+            "path to the push subscription store (UI-12 brief "
+            "§3-F PRIVATE STORE; default: karasu-push.json next "
+            "to events.jsonl). UI-12a is read-only against this "
+            "path; UI-12b earns the writers, UI-12c earns VAPID "
+            "key generation"
+        ),
     )
     ui.set_defaults(func=cmd_ui)
 

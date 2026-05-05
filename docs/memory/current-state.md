@@ -7,7 +7,7 @@ Phase 1B: COMPLETED (no-adapter pass validated, F1–F5 closed)
 Phase 1C: COMPLETED (real Claude adapter loop validated, F6–F8 closed)
 Phase 2: COMPLETED — chunks 1+2+3 merged (#30 #31 #32 #33). Audit accepted with one round of changes (PR #33 contract alignment + redaction).
 Phase 3: COMPLETED + DOGFOOD-VALIDATED + AUDIT-ACCEPTED — chunks 3a + 3b + 3c merged (#34 #35 #36 #37). Live dogfood 2026-05-02 (issue #39) validated end-to-end: `/scar` → controller resubmit (94 ms) → pipeline applies scar → second dispatch with `priority=high` → response back to Telegram. Cap held at 3 under spam. Three operational findings filed: F9 (#40), F10 (#41), F11 (#42). Audit forward-look returned by ChatGPT and recorded in [`docs/memory/phase-3-dogfood-audit-2026-05-02.md`](phase-3-dogfood-audit-2026-05-02.md): 2 REQUERIDOS applied this PR (trust=2 docs warning + cap-local-per-origin issue), 1 NICE-TO-HAVE applied (sessions template), 2 NICE-TO-HAVE queued for Phase 3+ hardening (priority persist + startup warning).
-UI surface progress (PWA roadmap — main HEAD `e535c95`, 2026-05-05):
+UI surface progress (PWA roadmap — main HEAD `1a88cb4`, 2026-05-05):
 - UI-0  (design brief)              ✔ PR #62  merged (`92e2c91`).
 - UI-1  (rebase + projection)       ✔ PR #63  merged (`4819d7b`).
 - UI-2  (design system + tokens)    ✔ PR #69  merged (`6ec5203`).
@@ -26,7 +26,15 @@ UI surface progress (PWA roadmap — main HEAD `e535c95`, 2026-05-05):
 - UI-11 brief (trust adjust)        ✔ PR #87  merged (`37b51ba`, doc-only).
 - UI-11a (trust read display)       ✔ PR #89  merged (`e535c95`).
 - UI-11b (trust write affordance)   ✔ PR #91  merged (`007574d`).
-- UI-12  (push notifications)       ← NEXT. Earns own brief before code.
+- UI-12 brief (push notifications)  ✔ PR #93  merged (`b178fca`, doc-only).
+                                    APPROVED-with-observations + operator
+                                    sign-off complete; 16 §11.6 pins
+                                    binding for UI-12a/b/c.
+- UI-12a (push read display)        ← NEXT.
+- UI-12b (opt-in surface)           queued behind UI-12a.
+- UI-12c (server-side emit)         queued; introduces `cryptography`
+                                    runtime dep as the §11.6.13 named
+                                    scoped exception to UI-0 §4.
 
 ## System status
 
@@ -126,25 +134,47 @@ Cap enforcement: 6 `/scar` rapid-fire → exactly 3 resubmits, 3 cap warnings, 0
 ## Next step (entry point)
 
 ```text
-main HEAD: 007574d (UI-11b trust adjust intent, 2026-05-05).
-0 PRs open. 0 branches open.
+main HEAD: 1a88cb4 (fetch_card retry HTTP statuses, 2026-05-05).
+0 PRs open. 0 branches open (working chunks all merged).
 
-UI-10 + UI-11 COMPLETE. Both write paths are on main:
-  - UI-10: scar revoke (POST /api/scars/{id}/revoke)
-  - UI-11a: trust read display (GET /api/agents + data.action projection)
-  - UI-11b: trust adjust intent (POST /api/agents/{name}/trust,
-    intent-only, persists to karasu.yaml, emits bus event)
+UI-12 brief APPROVED-with-observations + operator sign-off
+complete (PR #93). Sixteen §11.6 implementation pins binding
+for UI-12a/b/c. The non-blocking issue queue from prior
+sessions is now empty:
+  - Issue #66 closed by PR #95 (fetch_card opt-in retry on
+    502/503/504; APPROVED-with-observations, 2 P2 closed —
+    one resolved with new tests, one counter-argued).
+  - Issue #76 closed by PR #94 (THIRD_PARTY_NOTICES.md for
+    OpenMoji + Inter Display + JetBrains Mono).
 
-Entry point: UI-12 — push notifications.
-Requires own brief before code (UI-9 audit pin #1 + UI-0 §6).
-Push UX has its own opt-in / unsubscribe / privacy surface.
+Entry point: UI-12a — push notification read display.
+  - GET /api/push -> {state, categories, subscription_count,
+    vapid_public_key?}
+  - HTTP shape lock for GET in same PR.
+  - Footer affordance shows current state read from the
+    endpoint. No modal. sw.js NOT touched in this chunk.
+  - Push subscription store path resolved (default
+    `karasu-push.json` next to events.jsonl + --push-store
+    flag); empty store on first start; VAPID keys NOT
+    generated until UI-12c (the chunk that earns the dep
+    exception).
+  - 1 PNG (footer "off"). 1 PNG (footer "denied").
+  - ~250 LOC.
 
-Remaining items (non-blocking):
-- Issue #66: fetch_card opt-in retry on 502/503/504 (P2).
-- Issue #76: THIRD_PARTY_NOTICES.md for OpenMoji (P2).
-- Operator-side: rename repo Karasu- → Karasu (GitHub Settings).
-- Operator-side: uninstall ChatGPT Codex Connector App if still
-  installed (PR #67 retired the bot; physical uninstall closes loop).
+After UI-12a:
+  - UI-12b — opt-in surface (POST subscribe / unsubscribe,
+    modal, sw.js push handler stub, fetch-ordering shape-
+    lock test, 4 Playwright tests, 4-5 PNGs + 1 .webm).
+    ~400 LOC.
+  - UI-12c — server-side emit (bus subscriber, VAPID JWT,
+    `cryptography` dep gated to this module, 410/404 prune,
+    3-layer rate-limit). ~400 LOC. Closes Phase 3 exit
+    criteria — Telegram ceases to be the only push channel.
+
+Operator-side TODOs (unchanged, non-blocking):
+- Rename repo Karasu- → Karasu (GitHub Settings).
+- Uninstall ChatGPT Codex Connector App if still installed
+  (PR #67 retired the bot; physical uninstall closes loop).
 ```
 
 ## Do NOT do yet

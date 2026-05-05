@@ -203,12 +203,21 @@ UI-12 code branch opens.
 
 ```text
 A) Surface for the push opt-in affordance:
-   PROPOSAL — single footer affordance. The UI-3 footer
-   row already carries version + last-event-time + crow
-   state. UI-12 adds a fourth slot: a quiet text affordance
-   showing the current push state ("Notifications: off" /
+   PROPOSAL — single footer affordance, QUIET TEXT ONLY,
+   never a CTA. The UI-3 footer row already carries
+   version + last-event-time + crow state. UI-12 adds a
+   fourth slot: a quiet text affordance showing the
+   current push state ("Notifications: off" /
    "Notifications: on") that, when clicked, opens a .modal
    (UI-10 primitive reused) listing the categories.
+   Codex P2 binding (2026-05-05): the affordance MUST NOT
+   be a banner, a badge, a toast, a re-prompt nudge, or
+   visually weighted as a call-to-action. Pre-opt-in
+   weight is identical to a build-version line; post-opt-
+   in weight uses --accent ONLY on the "on" word, never
+   on the entire affordance. Codex Q1 verdict: footer
+   accepted as the burden-earned exception to pin §0.5.6
+   provided the no-CTA constraint holds.
    Rationale: push opt-in has no per-event anchor, so it
    cannot be drawer-earned. The footer is the quietest
    global slot already established by UI-3 — quieter than
@@ -275,6 +284,21 @@ D) Bus event schema for push subscribe / unsubscribe:
    auth keys) lives in the push subscription store
    (§3-F), NOT on the bus, because the bus is replayable
    and shareable while subscription keys are sensitive.
+   Codex P1 binding (2026-05-05): endpoint_hash is
+   permitted ONLY as audit metadata on human_decision
+   events. It is NOT a functional identifier. Forbidden
+   uses, all binding:
+     - NOT exposed on /api/* responses other than the
+       /api/events projection of human_decision events.
+     - NOT used as the lookup key inside the push store
+       (§3-F). The store keys subscriptions by their raw
+       endpoint URL (or an internal opaque id); the hash
+       exists for bus correlation only.
+     - NOT correlated with file_change, agent_response,
+       or any non-human_decision event.
+     - NOT exposed via /api/push response bodies.
+   Raw PushSubscription fields (endpoint URL, p256dh,
+   auth) NEVER appear on the bus under any circumstance.
    [PROPOSAL — operator sign-off pending]
 
 E) Server endpoints for push:
@@ -294,12 +318,29 @@ E) Server endpoints for push:
                                    subscription in the
                                    push store (§3-F). 4 KiB
                                    body cap.
-     POST /api/push/unsubscribe    body: {endpoint_hash}
+     POST /api/push/unsubscribe    body: {endpoint: "<url>"}
+                                   (the browser still
+                                   holds the
+                                   PushSubscription and
+                                   supplies its endpoint).
+                                   Server matches the
+                                   in-store subscription
+                                   by endpoint URL,
+                                   removes it, hashes the
+                                   endpoint internally
+                                   ONLY to populate the
+                                   bus event's
+                                   data.endpoint_hash for
+                                   audit correlation.
                                    → 204 + emits
                                    human_decision
                                    (push_unsubscribe).
-                                   Removes subscription
-                                   from the store.
+                                   The endpoint_hash from
+                                   §3-D is NOT a body
+                                   field on this endpoint
+                                   (Codex P1 binding —
+                                   hash is not a store
+                                   lookup key).
    GET /api/push reads the push store directly, the same
    way GET /api/agents reads karasu.yaml directly. Same SW
    network-only contract holds (api/* never cached).
@@ -314,13 +355,18 @@ F) Persistence — push subscription store:
    PROPOSAL — separate JSON file alongside the bus, path
    configurable via `karasu ui --push-store <path>`
    (defaults to `karasu-push.json` next to events.jsonl).
-   File shape:
+   File shape (top-level keys explicit; vapid +
+   subscriptions are independent sections within ONE
+   file per Codex P1 — same-file is acceptable provided
+   the sections are normalised separately):
      {
        "vapid": {"public": "<b64u>", "private": "<b64u>"},
        "subscriptions": [
          {
-           "endpoint_hash": "<sha256-hex>",
            "endpoint": "<full url>",
+           "endpoint_hash": "<sha256-hex; cached for
+                              bus emission, NOT used as
+                              store lookup>",
            "keys": {"p256dh": "<b64u>", "auth": "<b64u>"},
            "categories": ["attention", "errors"],
            "created_at": "<iso8601 utc>"
@@ -328,17 +374,32 @@ F) Persistence — push subscription store:
          ...
        ]
      }
+   Codex P1 binding (2026-05-05) — the file is a
+   PRIVATE STORE. The following constraints are pinned:
+     - Mode 0600 on POSIX. The PR creating the file
+       path emits a loud-stderr warning if the parent
+       directory is world-readable (mirrors UI-11
+       trust-gradient warning pattern).
+     - NEVER bus-replayed. The store is not an event
+       stream and does not participate in /api/events.
+     - NEVER surfaced in /api/* projections (except
+       /api/push, and even there only the
+       subscription_count and the vapid_public_key —
+       no individual subscription contents).
+     - NEVER captured in screenshots / .webm / docs.
+       UI-12b's PNG / .webm capture seeds use a
+       throwaway store and assert no endpoint or key
+       material appears in the rendered surface.
+     - NEVER committed to git. The path defaults
+       alongside events.jsonl, which is already
+       gitignored; the brief reaffirms the same
+       discipline for the push store.
    VAPID keys are generated on first server start if the
    file is absent (the dep gap in §10.5 gates whether
    first-start can do this with stdlib alone). The store
    is operator-local; it is NOT in karasu.yaml because
    subscriptions are not configuration — they are runtime
    state owned by browsers the operator opted in from.
-   The store is mode 0600 on POSIX (private key
-   discipline). PR creating the file path emits a
-   loud-stderr warning if the parent directory is not
-   restricted (mirrors UI-11 trust-gradient warning
-   pattern).
    ALTERNATIVES considered:
      - karasu.yaml (rejected: not configuration).
      - The bus itself, event-sourced (rejected: keys
@@ -363,6 +424,13 @@ G) Notification categories (fixed enum):
                    push_unsubscribe) DO NOT trigger this
                    category — pushing the operator's own
                    click back to them is noise.
+                   Codex P1 binding (2026-05-05): the
+                   UI-originated-write exclusion is a
+                   first-class implementation pin
+                   (§11.6.9), not an aside. The UI-12c
+                   emit path MUST filter on
+                   source != "ui" before any push
+                   dispatch in this category.
    The enum is closed for UI-12. Future categories earn
    their own brief.
    Unsupported categories on disk (e.g. "broadcast") are
@@ -403,6 +471,24 @@ I) sw.js delta (UI-8 frozen-pin negotiation):
    navigate-or-offline → cache-first) is the contract and
    does NOT move. The push + notificationclick listeners
    are independent SW event types; they cannot interfere.
+   Codex P0 binding (2026-05-05): the additive claim is
+   NOT auditable from diff alone. UI-12b MUST ship a
+   shape-lock test that exercises the fetch handler with
+   three request shapes and asserts the routing decision
+   for each:
+     - GET /api/anything → network only (cache miss MUST
+       NOT serve a stale response; cache hit MUST NOT
+       short-circuit the network request).
+     - navigate request to / → network first, fall back
+       to /offline.html on rejection.
+     - GET /assets/* → cache-first (cache hit serves
+       without hitting network; cache miss falls through
+       to network).
+   The test lives in tests/test_ui_sw.py (or equivalent
+   Playwright route-stub setup); it MUST pre-date and
+   gate the merge of UI-12b. Any future SW chunk
+   re-runs this test as the UI-8 fetch-ordering
+   regression gate.
    [PROPOSAL — operator sign-off pending]
 
 J) Single chunk or multi:
@@ -642,6 +728,10 @@ UI-12b  Push opt-in surface + subscription persistence.
           - sw.js gains 'push' + 'notificationclick'
             listeners (additive; fetch handler ordering
             unchanged). CACHE_NAME bump.
+          - Fetch-ordering shape-lock test (Codex P0,
+            §3-I) lands in this PR before sw.js is
+            modified. Three-shape regression test as
+            specified in §3-I.
           - VAPID public key surfaced via /api/push;
             the private key is generated AT MOST on
             first POST /api/push/subscribe (the chunk
@@ -678,9 +768,37 @@ UI-12c  Server-side emit (the actual push path).
             sign-off captured in the chunk's PR body.
           - 410 / 404 handling: prune dead subscriptions
             from the store.
-          - Rate limit: at most one push per category per
-            5 s (debounce; mirrors the UI-3 polling
-            contract). Configurable.
+          - Rate-limit / anti-spam policy (Codex P1
+            binding, 2026-05-05) — three layers, all
+            mandatory:
+              1. Event-id dedupe: each event id is
+                 dispatched at most once per
+                 subscription, regardless of category
+                 reclassification or watcher restart
+                 within the dedupe window. The
+                 dispatcher persists the last N
+                 dispatched event ids per subscription
+                 in-memory (bounded ring; the store does
+                 NOT persist this state — restart-cleared
+                 by design).
+              2. Per-category debounce: at most one push
+                 per category per 5 s per subscription.
+                 The debounce coalesces bursts; the
+                 single push that fires carries the
+                 most recent event in the burst window.
+                 Configurable per category at the
+                 server-side via a CLI flag or env var
+                 (deferred to UI-12c PR review).
+              3. UI-write suppression: events with
+                 source = "ui" are NEVER dispatched as
+                 pushes, regardless of category. Filter
+                 applied before the event-id dedupe
+                 layer so UI-write events do not consume
+                 dedupe slots.
+            The three layers compose: event-id dedupe
+            inside per-category debounce inside UI-write
+            suppression. UI-12c tests pin each layer
+            independently AND in combination.
           - Tests: pytest unit + a Playwright test that
             asserts the SW push handler renders a
             notification when given a synthetic push
@@ -734,9 +852,15 @@ For UI-12b (write affordance):
      PushManager.subscribe (mirror of UI-10 + UI-11b
      test_ui_modal pattern).
   6. sw.js diff isolated to push + notificationclick
-     listeners; CACHE_NAME bump explicit. Codex audit
-     specifically verifies fetch handler ordering is
-     unchanged.
+     listeners; CACHE_NAME bump explicit. Codex P0
+     binding (2026-05-05): a shape-lock test
+     (tests/test_ui_sw.py or Playwright route-stub
+     equivalent) MUST land in the same PR and pass on
+     CI before the sw.js change merges. The test
+     asserts three routing decisions: /api/* network-
+     only, navigate → network-then-offline, /assets/*
+     cache-first. Diff review is not the contract; the
+     test is the contract.
 
 For UI-12c (server-side emit):
   1. PR body documents the runtime dep choice
@@ -811,7 +935,17 @@ Same as UI-11 §8 + the additive UI-11 schema:
   16.4+ but requires the surface installed as a Home
   Screen PWA. UI-12 documents the constraint; the
   surface degrades gracefully (state="unsupported")
-  on browsers that report no PushManager.
+  on browsers that report no PushManager. Codex P2
+  binding (2026-05-05): unsupported environments
+  degrade to a PASSIVE READ-ONLY status — the footer
+  affordance reads "Notifications: unsupported", carries
+  NO click handler, NO retry prompt, NO Home-Screen-
+  install nudge, NO copy suggesting the operator
+  upgrade their browser. Karasu does not insist; it
+  reports the platform truth and stays silent. The
+  same passive-read-only contract applies to denied
+  permission state and to private-browsing contexts
+  where PushManager is gated.
 - Service worker push REPLAY (e.g. queueing pushes
   while offline). UI-12 fires-and-forgets to the push
   service; replay is the push service's concern.
@@ -900,6 +1034,27 @@ All §3 decisions need confirmation. Plus:
    against UI-0 §4 explicitly; the dep is gated to
    UI-12c and not loaded by UI-12a / UI-12b code
    paths.
+   Codex P0 binding (2026-05-05): "gated to UI-12c
+   imports only" is correct technically but
+   insufficient as an institutional contract. The
+   dep enters the repo as a NAMED, SCOPED EXCEPTION
+   to UI-0 §4 — pinned in §11.6.13 of THIS brief.
+   The exception:
+     - Applies ONLY to `cryptography` (not to
+       `pywebpush`, not to `requests`, not to any
+       transitively-pulled package beyond what
+       `cryptography` itself ships with).
+     - Applies ONLY inside the UI-12c push emit
+       module (one Python file under
+       src/karasu/ui/push/ or similar). Imports
+       outside that module are a regression.
+     - Does NOT generalise. Future chunks asking
+       for additional deps re-open the UI-0 §4
+       conversation per chunk; the UI-12c precedent
+       does not cover them.
+   The UI-12c PR body restates this exception
+   verbatim in its description; Codex re-audit on
+   UI-12c verifies the import scope.
    [PROPOSAL — operator sign-off binding; Codex
    audit on UI-12c PR re-verifies]
 
@@ -1016,53 +1171,103 @@ All §3 decisions need confirmation. Plus:
   observations.
 ```
 
-## 11.6 · Implementation pins (placeholder — Codex audit pending)
+## 11.6 · Implementation pins (Codex audit, 2026-05-05)
 
-This section will be filled in once Codex returns the brief
-audit verdict, paralleling UI-10 §11.6 and UI-11 §11.6. Pins
-expected to land here include (NOT BINDING until Codex
-ratifies):
+Fifteen pins set by Codex on the UI-12 brief audit
+(CHANGES-REQUIRED verdict, in-branch fixes applied to
+§3-A / §3-D / §3-E / §3-F / §3-G / §3-I / §6 UI-12b /
+§6 UI-12c / §9 / §10.5 before re-audit). All bind UI-12a
+/ UI-12b / UI-12c implementation. Verbatim:
 
 ```text
-- UI-12a ships before UI-12b ships before UI-12c
-  (read-before-write, surface-before-emit).
-- Push subscriptions store stays off the bus.
-  data.endpoint_hash on the bus, full endpoint in the
-  store only.
-- Footer affordance is the only surface change pre-opt-
-  in. No banner, no toast, no first-visit prompt.
-- Modal mandatory; native browser permission prompt
-  fires ONLY after modal confirm.
-- Push notifications carry the editorial title and no
-  body. Failure to hold the line is an audit failure.
-- Categories are a fixed enum; unknown values surface
-  as unsupported.
-- The UI's own writes (scar_revoke, trust_adjust,
-  push_subscribe, push_unsubscribe) DO NOT trigger the
-  "corrections" category — pushing the operator's own
-  click back is noise.
-- sw.js diff is additive; fetch handler ordering is
-  the contract and does not move.
-- VAPID private key NEVER appears in any /api/* response
-  or any bus event.
-- Runtime dep (UI-12c) lives behind UI-12c imports only;
-  UI-12a + UI-12b code paths do not import the dep.
+1.  UI-12 is the first proactive surface and must remain
+    opt-in only.
+
+2.  Push permission must never be requested on first
+    visit.
+
+3.  Push opt-in must be exposed only as a quiet footer
+    affordance.
+
+4.  UI-12 must not introduce install banners, update
+    toasts, connection badges, or permission nudges.
+
+5.  Raw PushSubscription endpoint and keys must never be
+    written to the bus.
+
+6.  endpoint_hash may appear only as audit metadata on
+    human_decision events.
+
+7.  Push subscription state lives in the browser/store,
+    not in the event bus.
+
+8.  Every subscribe/unsubscribe mutation must emit an
+    inspectable human_decision event.
+
+9.  UI-originated writes must not trigger correction
+    push notifications.
+
+10. Notification categories are closed to attention,
+    errors, and corrections for UI-12.
+
+11. Unsupported push environments must degrade to
+    passive read-only status.
+
+12. UI-12b must prove service worker fetch handler
+    ordering did not regress.
+
+13. UI-12c is the only approved dependency exception
+    for Web Push signing.
+
+14. Push emit must be rate-limited and deduplicated
+    before delivery.
+
+15. Multi-device fan-out must be explicit: each active
+    subscription is a separate delivery target.
 ```
+
+Pins 5 + 6 + 7 are the privacy contract that drives
+§3-D + §3-E + §3-F (endpoint_hash audit-only, raw
+endpoint never on bus, hash never as store lookup
+key, store classified private). Pin 12 is the §3-I
+shape-lock requirement on UI-12b (fetch handler
+ordering is no longer auditable from diff alone). Pin
+13 is the §10.5 cryptography exception named, scoped,
+and non-generalising. Pin 14 is the multi-layer
+rate-limit policy in §6 UI-12c (event-id dedupe +
+per-category debounce + UI-write suppression). The
+remaining pins parallel UI-10 §11.6 / UI-11 §11.6
+contracts (modal mandatory, scope discipline, schema
+discipline, operator-feel .webm).
 
 ## 12 · Status
 
 ```text
-Brief status:        DRAFT (Claude Opus 4.7, 2026-05-05).
-                     Section §3 + §10 proposals awaiting
-                     operator sign-off. Section §11.6
-                     awaiting Codex audit verdict.
-Operator sign-off:   PENDING.
-Codex audit:         PENDING (out-of-band, post sign-off).
+Brief status:        CHANGES-REQUIRED — fixes applied
+                     in-branch (Claude Opus 4.7,
+                     2026-05-05). Round 1 audit verdict
+                     was CHANGES-REQUIRED; all 8 findings
+                     (2 P0 + 4 P1 + 2 P2) addressed by
+                     edits to §3-A / §3-D / §3-E / §3-F /
+                     §3-G / §3-I / §6 UI-12b / §6 UI-12c /
+                     §9 / §10.5. The fifteen Codex-
+                     proposed §11.6 pins ratified verbatim.
+Operator sign-off:   PENDING on §3 + §10 proposals (the
+                     audit substantively endorsed each via
+                     the Q1-Q7 yes-with-conditions
+                     answers; explicit operator sign-off
+                     still required before merge).
+Codex audit:         Round 1 returned CHANGES-REQUIRED.
+                     Round 2 PENDING (verifies fixes
+                     applied; verifies re-formed §3 + §10
+                     contract holds the audit's
+                     conditions).
 Implementation:      BLOCKED until brief merges.
                      UI-12a (read display) ships first per
                      pin §0.5.1 carry-forward; UI-12b
                      (opt-in surface) follows; UI-12c
                      (server-side emit) closes the chunk.
+Loop budget:         Round 1 of 5 consumed.
 ```
 
 The brief follows the lifecycle `ui-10-design-brief.md` (PR

@@ -717,6 +717,70 @@ CAPTURES: dict[str, list[dict]] = {
     # The PNG verifies that index.html still renders correctly
     # WITH the manifest link + SW registration in place (no
     # regression from UI-7).
+    # UI-9 — reduced-motion smoke pass.
+    #
+    # Each capture forces ``prefers-reduced-motion: reduce`` on
+    # the Playwright context (via emulate_media). The chunk
+    # verifies that every UI-N visible state stays reachable
+    # without motion-derived layout instability — drawer slides
+    # become instant, crow ambient breathing pauses, flight
+    # transitions snap instead of arc.
+    #
+    # The PNGs are intentionally NOT pixel-comparable to the
+    # default-motion captures (the crow's tilt / hover state
+    # may sit at a different keyframe instant); the audit looks
+    # at structural integrity and at the absence of motion-
+    # derived flicker, not at exact frame parity.
+    "UI-9-tests": [
+        {
+            "name": "00-empty-state-reduced-motion.png",
+            "url": "/",
+            "seed": False,
+            "reduced_motion": True,
+            "wait_ms": 1500,
+            "full_page": False,
+        },
+        {
+            "name": "01-timeline-reduced-motion.png",
+            "url": "/",
+            "seed_events": "flight-claude-karasu",
+            "reduced_motion": True,
+            "wait_ms": 3500,
+            "full_page": False,
+        },
+        {
+            "name": "02-livemap-reduced-motion.png",
+            "url": "/",
+            "seed_events": "flight-karasu-claude",
+            "reduced_motion": True,
+            "wait_ms": 3500,
+            "full_page": False,
+        },
+        {
+            "name": "03-drawer-reduced-motion.png",
+            "url": "/",
+            "seed_events": "flight-karasu-claude",
+            "reduced_motion": True,
+            "wait_ms": 3500,
+            "click": ".event-row:first-child",
+            "post_click_wait_ms": 100,
+            "full_page": False,
+        },
+        {
+            "name": "04-offline-reduced-motion.png",
+            "url": "/offline.html",
+            "seed": False,
+            "reduced_motion": True,
+            "eval_js": (
+                "var p = 'C:/Users/op/.karasu/events.jsonl';"
+                "localStorage.setItem('karasu:bus_path', p);"
+                "document.getElementById('offline-bus-value')"
+                "  .textContent = p;"
+            ),
+            "wait_ms": 200,
+            "full_page": False,
+        },
+    ],
     "UI-8-pwa": [
         {
             # Index page after the SW + manifest land. Visual
@@ -1071,6 +1135,14 @@ def _capture(slug: str, port: int, out_dir: Path, workdir: Path) -> None:
             context = browser.new_context(viewport=viewport)
             page = context.new_page()
             try:
+                # UI-9 — force prefers-reduced-motion: reduce on
+                # the page when the plan asks for it. The
+                # chromatic whitelist in reset.css restricts
+                # transition-property under this media; the
+                # capture verifies the surface still renders
+                # without motion-derived layout shift.
+                if plan.get("reduced_motion"):
+                    page.emulate_media(reduced_motion="reduce")
                 seed_events = _resolve_seed_events(plan)
                 _seed_workdir(
                     workdir,

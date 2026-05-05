@@ -71,6 +71,19 @@
     --error: var(--accent);
     --ok: #4a9d6a;
     --warn: #c69a4d;
+    /* UI-10 — semantic alias for destructive actions inside
+     * modal confirmation buttons. Same hex as --accent today;
+     * the semantic alias IS the contract (brief §5.1).
+     *
+     * Scope discipline (Codex P2 binding from PR #83): MUST
+     * NOT be used for generic error states (use --error),
+     * warning surfaces (use --warn), accent emphasis (use
+     * --accent), or any non-destructive CTA. Reserved for
+     * destructive confirmation buttons inside modals only.
+     * A regression that paints a warning banner with --danger
+     * is a P2 audit finding even though the colour is the
+     * same hex — the alias IS the contract. */
+    --danger: var(--accent);
 
     /* §5.2 — typography. FOUT accepted (font-display: swap) so
      * first paint is readable on the system fallback while the

@@ -264,17 +264,23 @@ def test_api_events_returns_empty_when_log_missing(
 def test_run_ui_server_kwarg_calls_configure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """``run_ui_server(event_log=PATH)`` must propagate through
-    ``configure`` so the module global flips before the server
-    starts serving. Verified without actually binding by patching
-    ``ThreadingHTTPServer`` to a no-op."""
-    captured: dict[str, Path] = {}
+    """``run_ui_server(event_log=PATH, scars_path=PATH)`` must
+    propagate through ``configure`` so the module globals flip
+    before the server starts serving. Verified without actually
+    binding by patching ``ThreadingHTTPServer`` to a no-op.
+
+    UI-10 extended ``configure`` with the ``scars_path`` kwarg
+    so the surface can resolve ``ScarEngine`` against the
+    operator's configured rules directory; the test now pins
+    both kwargs reach ``configure``."""
+    captured: dict[str, Path | None] = {}
 
     real_configure = ui_server.configure
 
-    def spy(path: Path) -> None:
-        captured["path"] = path
-        real_configure(path)
+    def spy(event_log: Path, scars_path: Path | None = None) -> None:
+        captured["event_log"] = event_log
+        captured["scars_path"] = scars_path
+        real_configure(event_log=event_log, scars_path=scars_path)
 
     class _ServerStub:
         def __init__(self, address, handler) -> None:
@@ -289,9 +295,16 @@ def test_run_ui_server_kwarg_calls_configure(
     monkeypatch.setattr(ui_server, "configure", spy)
     monkeypatch.setattr(ui_server, "ThreadingHTTPServer", _ServerStub)
 
-    target = tmp_path / "custom.jsonl"
-    ui_server.run_ui_server(host="127.0.0.1", port=0, event_log=target)
-    assert captured["path"] == target
+    target_log = tmp_path / "custom.jsonl"
+    target_scars = tmp_path / "custom-scars"
+    ui_server.run_ui_server(
+        host="127.0.0.1",
+        port=0,
+        event_log=target_log,
+        scars_path=target_scars,
+    )
+    assert captured["event_log"] == target_log
+    assert captured["scars_path"] == target_scars
 
 
 # ---------------------------------------------------------------------------

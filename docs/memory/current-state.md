@@ -7,18 +7,26 @@ Phase 1B: COMPLETED (no-adapter pass validated, F1–F5 closed)
 Phase 1C: COMPLETED (real Claude adapter loop validated, F6–F8 closed)
 Phase 2: COMPLETED — chunks 1+2+3 merged (#30 #31 #32 #33). Audit accepted with one round of changes (PR #33 contract alignment + redaction).
 Phase 3: COMPLETED + DOGFOOD-VALIDATED + AUDIT-ACCEPTED — chunks 3a + 3b + 3c merged (#34 #35 #36 #37). Live dogfood 2026-05-02 (issue #39) validated end-to-end: `/scar` → controller resubmit (94 ms) → pipeline applies scar → second dispatch with `priority=high` → response back to Telegram. Cap held at 3 under spam. Three operational findings filed: F9 (#40), F10 (#41), F11 (#42). Audit forward-look returned by ChatGPT and recorded in [`docs/memory/phase-3-dogfood-audit-2026-05-02.md`](phase-3-dogfood-audit-2026-05-02.md): 2 REQUERIDOS applied this PR (trust=2 docs warning + cap-local-per-origin issue), 1 NICE-TO-HAVE applied (sessions template), 2 NICE-TO-HAVE queued for Phase 3+ hardening (priority persist + startup warning).
-UI surface progress (PWA roadmap):
-- UI-0 (design brief)         ✔ PR #62 merged (`92e2c91`).
-- UI-1 (rebase + projection)  ✔ PR #63 merged (`4819d7b`).
-- UI-2 (design system + tokens) ✔ PR #69 merged (`6ec5203`). One audit round (P0 on `prefers-reduced-motion`); fix in `ae975f3` switched to `transition-property` chromatic whitelist.
-- UI-3 (application shell)    ✔ PR #70 merged (`a67d729`). APPROVED on the first round, no P0/P1/P2. ChatGPT pinned a binding rule for UI-5: ship `.webm` without exception because the crow becomes the principal visual asset there.
-- UI-4 (event timeline)       ✔ PR #72 merged (`13e6270`). APPROVED on the first round. ChatGPT added a binding editorial constraint for UI-5: *"el crow puede tener vida; la superficie no puede perder calma"*.
-- UI-5 (canonical crow + state animations) ✔ PR #74 merged (`904111a`). Three audit rounds: (1) initial pass shipped Font Awesome vector adaptation, operator rejected as consumer-mascot. (2) Mid-PR pivot to 16x16 pixel-art with `crispEdges`; Codex P0 — pixel-grid contradicts UI-0 §5.6. (3) Audit-response returned to vector via OpenMoji "Black Bird" adaptation (CC-BY-SA 4.0, attributed) + operator-added leg `<rect>`s and eye `<circle>` (canvas-coloured negative space). (4) Re-audit Codex caught a separate state-projection P0 in `_crow_state` (loop set processing on any tail file_change; completed agent_response tail therefore mis-rendered as processing instead of idle); fix re-checks LATEST event explicitly + 7 unit tests pin the precedence. Final verdict APPROVED with observations; P2 (root NOTICE for OpenMoji licence trail) deferred as a follow-up issue.
-- UI-9 (server tests + Lighthouse pass) PR open (`feat/ui-9-tests-lighthouse`, stacked on `feat/ui-8-pwa`). **Closes the read-only watchtower MVP per UI-0 §10.** Verification-only chunk: zero new endpoints, zero projection changes, zero shell affordances. Ships 10 HTTP-level shape lock tests in `tests/test_ui_server_http.py` pinning every projection on the wire — `/api/events` projection keys (20 documented fields), `/api/health` top-level shape (status/events/crow/flight) + flight sub-shape ({source, target}), `/api/meta` shape (version/bus_path), `/assets/sw.js` Service-Worker-Allowed header, `/offline.html` route + editorial copy + `.crow.offline` class presence, `/assets/manifest.json` colour parity with tokens.css (--bg-0 + --bg-1 hex match) + top-level shape (name/start_url/scope/display=standalone/icons 192+512). `scripts/ui_lighthouse.py` is an optional CLI runner that spins up the server with a seeded synthetic bus, runs Lighthouse via npx, asserts thresholds (Performance/Accessibility/Best Practices ≥95, SEO ≥90 per UI-0 §10), writes JSON report to `docs/ui/lighthouse/<date>.json`. PWA category skipped by default (HTTPS required). 5 reduced-motion smoke PNGs (`prefers-reduced-motion: reduce` forced via Playwright `emulate_media`) verify the chromatic whitelist contract — empty state, timeline, livemap, drawer-open, offline page all render correctly without transform / opacity transitions; colour transitions run at full duration. Codex 5 UI-9 pins all honoured: PWA contracts validated with tests (Pin #1), Lighthouse positioned as verification not design driver with explicit "Recommendations to ignore" list (Pin #2), SW cache behavior remains boring (Pin #3 — no UI-9 change), deterministic assertions over browser-state magic (Pin #4 — tests assert headers + bodies, not SW state), zero new install banners/toasts/badges (Pin #5 by absence). Codex pin C "every /api/health-derived state requires unit tests" reaches its endpoint with this chunk — every projection on the wire now has a structural shape lock that fails BEFORE a future visual change can drift it.
-- UI-8 (PWA shell + offline page) PR open (`feat/ui-8-pwa`, stacked on `feat/ui-7-detail`). Web App Manifest declares the installable app (start_url `/`, scope `/`, display `standalone`, theme_color `#131316`, background_color `#0a0a0b` — literal hex matching `tokens.css` `--bg-1` / `--bg-0` exactly per Codex P2 binding). Vanilla service worker at `static/sw.js` with FIRST-BRANCH `/api/*` network-only, then navigate fallback to `offline.html`, then static cache-first (Codex P1 binding — any refactor that lets `/api/*` fall through to `caches.match()` is a P0 regression). `CACHE_NAME = 'karasu-ui-v8'` explicit + bump rule documented in both the SW docstring AND the screenshots README. Offline page is a standalone shell with the perched crow in the new `.crow.offline` pose (`rotate(4deg) + opacity 0.7`, `animation: none` to neutralise the ambient breathing — signal-lost not injured, no droop/shake/blink/pulse/grayscale per Codex P2). Editorial sentence: "The bus is unreachable. Karasu will resume when the connection returns." Last-known `bus_path` from `localStorage` (key `karasu:bus_path`) written by `loadMeta()` on every successful `/api/meta` tick; empty / null / undefined / private-mode-error all collapse to muted `"—"` em-dash placeholder per Codex P1 (NEVER fake path). Server changes additive: `/offline.html` route + `Service-Worker-Allowed: /` header on `/assets/sw.js` so the SW registered from `/assets/` can scope to root. PNG icons at 192+512 generated from `crow.svg` via `scripts/ui_pwa_icons.py` (Playwright-based rasteriser — no new runtime dep, no cairosvg/resvg). 4 PNGs (no `.webm` per Codex P2 — first chunk after UI-5 to legitimately skip recording). Manual verification path documented in `docs/ui/screenshots/UI-8-pwa/README.md`: DevTools `Application > Service Workers > Offline` toggle exercises the offline fallback; `Network > Offline` throttle exercises the network-only `/api/*` contract. `_send()` extended with optional `extra_headers` tuple to carry the SW-allowed header without touching the other static-asset paths.
-- UI-7 (Detail panel) PR open (`feat/ui-7-detail`, stacked on `feat/ui-6-livemap`). Lateral drawer slides in from the right when the operator clicks a timeline row OR a Live Map node. Vanilla 5-token JSON highlighter (`json-key`/`json-string`/`json-number`/`json-bool`/`json-null`) keyed off the existing palette in `drawer.css` — no highlight.js, no prism, no shiki. Read-only: clicking opens, click-outside / Esc / × close. Map-node click resolves to the latest event in `latestEvents` whose `_flight_route` pair includes that node id (source OR target); empty result renders an italic-muted "This node has not seen traffic yet." sentence. Server side empty by design (zero new endpoints, zero schema changes) — UI-7 reads `/api/events` exactly as UI-4 ships it and composes drawer payloads client-side. Codex pin C cumplido by absence: no new `/api/health`-derived state, so no new tests needed. Pin E (drawer must not compete with crow/map) cumplido: minimal header (timestamp + type + ×), body is type only, no icons / badges / decorative dividers. Pointer-events fix on `.live-map-svg` (none) + `.map-node` (`bounding-box`) so SVG clicks land on the right `<g>` instead of the outer SVG container. 6 PNGs + 1 .webm (336 KB, 1024×640 full-shell, walks open-from-row → close-via-Esc → open-from-node → close-via-backdrop) under `docs/ui/screenshots/UI-7-detail/` and `docs/ui/recordings/`.
-- UI-6 (Live Map + crow flight) PR open (`feat/ui-6-livemap`). APPROVED-with-observations by Codex audit (PR #78); P2 applied as follow-up commit `a2b9fef` (README pin #5 phrasing + UI-7 binding pins propagated to next-session.md). Five pins added by Codex audit for UI-7+: (A) Live Map = orientation layer, not simulation; (B) no motion on nodes/edges/timeline/header/footer/map chrome unless an audited chunk earns it; (C) every `/api/health`-derived visual state ships with tests before screenshots; (D) latest-event semantics for flight unless a future PR introduces stateful route memory + tests; (E) detail drawer / inspector must not compete with crow/map — surface stays editorial. Five domain nodes (user / karasu / claude / codex / github) painted on a static SVG canvas; `_flight_route(events)` projects the LATEST event to `(source, target)` per the operator's binding decisions (LATEST only, no memory; agent_response → Agent → Karasu; controller_resubmit → User → Karasu; in-flight dispatch on file_change → Karasu → agent; github_webhook → GitHub → Karasu; unknown → null parked). Surfaced additively at `/api/health.flight`. SECOND canonical asset shipped: `crow-flight.svg` adapted from game-icons.net "crow-dive" by Lorc (CC BY 3.0, attributed in spec) — single body path with wings + tail extended, the perched UI-5 crow is NOT rotated for flight. Asset hunt evaluated 6 CC-licensed candidates (Wikimedia Heraldic_Raven, Corneille_essorant, White-fronted_tern_volant, game-icons.net raven, Coa Animal Raven, game-icons.net crow-dive) — provenance trail in `docs/ui/assets/karasu_sprites_spec.md`. Pin #7 cumplido: 22 unit tests for `_flight_route` precedence + 2 HTTP-level tests for the additive `/api/health.flight` field land BEFORE the visual code (UI-5 shipped without `_crow_state` tests; UI-6 does not repeat). Layout: side-by-side at ≥1280 px (map + timeline 720 px), stacked below; empty-state hero stays the first impression on a silent bus. SVG-element bug self-caught in autonomous review: `el.hidden=false` on an SVGElement creates a non-reflecting expando (the IDL `hidden` property is HTMLElement-only); fix uses `removeAttribute('hidden')`/`setAttribute('hidden','')`. 8 PNGs + 1 .webm (242 KB, 1024×640 full-shell) under `docs/ui/screenshots/UI-6-livemap/` and `docs/ui/recordings/`. All 7 binding pins from UI-3..UI-5 audits respected: shell stays still (#1+#2), second flight asset (#3), beak-leading via atan2 + asset-offset (#4), full-shell .webm context (#5), no node performance animations (#6), state projection unit-tested (#7).
-- UI MVP complete pending merge: UI-1..UI-9 PRs all open and mergeable. UI-10+ (write paths, scar revoke, trust adjust, push notifications) earns its own brief per UI-0 §6.
+UI surface progress (PWA roadmap — main HEAD `37b51ba`, 2026-05-05):
+- UI-0  (design brief)              ✔ PR #62  merged (`92e2c91`).
+- UI-1  (rebase + projection)       ✔ PR #63  merged (`4819d7b`).
+- UI-2  (design system + tokens)    ✔ PR #69  merged (`6ec5203`).
+- UI-3  (application shell)         ✔ PR #70  merged (`a67d729`).
+- UI-4  (event timeline)            ✔ PR #72  merged (`13e6270`).
+- UI-5  (canonical crow + anims)    ✔ PR #74  merged (`904111a`).
+- UI-6  (Live Map + crow flight)    ✔ PR #78  merged (2026-05-05).
+- UI-7  (Detail panel / drawer)     ✔ PR #79  merged (2026-05-05).
+- UI-8  (PWA shell + offline)       ✔ PR #80  merged (2026-05-05).
+- UI-9  (server tests + Lighthouse) ✔ PR #81  merged (2026-05-05).
+- UI-9.1 (server perf)              ✔ PR #82  merged (2026-05-05).
+- UI-10 brief (write paths brief)   ✔ PR #83  merged (2026-05-05, doc-only).
+- Lighthouse baseline post-MVP      ✔ PR #84  merged (`aa7d45e`).
+- UI-10 (scar revoke impl)          ✔ PR #85  merged (`b89047c`).
+- Lighthouse baseline post-UI-10    ✔ PR #86  merged (`9ed761c`).
+- UI-11 brief (trust adjust)        ✔ PR #87  merged (`37b51ba`, doc-only).
+- UI-11a (trust read display)       ← NEXT. Branch: feat/ui-11a-trust-display.
+- UI-11b (trust write affordance)   BLOCKED until UI-11a merges (pin §11.6.1).
+- UI-12  (push notifications)       OUT OF SCOPE until UI-11b merges.
 
 ## System status
 
@@ -116,98 +124,67 @@ Cap enforcement: 6 `/scar` rapid-fire → exactly 3 resubmits, 3 cap warnings, 0
 ## Next step (entry point)
 
 ```text
-README Fase 1 + Fase 2: COMPLETE.
-README Fase 3 (PWA + Advanced): IN PROGRESS.
+main HEAD: 37b51ba (UI-11 brief, 2026-05-05).
+0 PRs open. 0 branches open.
 
-UI surface progress:
-  UI-0 (design brief)         ✔ PR #62 merged (92e2c91).
-  UI-1 (rebase + projection)  ✔ PR #63 merged (4819d7b).
-  UI-2 (design system + tokens) ✔ PR #69 merged (6ec5203).
-  UI-3 (application shell)    ✔ PR #70 merged (a67d729).
-  UI-4 (event timeline)       ✔ PR #72 merged (13e6270).
-  UI-5 (canonical crow + state animations) ✔ PR #74 merged (904111a).
-  UI-6 (Live Map + crow flight)   <-- next.
-                                              Five domain
-                                              nodes (User /
-                                              Karasu /
-                                              Claude /
-                                              Codex /
-                                              GitHub). Crow
-                                              flies between
-                                              nodes per
-                                              latest event.
-                                              Arc-path SVG;
-                                              600 ms
-                                              ease-mag.
-                                              SECOND asset
-                                              required:
-                                              crow-flight
-                                              .svg (wings
-                                              extended).
-                                              Do NOT rotate
-                                              the perched
-                                              crow and call
-                                              it flight
-                                              (Codex UI-5
-                                              pin).
-  UI-7..UI-9                  pending per UI-0 brief
-                                              roadmap.
-  UI-10+ (write paths, push, trust mgmt) out of brief
-                                       scope until UI-MVP
-                                       lands.
+Entry point: UI-11a — trust gradient READ display.
+Branch: feat/ui-11a-trust-display (from main).
+Scope (~250 LOC):
+  - GET /api/agents endpoint (reads karasu.yaml directly;
+    returns [{name, trust_level, handles, status?}];
+    trust_level outside {0,1,2} → unsupported, read-only).
+  - _project_event extension: data.action surfaced when
+    present, None when absent (backwards-compatible).
+  - EVENTS_PROJECTION_KEYS update (same PR, pin §11.6.2).
+  - HTTP shape lock for GET /api/agents (same PR).
+  - Drawer extension: trust_level visible when open event
+    is agent_response (read-only, no Adjust button yet).
+  - 1 PNG of drawer with trust visible.
+  - No .webm (no motion change).
+  - No Playwright (no interaction change).
 
-The UI MVP is read-only against the bus. karasu ui
-[--host H] [--port P] (defaults 127.0.0.1:8787) starts a
-ThreadingHTTPServer that serves the static shell + the
-JSON projection at /api/events and /api/health (and the
-new /api/meta from UI-3). The projection is the canonical
-contract; UI-4..UI-9 render against it.
+Gating pins (P0):
+  §11.6.1  UI-11a ships BEFORE UI-11b (absolute).
+  §11.6.2  data.action in _project_event + shape-lock
+           tests in SAME PR as UI-11a.
+  §11.6.3  Server reads karasu.yaml directly; works with
+           no karasu watch running.
+  §11.6.4  Trust values {0,1,2} only; others = unsupported
+           read-only.
+  §11.6.5  UI-11b is INTENT-ONLY. Modal copy: "Recorded
+           intent. Applies after watch restart."
+  §11.6.6  Drawer-earned only. No /agents page, no toolbar,
+           no global settings surface.
 
-See docs/memory/next-session.md for UI-6's detailed plan
-and the seven binding constraints Codex pinned across
-UI-3 / UI-4 / UI-5 audits.
+After UI-11a merges → open UI-11b (write affordance, ~400 LOC).
+After UI-11b merges → UI-12 (push notifications, own brief).
 
-Remaining items beyond the UI MVP:
-
-- Dogfood controlado de chunk 4c con un PR real a
-  trust_level=1 — operativo, no código (requiere
-  computadora). NOT blocking UI.
-- Future: optional dual priority_original /
-  priority_effective fields on agent_response.data if
-  analytics surface a need (audit-noted on PR #60). The
-  effective_priority(event) helper itself shipped (PR
-  #65); the dual fields stay deferred until a consumer
-  needs them.
-- Future: opt-in retry on transient HTTP statuses
-  (502/503/504) in fetch_card — issue #66, P2. Adds an
-  optional `retry_http_statuses` parameter; default empty
-  set preserves the current "do not retry on HTTP errors"
-  semantics. Not blocking; pick up when revisited.
-
-Operator-side TODOs no Claude Code session can perform
-from this MCP surface:
-  - Rename repo: GitHub → Settings → General →
-    Repository name → `Karasu` (current name `Karasu-`
-    is a typo).
-  - Uninstall the ChatGPT Codex Connector GitHub App
-    from the repo: GitHub → Settings → Integrations →
-    Applications → ChatGPT Codex Connector →
-    Uninstall. PR #67 (squash → cab7d92) already
-    retired the Codex bot from working agreements;
-    the App uninstall closes the loop physically.
+Remaining items (non-blocking):
+- Issue #66: fetch_card opt-in retry on 502/503/504 (P2).
+- Issue #76: THIRD_PARTY_NOTICES.md for OpenMoji (P2).
+- Operator-side: rename repo Karasu- → Karasu (GitHub Settings).
+- Operator-side: uninstall ChatGPT Codex Connector App from repo.
 ```
 
 ## Do NOT do yet
 
 ```text
+- Do NOT open UI-11b before UI-11a merges (pin §11.6.1).
+- Do NOT imply live adapter mutation in any UI-11 copy
+  (pin §11.6.5 — INTENT-ONLY).
+- Do NOT add /agents page, header toolbar, or global trust
+  settings surface (pin §11.6.6).
+- Do NOT add trust values above 2 to the modal (pin §11.6.4).
+- Do NOT cache /api/* under any circumstances (SW network-only).
+- Do NOT add install banners, update toasts, connection badges
+  (UI-8 audit pin #5).
+- Do NOT lower Lighthouse thresholds without operator-signed
+  rationale (UI-9.1 procedural lock).
+- Do NOT introduce a build step or bundler (UI-0 §4).
 - Do not parallelize or batch adapter calls. Single-worker
-  invariant is preserved; reaction in chunk 3b is also
-  serialized through the same controller.
+  invariant is preserved.
 - Do not abstract the adapter behind a plugin layer.
 - Do not let the pipeline consume `human_decision` events
-  directly. The controller observes the bus and re-submits
-  file_change events; `human_decision` itself is never the
-  pipeline input.
-- Do not touch AgentResponse, F3 dispatcher semantics, F7
-  dispatch_on, F8 timeout_s — all four remain frozen.
+  directly. The controller resubmits as file_change.
+- Do not touch AgentResponse, F3, F7, F8 — all frozen.
 ```

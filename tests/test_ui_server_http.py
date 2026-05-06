@@ -1226,3 +1226,711 @@ def test_api_push_subscriptions_not_a_list_degrades_to_zero(
     payload = json.loads(body)
     assert payload["subscription_count"] == 0
     assert payload["vapid_public_key"] is None
+
+
+# ===========================================================================
+# UI-12b — POST /api/push/subscribe + /api/push/unsubscribe shape locks
+# ===========================================================================
+#
+# Brief §3-B + §7.3 validation matrix. Every error branch's
+# response body is generic — the supplied endpoint / keys
+# NEVER echo back (pin §11.6.16). The privacy negative-shape
+# block at the bottom asserts the absence of sentinel
+# substrings across response bodies, the bus, and captured
+# logs.
+
+
+# Sentinel substrings — the privacy negative-shape tests assert
+# these never appear in any observable surface (response body,
+# bus event, captured logs). Distinct strings per surface so a
+# regression naming the wrong leak point is unambiguous.
+_PUSH_TEST_ENDPOINT = (
+    "https://fcm.googleapis.com/sentinel-DO-NOT-LEAK-7d9f2e"
+)
+_PUSH_TEST_P256DH = "DO-NOT-LEAK-P256DH-key-material-here"
+_PUSH_TEST_AUTH = "DO-NOT-LEAK-AUTH-key-material-here"
+_PUSH_TEST_VAPID_PUBLIC = "vapid-public-b64u-OK-to-surface"
+_PUSH_TEST_VAPID_PRIVATE = "DO-NOT-LEAK-vapid-private-b64u"
+
+
+def _seed_vapid(public: str = _PUSH_TEST_VAPID_PUBLIC,
+                private: str = _PUSH_TEST_VAPID_PRIVATE) -> None:
+    """Seed VAPID keys in the configured push store. UI-12b's
+    subscribe handler 503s if the store has no VAPID section."""
+    store_path = ui_server.PUSH_STORE_PATH
+    raw = {}
+    if store_path.exists():
+        try:
+            raw = json.loads(store_path.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                raw = {}
+        except json.JSONDecodeError:
+            raw = {}
+    raw["vapid"] = {"public": public, "private": private}
+    store_path.write_text(json.dumps(raw), encoding="utf-8")
+
+
+def _push_subscribe_body(
+    endpoint: str = _PUSH_TEST_ENDPOINT,
+    p256dh: str = _PUSH_TEST_P256DH,
+    auth: str = _PUSH_TEST_AUTH,
+    categories: list[str] | None = None,
+) -> bytes:
+    return json.dumps({
+        "subscription": {
+            "endpoint": endpoint,
+            "keys": {"p256dh": p256dh, "auth": auth},
+        },
+        "categories": ["attention"] if categories is None else categories,
+    }).encode("utf-8")
+
+
+def _push_unsubscribe_body(endpoint: str = _PUSH_TEST_ENDPOINT) -> bytes:
+    return json.dumps({"endpoint": endpoint}).encode("utf-8")
+
+
+def _read_bus_events() -> list[dict]:
+    """Return all bus events as a list of decoded dicts.
+    Convenience for negative-shape assertions ("zero new
+    events" / "exactly one new event")."""
+    if not ui_server.EVENT_LOG.exists():
+        return []
+    return [
+        json.loads(line)
+        for line in ui_server.EVENT_LOG.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+
+
+def _store_subscriptions() -> list[dict]:
+    """Return the current subscriptions list from the configured
+    push store, or [] if the store is missing/empty."""
+    store_path = ui_server.PUSH_STORE_PATH
+    if not store_path.exists():
+        return []
+    raw = json.loads(store_path.read_text(encoding="utf-8"))
+    subs = raw.get("subscriptions", [])
+    return subs if isinstance(subs, list) else []
+
+
+# ---------------------------------------------------------------------------
+# Subscribe — happy path + bus emission
+# ---------------------------------------------------------------------------
+
+
+def test_post_push_subscribe_happy_path_returns_204(
+    ui_http: tuple[str, int]
+) -> None:
+    """Brief §3-B happy path: 204, NO body, store mutated, bus
+    carries push_subscribe with endpoint_hash + categories."""
+    host, port = ui_http
+    _seed_vapid()
+    status, body, _ = _post(
+        host, port, "/api/push/subscribe", body=_push_subscribe_body()
+    )
+    assert status == 204
+    assert body == b""
+
+    subs = _store_subscriptions()
+    assert len(subs) == 1
+    assert subs[0]["endpoint"] == _PUSH_TEST_ENDPOINT
+    assert subs[0]["categories"] == ["attention"]
+
+
+def test_post_push_subscribe_emits_human_decision(
+    ui_http: tuple[str, int]
+) -> None:
+    """The bus event MUST carry data.action="push_subscribe",
+    data.endpoint_hash (sha256-hex), data.categories
+    canonical-sorted, source="ui"."""
+    from karasu.ui.push_store import compute_endpoint_hash
+
+    host, port = ui_http
+    _seed_vapid()
+    _post(host, port, "/api/push/subscribe", body=_push_subscribe_body())
+
+    events = _read_bus_events()
+    push_events = [e for e in events if e.get("data", {}).get("action") == "push_subscribe"]
+    assert len(push_events) == 1
+    e = push_events[0]
+    assert e["type"] == "human_decision"
+    assert e["source"] == "ui"
+    assert e["data"]["endpoint_hash"] == compute_endpoint_hash(_PUSH_TEST_ENDPOINT)
+    assert e["data"]["categories"] == ["attention"]
+
+
+def test_post_push_subscribe_canonical_sort_order(
+    ui_http: tuple[str, int]
+) -> None:
+    """Pin §11.6.10 — the documented order is (attention,
+    errors, corrections). Categories arriving in any order
+    project to that canonical order on the bus."""
+    host, port = ui_http
+    _seed_vapid()
+    _post(
+        host, port, "/api/push/subscribe",
+        body=_push_subscribe_body(categories=["corrections", "attention", "errors"]),
+    )
+    events = _read_bus_events()
+    e = [x for x in events if x.get("data", {}).get("action") == "push_subscribe"][-1]
+    assert e["data"]["categories"] == ["attention", "errors", "corrections"]
+
+
+def test_post_push_subscribe_idempotent_duplicate_returns_204(
+    ui_http: tuple[str, int]
+) -> None:
+    """Brief §10.2: duplicate subscribe = UPDATE. Second POST
+    returns 204; categories overwrite; a fresh push_subscribe
+    event lands on the bus regardless (operator intent is
+    authoritative)."""
+    host, port = ui_http
+    _seed_vapid()
+    s1, _, _ = _post(host, port, "/api/push/subscribe", body=_push_subscribe_body())
+    s2, _, _ = _post(
+        host, port, "/api/push/subscribe",
+        body=_push_subscribe_body(categories=["errors", "corrections"]),
+    )
+    assert s1 == 204
+    assert s2 == 204
+
+    # Single subscription in the store; categories reflect the
+    # second POST's choice.
+    subs = _store_subscriptions()
+    assert len(subs) == 1
+    assert subs[0]["categories"] == ["errors", "corrections"]
+
+    # Two push_subscribe events on the bus, not one.
+    events = _read_bus_events()
+    push_events = [e for e in events if e.get("data", {}).get("action") == "push_subscribe"]
+    assert len(push_events) == 2
+
+
+def test_post_push_subscribe_empty_categories_allowed(
+    ui_http: tuple[str, int]
+) -> None:
+    """Pin §11.6.9: empty array is allowed as a deliberate
+    zero-noise subscription. Bus event records the empty array
+    verbatim."""
+    host, port = ui_http
+    _seed_vapid()
+    status, _, _ = _post(
+        host, port, "/api/push/subscribe",
+        body=_push_subscribe_body(categories=[]),
+    )
+    assert status == 204
+    events = _read_bus_events()
+    e = [x for x in events if x.get("data", {}).get("action") == "push_subscribe"][-1]
+    assert e["data"]["categories"] == []
+
+
+# ---------------------------------------------------------------------------
+# Subscribe — validation matrix (422 / 413 / 400 / 503)
+# ---------------------------------------------------------------------------
+
+
+def test_post_push_subscribe_missing_subscription_returns_422(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    body = json.dumps({"categories": ["attention"]}).encode("utf-8")
+    status, _, _ = _post(host, port, "/api/push/subscribe", body=body)
+    assert status == 422
+
+
+def test_post_push_subscribe_missing_endpoint_returns_422(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    body = json.dumps({
+        "subscription": {"keys": {"p256dh": "x", "auth": "y"}},
+        "categories": ["attention"],
+    }).encode("utf-8")
+    assert _post(host, port, "/api/push/subscribe", body=body)[0] == 422
+
+
+def test_post_push_subscribe_missing_p256dh_returns_422(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    body = json.dumps({
+        "subscription": {
+            "endpoint": _PUSH_TEST_ENDPOINT,
+            "keys": {"auth": _PUSH_TEST_AUTH},
+        },
+        "categories": ["attention"],
+    }).encode("utf-8")
+    assert _post(host, port, "/api/push/subscribe", body=body)[0] == 422
+
+
+def test_post_push_subscribe_missing_auth_returns_422(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    body = json.dumps({
+        "subscription": {
+            "endpoint": _PUSH_TEST_ENDPOINT,
+            "keys": {"p256dh": _PUSH_TEST_P256DH},
+        },
+        "categories": ["attention"],
+    }).encode("utf-8")
+    assert _post(host, port, "/api/push/subscribe", body=body)[0] == 422
+
+
+def test_post_push_subscribe_invalid_category_returns_422(
+    ui_http: tuple[str, int]
+) -> None:
+    """Pin §11.6.10 — closed enum. 'broadcast' is not in
+    {attention, errors, corrections}."""
+    host, port = ui_http
+    _seed_vapid()
+    body = _push_subscribe_body(categories=["broadcast"])
+    assert _post(host, port, "/api/push/subscribe", body=body)[0] == 422
+
+
+def test_post_push_subscribe_duplicate_categories_returns_422(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    body = _push_subscribe_body(categories=["attention", "attention"])
+    assert _post(host, port, "/api/push/subscribe", body=body)[0] == 422
+
+
+def test_post_push_subscribe_endpoint_not_https_returns_422(
+    ui_http: tuple[str, int]
+) -> None:
+    """Brief §3-B — Web Push endpoints are always HTTPS URLs."""
+    host, port = ui_http
+    _seed_vapid()
+    body = _push_subscribe_body(endpoint="http://insecure.example/x")
+    assert _post(host, port, "/api/push/subscribe", body=body)[0] == 422
+
+
+def test_post_push_subscribe_oversized_body_returns_413(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    huge = b"{" + b"x" * (ui_server._PUSH_BODY_MAX_BYTES + 1)
+    assert _post(host, port, "/api/push/subscribe", body=huge)[0] == 413
+
+
+def test_post_push_subscribe_malformed_json_returns_400(
+    ui_http: tuple[str, int]
+) -> None:
+    """Pin §11.6.5 — malformed JSON is 400 (distinct from 422
+    non-object branch). Generic body, no JSONDecodeError text."""
+    host, port = ui_http
+    _seed_vapid()
+    status, body, _ = _post(
+        host, port, "/api/push/subscribe", body=b"{not really json"
+    )
+    assert status == 400
+    assert json.loads(body) == {"error": "invalid request"}
+
+
+def test_post_push_subscribe_top_level_array_returns_422(
+    ui_http: tuple[str, int]
+) -> None:
+    """Top-level non-object root → 422 with generic body."""
+    host, port = ui_http
+    _seed_vapid()
+    status, body, _ = _post(
+        host, port, "/api/push/subscribe", body=b"[1, 2, 3]"
+    )
+    assert status == 422
+    assert json.loads(body) == {"error": "request body must be an object"}
+
+
+def test_post_push_subscribe_top_level_string_returns_422(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    status, body, _ = _post(
+        host, port, "/api/push/subscribe", body=b'"some string"'
+    )
+    assert status == 422
+    assert json.loads(body) == {"error": "request body must be an object"}
+
+
+def test_post_push_subscribe_vapid_missing_returns_503(
+    ui_http: tuple[str, int]
+) -> None:
+    """Pin §11.6.14 — defensive 503 when VAPID is not seeded."""
+    host, port = ui_http
+    # NO _seed_vapid() — store has no VAPID section.
+    status, body, _ = _post(
+        host, port, "/api/push/subscribe", body=_push_subscribe_body()
+    )
+    assert status == 503
+    assert json.loads(body) == {"error": "vapid keys not provisioned"}
+
+    # The 503 path MUST NOT mutate the store or emit a bus event.
+    assert _store_subscriptions() == []
+    push_events = [
+        e for e in _read_bus_events()
+        if e.get("data", {}).get("action") == "push_subscribe"
+    ]
+    assert push_events == []
+
+
+# ---------------------------------------------------------------------------
+# Unsubscribe — happy path + bus emission
+# ---------------------------------------------------------------------------
+
+
+def test_post_push_unsubscribe_happy_path_returns_204(
+    ui_http: tuple[str, int]
+) -> None:
+    """Brief §3-B happy path: subscribed first, then 204 on
+    unsubscribe; store empties; bus carries push_unsubscribe."""
+    host, port = ui_http
+    _seed_vapid()
+    assert _post(host, port, "/api/push/subscribe", body=_push_subscribe_body())[0] == 204
+
+    status, body, _ = _post(
+        host, port, "/api/push/unsubscribe", body=_push_unsubscribe_body()
+    )
+    assert status == 204
+    assert body == b""
+    assert _store_subscriptions() == []
+
+
+def test_post_push_unsubscribe_emits_human_decision(
+    ui_http: tuple[str, int]
+) -> None:
+    from karasu.ui.push_store import compute_endpoint_hash
+
+    host, port = ui_http
+    _seed_vapid()
+    _post(host, port, "/api/push/subscribe", body=_push_subscribe_body())
+    _post(host, port, "/api/push/unsubscribe", body=_push_unsubscribe_body())
+
+    events = _read_bus_events()
+    unsub = [e for e in events if e.get("data", {}).get("action") == "push_unsubscribe"]
+    assert len(unsub) == 1
+    e = unsub[0]
+    assert e["type"] == "human_decision"
+    assert e["source"] == "ui"
+    assert e["data"]["endpoint_hash"] == compute_endpoint_hash(_PUSH_TEST_ENDPOINT)
+    # No data.categories on unsubscribe (UI-12b §3-C schema).
+    assert "categories" not in e["data"]
+
+
+# ---------------------------------------------------------------------------
+# Unsubscribe — pin §11.6.13: 404 path emits ZERO bus events
+# ---------------------------------------------------------------------------
+
+
+def test_post_push_unsubscribe_unknown_endpoint_returns_404(
+    ui_http: tuple[str, int]
+) -> None:
+    """Pin §11.6.13 — 404 path is server silence as audit
+    truth. NO bus event emitted. NO store mutation."""
+    host, port = ui_http
+    _seed_vapid()
+    bus_before = _read_bus_events()
+    store_before = _store_subscriptions()
+
+    status, body, _ = _post(
+        host, port, "/api/push/unsubscribe",
+        body=_push_unsubscribe_body(endpoint="https://no.such.endpoint/x"),
+    )
+    assert status == 404
+    assert json.loads(body) == {"error": "subscription not found"}
+
+    # Pin §11.6.13 binding: zero new events, zero store delta.
+    assert _read_bus_events() == bus_before
+    assert _store_subscriptions() == store_before
+
+
+def test_post_push_unsubscribe_after_subscribe_then_unknown_emits_only_one(
+    ui_http: tuple[str, int]
+) -> None:
+    """End-to-end: subscribe → unsubscribe (204, one
+    push_unsubscribe) → unsubscribe again with same endpoint
+    → 404 with zero new events. Total bus push_unsubscribe
+    count = exactly 1."""
+    host, port = ui_http
+    _seed_vapid()
+    _post(host, port, "/api/push/subscribe", body=_push_subscribe_body())
+    s1, _, _ = _post(host, port, "/api/push/unsubscribe", body=_push_unsubscribe_body())
+    s2, _, _ = _post(host, port, "/api/push/unsubscribe", body=_push_unsubscribe_body())
+    assert s1 == 204
+    assert s2 == 404
+
+    events = _read_bus_events()
+    unsub = [e for e in events if e.get("data", {}).get("action") == "push_unsubscribe"]
+    assert len(unsub) == 1
+
+
+# ---------------------------------------------------------------------------
+# Unsubscribe — validation matrix
+# ---------------------------------------------------------------------------
+
+
+def test_post_push_unsubscribe_missing_endpoint_returns_422(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    body = json.dumps({}).encode("utf-8")
+    assert _post(host, port, "/api/push/unsubscribe", body=body)[0] == 422
+
+
+def test_post_push_unsubscribe_endpoint_not_https_returns_422(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    body = _push_unsubscribe_body(endpoint="http://insecure.example/x")
+    assert _post(host, port, "/api/push/unsubscribe", body=body)[0] == 422
+
+
+def test_post_push_unsubscribe_oversized_body_returns_413(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    huge = b"{" + b"x" * (ui_server._PUSH_BODY_MAX_BYTES + 1)
+    assert _post(host, port, "/api/push/unsubscribe", body=huge)[0] == 413
+
+
+def test_post_push_unsubscribe_malformed_json_returns_400(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    status, body, _ = _post(
+        host, port, "/api/push/unsubscribe", body=b"not really json"
+    )
+    assert status == 400
+    assert json.loads(body) == {"error": "invalid request"}
+
+
+def test_post_push_unsubscribe_top_level_number_returns_422(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    status, body, _ = _post(
+        host, port, "/api/push/unsubscribe", body=b"42"
+    )
+    assert status == 422
+    assert json.loads(body) == {"error": "request body must be an object"}
+
+
+# ---------------------------------------------------------------------------
+# Privacy negative-shape — pins §11.6.5 + §11.6.16
+# ---------------------------------------------------------------------------
+
+
+def _assert_no_secrets_anywhere(
+    *,
+    response_body: bytes,
+) -> None:
+    """Negative-shape predicate: the sentinel substrings MUST
+    NOT appear in the response body. Used by every error-branch
+    test below + the happy-path bus / GET-projection tests."""
+    body_text = response_body.decode("utf-8", errors="replace")
+    for forbidden in (
+        _PUSH_TEST_ENDPOINT,
+        _PUSH_TEST_P256DH,
+        _PUSH_TEST_AUTH,
+        _PUSH_TEST_VAPID_PRIVATE,
+        "DO-NOT-LEAK",
+    ):
+        assert forbidden not in body_text, (
+            f"sentinel {forbidden!r} appeared in response body — "
+            f"pin §11.6.16 violation"
+        )
+
+
+def _assert_no_secrets_on_bus() -> None:
+    """The bus events MUST contain endpoint_hash but NOT the
+    raw endpoint, p256dh, or auth. Walks events.jsonl."""
+    raw = ui_server.EVENT_LOG.read_text(encoding="utf-8") if ui_server.EVENT_LOG.exists() else ""
+    for forbidden in (
+        _PUSH_TEST_ENDPOINT,
+        _PUSH_TEST_P256DH,
+        _PUSH_TEST_AUTH,
+        "DO-NOT-LEAK-P256DH",
+        "DO-NOT-LEAK-AUTH",
+    ):
+        assert forbidden not in raw, (
+            f"sentinel {forbidden!r} appeared in bus log — pin "
+            f"§11.6.5 violation"
+        )
+
+
+def test_subscribe_happy_path_no_secrets_in_response_or_bus(
+    ui_http: tuple[str, int]
+) -> None:
+    """Happy path: 204 has empty body + the bus carries the
+    hash but no raw material."""
+    from karasu.ui.push_store import compute_endpoint_hash
+
+    host, port = ui_http
+    _seed_vapid()
+    status, body, _ = _post(
+        host, port, "/api/push/subscribe", body=_push_subscribe_body()
+    )
+    assert status == 204
+    _assert_no_secrets_anywhere(response_body=body)
+    _assert_no_secrets_on_bus()
+    # The hash IS the audit metadata; assert it surfaces.
+    expected_hash = compute_endpoint_hash(_PUSH_TEST_ENDPOINT)
+    raw = ui_server.EVENT_LOG.read_text(encoding="utf-8")
+    assert expected_hash in raw
+
+
+def test_subscribe_invalid_endpoint_no_secrets_in_response(
+    ui_http: tuple[str, int]
+) -> None:
+    """422 path: malformed endpoint, body still carries the
+    sentinel keys. Response MUST NOT echo them."""
+    host, port = ui_http
+    _seed_vapid()
+    body = _push_subscribe_body(endpoint="not-a-url-but-sentinel-DO-NOT-LEAK-7d9f2e")
+    status, resp_body, _ = _post(host, port, "/api/push/subscribe", body=body)
+    assert status == 422
+    _assert_no_secrets_anywhere(response_body=resp_body)
+    _assert_no_secrets_on_bus()
+
+
+def test_subscribe_invalid_categories_no_secrets_in_response(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    body = _push_subscribe_body(categories=["broadcast"])
+    status, resp_body, _ = _post(host, port, "/api/push/subscribe", body=body)
+    assert status == 422
+    _assert_no_secrets_anywhere(response_body=resp_body)
+    _assert_no_secrets_on_bus()
+
+
+def test_subscribe_vapid_missing_no_secrets_in_response(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    # No _seed_vapid() — sentinel-bearing body still tests the
+    # 503 branch's privacy.
+    status, resp_body, _ = _post(
+        host, port, "/api/push/subscribe", body=_push_subscribe_body()
+    )
+    assert status == 503
+    _assert_no_secrets_anywhere(response_body=resp_body)
+    _assert_no_secrets_on_bus()
+
+
+def test_subscribe_oversized_body_no_secrets_in_response(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    # Pad with sentinel substring to prove the 413 path doesn't
+    # echo the body.
+    huge = (
+        b"{\"sentinel\": \"DO-NOT-LEAK-7d9f2e\","
+        + b"\"x\": \"" + b"x" * ui_server._PUSH_BODY_MAX_BYTES + b"\"}"
+    )
+    status, resp_body, _ = _post(host, port, "/api/push/subscribe", body=huge)
+    assert status == 413
+    _assert_no_secrets_anywhere(response_body=resp_body)
+
+
+def test_subscribe_malformed_json_no_secrets_in_response(
+    ui_http: tuple[str, int]
+) -> None:
+    """Pin §11.6.5 round-2 extension — malformed-body branch
+    must not echo the sentinel substring back via parser
+    error text."""
+    host, port = ui_http
+    _seed_vapid()
+    # Truncated JSON with sentinel embedded in the raw bytes.
+    body = (
+        b'{"subscription": {"endpoint": "https://x/sentinel-DO-NOT-LEAK-7d9f2e",'
+        b' "keys"'
+    )
+    status, resp_body, _ = _post(host, port, "/api/push/subscribe", body=body)
+    assert status == 400
+    _assert_no_secrets_anywhere(response_body=resp_body)
+
+
+def test_subscribe_top_level_string_no_secrets_in_response(
+    ui_http: tuple[str, int]
+) -> None:
+    """422 non-object branch with sentinel-bearing string body."""
+    host, port = ui_http
+    _seed_vapid()
+    body = b'"DO-NOT-LEAK-7d9f2e"'
+    status, resp_body, _ = _post(host, port, "/api/push/subscribe", body=body)
+    assert status == 422
+    _assert_no_secrets_anywhere(response_body=resp_body)
+
+
+def test_unsubscribe_unknown_endpoint_no_secrets_in_response(
+    ui_http: tuple[str, int]
+) -> None:
+    """404 generic body must NOT echo the supplied endpoint
+    (pin §11.6.16)."""
+    host, port = ui_http
+    _seed_vapid()
+    sentinel_url = "https://test.example/sentinel-DO-NOT-LEAK-404-path"
+    status, resp_body, _ = _post(
+        host, port, "/api/push/unsubscribe",
+        body=_push_unsubscribe_body(endpoint=sentinel_url),
+    )
+    assert status == 404
+    body_text = resp_body.decode("utf-8")
+    assert "DO-NOT-LEAK" not in body_text
+    assert sentinel_url not in body_text
+    assert json.loads(resp_body) == {"error": "subscription not found"}
+
+
+def test_unsubscribe_malformed_json_no_secrets_in_response(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    body = b'{"endpoint": "https://x/DO-NOT-LEAK-404",'  # truncated
+    status, resp_body, _ = _post(
+        host, port, "/api/push/unsubscribe", body=body
+    )
+    assert status == 400
+    _assert_no_secrets_anywhere(response_body=resp_body)
+
+
+def test_api_push_get_response_no_secrets_after_subscribe(
+    ui_http: tuple[str, int]
+) -> None:
+    """End-to-end: after a successful subscribe with sentinel
+    material, GET /api/push must STILL surface only the count
+    + public key — never the raw endpoint or keys."""
+    host, port = ui_http
+    _seed_vapid()
+    _post(host, port, "/api/push/subscribe", body=_push_subscribe_body())
+
+    status, body, _ = _get(host, port, "/api/push")
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["subscription_count"] == 1
+    assert payload["vapid_public_key"] == _PUSH_TEST_VAPID_PUBLIC
+
+    # Negative shape: the response body MUST NOT carry the
+    # sentinel raw endpoint or keys.
+    body_text = body.decode("utf-8")
+    for forbidden in (
+        _PUSH_TEST_ENDPOINT,
+        _PUSH_TEST_P256DH,
+        _PUSH_TEST_AUTH,
+        _PUSH_TEST_VAPID_PRIVATE,
+        "DO-NOT-LEAK",
+    ):
+        assert forbidden not in body_text

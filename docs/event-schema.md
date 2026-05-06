@@ -128,6 +128,72 @@ Three surfaces produce them today:
   `/api/agents` surfaces them with an unsupported tag and the POST
   path rejects mutation from that state.
 
+- **UI push subscribe** (`source = "ui"`, UI-12b) — the operator
+  subscribed a browser to receive Web Push notifications. Emitted
+  by `POST /api/push/subscribe` on a successful 204 (including the
+  idempotent UPDATE path that overwrites an existing entry's
+  categories).
+
+  ```json
+  {
+    "type": "human_decision",
+    "source": "ui",
+    "data": {
+      "action": "push_subscribe",
+      "endpoint_hash": "<sha256-hex of the raw endpoint, 64 chars>",
+      "categories": ["attention", "errors", "corrections"]
+    }
+  }
+  ```
+
+  - `data.action` — fixed string `"push_subscribe"`.
+  - `data.endpoint_hash` — `hashlib.sha256(endpoint.encode("utf-8"))
+    .hexdigest()`. Audit metadata only (UI-12 §11.6.6 + §11.6.16):
+    NEVER used as a store lookup key; the raw endpoint is the
+    operational id and lives ONLY in `karasu-push.json` (mode
+    0o600 on POSIX). The hash is stable across subscribe /
+    unsubscribe pairs for the same endpoint so an audit can
+    correlate "operator unsubscribed the same browser they
+    subscribed".
+  - `data.categories` — validated, closed-enum subset of
+    `{attention, errors, corrections}`. Canonical sort order
+    (PUSH_CATEGORIES). Empty array allowed as a deliberate
+    zero-noise subscription.
+
+  Raw `endpoint`, `keys.p256dh`, `keys.auth`, and the VAPID
+  private key NEVER appear on the bus under any circumstance
+  (UI-12 §11.6.5 binding).
+
+- **UI push unsubscribe** (`source = "ui"`, UI-12b) — the
+  operator removed a browser subscription. Emitted by
+  `POST /api/push/unsubscribe` on a successful 204 (server-side
+  store mutation). The 404 path (endpoint already absent from
+  the store) emits ZERO bus events — server silence is the
+  audit truth on a non-mutation per UI-12b §11.6.13.
+
+  ```json
+  {
+    "type": "human_decision",
+    "source": "ui",
+    "data": {
+      "action": "push_unsubscribe",
+      "endpoint_hash": "<sha256-hex of the raw endpoint, 64 chars>"
+    }
+  }
+  ```
+
+  - `data.action` — fixed string `"push_unsubscribe"`.
+  - `data.endpoint_hash` — same shape + same restrictions as
+    `push_subscribe`. No `categories` field on unsubscribe
+    (the operator is removing the subscription wholesale, not
+    updating selections).
+
+  Audit-event correspondence: exactly one `push_unsubscribe`
+  per server-side store mutation. The 204 path emits one;
+  the 404 convergence path (operator's browser still holds a
+  PushSubscription that the server has already pruned) emits
+  zero.
+
 ## Priority semantics
 
 `data.priority` on an `agent_response` is the **effective**

@@ -465,3 +465,128 @@ Recommendation for early dogfood:
   The cap shape from issue #47 (``CHAIN_CAP=3`` per origin
   chain) bounds further amplification when the implementation
   PR lands.
+
+## UI-12b — Manual VAPID seed (push notifications)
+
+UI-12b ships the push opt-in surface (footer affordance →
+modal → POST `/api/push/subscribe` → store update → bus
+`human_decision`). It does NOT generate VAPID keys —
+the `cryptography` runtime dep that signs Web Push JWTs lands
+with UI-12c (named scoped exception per UI-12 §11.6.13).
+
+To dogfood UI-12b, the operator seeds VAPID keys manually with
+`openssl` and pastes the b64u-encoded values into
+`karasu-push.json`. This section is **REMOVED** when UI-12c
+lands (auto-generation supersedes the manual step).
+
+### Generate
+
+VAPID keys are an ECDSA P-256 keypair. The public key is the
+65-byte uncompressed point (`0x04` prefix + 32-byte X + 32-byte
+Y). The private key is the 32-byte scalar. Both values are
+base64url-encoded with no padding for the on-disk store
+(matching the format `PushManager.subscribe` expects for
+`applicationServerKey`).
+
+```bash
+# Generate the keypair.
+openssl ecparam -genkey -name prime256v1 -noout -out vapid.pem
+
+# Public key — uncompressed point, b64url, no padding.
+openssl ec -in vapid.pem -pubout -outform DER 2>/dev/null \
+  | tail -c 65 \
+  | base64 -w0 \
+  | tr '+/' '-_' \
+  | tr -d '='
+
+# Private key — 32-byte scalar, b64url, no padding.
+openssl ec -in vapid.pem -outform DER 2>/dev/null \
+  | tail -c 32 \
+  | base64 -w0 \
+  | tr '+/' '-_' \
+  | tr -d '='
+```
+
+### Seed `karasu-push.json`
+
+The store path defaults to `<bus_dir>/karasu-push.json` (next
+to `events.jsonl`). Override with `karasu ui --push-store
+<path>`. The file mode MUST be `0o600` on POSIX — the writer
+emits a loud-stderr warning if it observes a looser mode and
+will not silently re-mode an existing file (the next write +
+rename lands a fresh `0o600` replacement, so the end-state is
+correct, but the warning is the operator's signal to
+investigate why the file ever had a looser mode).
+
+Seed shape (the writer adds `subscriptions` on first
+subscribe; the manual seed only needs the `vapid` block):
+
+```json
+{
+  "vapid": {
+    "public":  "<paste b64url public key here>",
+    "private": "<paste b64url private key here>"
+  }
+}
+```
+
+Mode + ownership:
+
+```bash
+chmod 600 karasu-push.json
+```
+
+The store is gitignored alongside `events.jsonl`. Never commit
+it. Never paste the private key into chat / logs / external
+issue trackers.
+
+### Verify
+
+`GET /api/push` returns the public key in
+`vapid_public_key`; the private key NEVER leaves the store.
+The footer affordance flips to "off" (supported, no
+subscription) when the seed lands; clicking opens the modal
+with the primary "Enable notifications" enabled. Without the
+seed, the modal still opens but the primary is disabled and
+the foot copy points back to this section (pin §11.6.14).
+
+### Subscribe
+
+1. Run the openssl recipe above once (per Karasu instance).
+2. Paste both b64url values into `karasu-push.json`.
+3. `chmod 600 karasu-push.json`.
+4. Start `karasu ui`. Open the surface; the footer reads
+   "Notifications: off" (supported state, no subscription).
+5. Click the footer → modal opens → confirm → browser
+   prompts for permission → grant → subscription lands in
+   the store.
+6. Open the modal again to see the post-subscribe layout
+   ("Subscribed: 1 subscription" + "Update categories" +
+   "Unsubscribe this browser").
+
+### TLS for cross-device dogfood
+
+Cross-device dogfood (e.g. subscribing a phone to a Karasu
+running on a workstation) requires HTTPS. localhost is a
+secure context for Web Push; LAN IPs over plain HTTP fall
+into the "unsupported" branch on the phone (no SW + no
+PushManager). The minimum bridge is `mkcert` + `caddy` as a
+TLS terminator in front of `karasu ui`:
+
+```bash
+mkcert -install
+mkcert localhost <lan-ip>
+caddy reverse-proxy --from https://<lan-ip>:8443 \
+                    --to http://127.0.0.1:8000
+```
+
+UI-13+ deployed surfaces earn their own brief covering
+certificate provisioning + auth + multi-operator push fan-out.
+
+### When UI-12c lands
+
+UI-12c auto-generates VAPID keys on first server start and
+removes this section in the SAME PR (UI-12c PR body documents
+the doc deletion). At that point, the operator-side step
+disappears; `karasu ui` boots with a fresh keypair if the
+store has no VAPID block.

@@ -27,9 +27,13 @@
 > criteria — once UI-12c lands, Telegram ceases to be the
 > only push channel.
 >
-> **STATUS:** CONFIRMED — operator sign-off complete (Victor,
-> 2026-05-06: "avanzar" — every default PROPOSAL accepted as
-> the binding contract). Codex audit pending out-of-band.
+> **STATUS:** Round 1 CHANGES-REQUIRED → fixes applied,
+> awaiting round 2. Operator sign-off complete (Victor,
+> 2026-05-06: "avanzar" — every default PROPOSAL accepted
+> as the binding contract). Codex audit round 1
+> CHANGES-REQUIRED (2 P0 + 4 P1 + 1 P2, all addressed
+> in-branch). Round 2 pending out-of-band. Loop budget:
+> 1 of 5 consumed.
 
 ## 0 · Why this brief exists
 
@@ -229,44 +233,61 @@ contract; Codex audit pending out-of-band).
 PROPOSAL — `push_emit` runs as a registered TriggerSource
 inside the `LoopController` (the same controller `karasu
 watch` already uses for the watcher + Telegram surface).
-This is NOT a new process. The benefits:
+
+CRITICAL CORRECTION (Codex P0 round 1, 2026-05-06):
+`karasu ui` and `karasu watch` are SEPARATE CLI commands,
+each running its own process. UI-12b's POST
+`/api/push/subscribe` + `/api/push/unsubscribe` write paths
+live in `karasu ui`. UI-12c's auto-VAPID-seed + 410/404
+prune writes live in `karasu watch`. Therefore UI-12c
+introduces a SECOND writer process against
+`karasu-push.json`. The module-level `threading.Lock` from
+UI-12b §11.6.15 is per-process and does NOT serialise
+across the two CLIs.
+
+Forward-carry pin (d) from PR #102 round 2 is therefore
+NOT deferrable: UI-12c MUST graduate to a filesystem
+lockfile NOW. See §3-G for the cross-process locking
+contract.
 
 ```text
-1. Single-writer guarantee on the push store. The
-   threading.Lock from UI-12b §11.6.15 binds the FULL
-   read-modify-write transaction; if push_emit is in the
-   same process as the UI server's POST handlers, the
-   in-process Lock keeps serialising correctly.
-   Forward-carry pin (d) is satisfied without graduating
-   to a filesystem lockfile — the boundary stays
-   in-process.
-
-2. Bus subscription is already the controller's seam.
+1. Bus subscription is already the controller's seam.
    Phase 2 / Phase 3 introduced JsonlTailReader for the
    Telegram surface and the bus-reaction reactor (chunk
    3b). push_emit is the third subscriber. Reusing the
    pattern keeps the controller as the single
    bus-subscription coordinator.
 
-3. No new IPC. push_emit reads the bus events directly,
-   matches them to the closed category enum, and
-   dispatches outbound HTTP through stdlib urllib (or
-   http.client). No new IPC primitives, no shared-memory
-   ring, no threading.Queue across modules.
-
-4. Lifecycle aligned with karasu watch. push_emit
+2. Lifecycle aligned with karasu watch. push_emit
    start()s when the controller starts and stop()s when
-   the controller stops. Operator restart restarts both
-   together; no orphan emit threads.
+   the controller stops. Operator restart restarts the
+   emit loop together with the watcher; no orphan emit
+   threads.
+
+3. No new IPC for the bus. push_emit reads bus events
+   directly via JsonlTailReader, matches them to the
+   closed category enum, and dispatches outbound HTTP
+   through stdlib urllib (or http.client). The
+   cross-process boundary is on the push STORE only
+   (see §3-G); the bus is single-writer (the watcher /
+   pipeline), and push_emit is one of N readers.
 
 ALTERNATIVES considered:
+  - Single CLI that hosts BOTH the UI server and
+    push_emit (e.g. fold `karasu ui` into `karasu watch`
+    so the writer concurrency boundary stays
+    in-process). REJECTED: the CLI surface is part of
+    the operator workflow contract — `karasu ui` runs
+    on a developer's local box while `karasu watch` may
+    run on a server, and folding them would force them
+    onto the same machine. The cross-process file lock
+    in §3-G handles the writer boundary correctly
+    without conflating the CLIs.
   - Separate `karasu push-emit` daemon process. Rejected:
-    forces the writer concurrency boundary to graduate
-    immediately (pin (d)) AND introduces a second
-    long-running daemon to monitor in production. UI-12c
-    can keep the boundary in-process; the brief reserves
-    the right to revisit if a future chunk introduces a
-    second writer.
+    introduces a THIRD long-running process to monitor.
+    push_emit lives inside `karasu watch` (which the
+    operator already runs); piggybacking on its
+    lifecycle keeps the daemon footprint at two.
   - Inline inside the UI server's POST handlers. Rejected:
     push_emit is a long-running consumer, not a
     request-bound write path. Inlining would block POST
@@ -277,7 +298,7 @@ ALTERNATIVES considered:
     would conflate the two.
 ```
 
-[CONFIRMED 2026-05-06]
+[CONFIRMED 2026-05-06 — corrected post Codex P0 round 1]
 
 ### B) Category classifier
 
@@ -416,9 +437,130 @@ public_key.public_numbers() → x, y → uncompressed point bytes
 
 DER ↔ b64url helpers stay in stdlib (`base64.urlsafe_b64encode`,
 `tail -c 32` semantics in Python). The cryptography import
-is confined to ECDSA key gen + signing.
+is confined to ECDSA key gen + signing + payload encryption
+(below).
 
-[CONFIRMED 2026-05-06]
+#### Payload encryption — RFC 8291 aes128gcm (Codex P0 round 1)
+
+The push payload (the JSON object the SW push handler reads
+via `event.data.json()`) carries the operator-facing title
++ data per §3-H. Web Push payloads are encrypted with the
+subscription's `p256dh` (subscriber public key) + `auth`
+(subscriber auth secret) per RFC 8291. The encryption is
+NOT the same as VAPID JWT signing; the brief specifies it
+explicitly here so the implementer + auditor have a
+contract.
+
+```text
+Inputs:
+  subscription.endpoint     str      outbound URL
+  subscription.keys.p256dh  bytes    65-byte uncompressed
+                                     UA public point
+  subscription.keys.auth    bytes    16-byte auth secret
+  plaintext                 bytes    JSON-encoded push payload
+                                     per §3-H
+                                     (max 4096 bytes ciphertext;
+                                     plaintext ≤ ~3990 bytes)
+
+Per-message flow (RFC 8291 §3 + RFC 8188 aes128gcm):
+  1. Generate one-time ECDH P-256 keypair
+       (as_priv, as_pub) ← ec.generate_private_key(SECP256R1())
+       as_pub serialised as 65-byte uncompressed point.
+  2. ECDH(as_priv, ua_pub) → 32-byte shared_secret.
+  3. HKDF-Extract:
+       PRK_key = HKDF(salt=auth, IKM=shared_secret,
+                      info="WebPush: info\x00" || ua_pub || as_pub,
+                      L=32) — RFC 8291 §3.4.
+  4. Generate 16-byte salt ← os.urandom(16).
+  5. HKDF-Expand:
+       cek = HKDF(salt=salt, IKM=PRK_key,
+                  info="Content-Encoding: aes128gcm\x00",
+                  L=16).
+       nonce = HKDF(salt=salt, IKM=PRK_key,
+                  info="Content-Encoding: nonce\x00",
+                  L=12).
+  6. Plaintext padding (RFC 8188 §2.1):
+       padded = plaintext || 0x02 (delimiter).
+       Optional: append 0x00 bytes for size-class padding;
+       UI-12c does not pad beyond the delimiter (smallest
+       ciphertext, no metadata leak via length).
+  7. Encrypt:
+       ciphertext = AES_128_GCM_encrypt(cek, nonce, padded)
+       (16-byte GCM tag appended).
+  8. Body framing (RFC 8188 §2.1 binary header):
+       record_size  uint32 BE = 4096
+       idlen        uint8 = 65
+       keyid        65 bytes = as_pub uncompressed point
+       body = salt(16) || record_size(4) || idlen(1) ||
+              keyid(65) || ciphertext
+
+Outbound HTTP request headers:
+  Authorization:    "vapid t=<JWT>, k=<vapid_pub_b64u>"
+  Content-Encoding: "aes128gcm"
+  Content-Length:   <body length>
+  TTL:              "60"   (seconds; configurable)
+  Topic:            <category>   (optional, helps the push
+                                  service collapse pending
+                                  pushes; matches our tag
+                                  semantics)
+
+Failure modes:
+  - subscription.keys.p256dh decode failure → log at
+    WARNING with endpoint_hash + reason "invalid p256dh";
+    skip delivery; do NOT prune (operator's seed has
+    bad bytes — operator hand-fix; UI-12c will retry on
+    next event).
+  - Encryption produces ciphertext > 4096 bytes → log
+    at WARNING with endpoint_hash + reason "payload
+    oversize"; skip delivery; do NOT prune. Plaintext
+    exceeding ~3990 bytes is a Karasu bug (§3-H titles
+    are <100 bytes); the cap is defensive.
+
+Test surface:
+  tests/test_push_emit_encryption.py
+    + Round-trip test with a fixture subscription:
+      generate keypair, encrypt a known plaintext,
+      decrypt with the fixture private key, assert
+      plaintext recovered.
+    + Header shape: Content-Encoding=aes128gcm; salt is
+      16 bytes; keyid is 65-byte uncompressed point;
+      record_size 4096; ciphertext non-empty.
+    + Each ciphertext is unique even for the same
+      plaintext (fresh ECDH keypair + fresh salt).
+    + Privacy negative-shape: capture log lines + bus +
+      store after a sentinel-bearing encryption call;
+      assert raw endpoint absent everywhere.
+```
+
+The encryption code lives in
+`src/karasu/push_emit/_encryption.py` (NEW). The
+`cryptography` import scope binding from §3-C extends to
+include this third file:
+
+```text
+src/karasu/push_emit/_signing.py        VAPID JWT (above)
+src/karasu/push_emit/_keys.py           VAPID keygen
+src/karasu/push_emit/_encryption.py     RFC 8291 aes128gcm
+                                          encryption
+```
+
+`tests/test_push_emit_import_scope.py` enforces the
+3-file scope. Imports outside these files are a regression.
+
+cryptography APIs used by `_encryption.py`:
+
+```text
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF, HKDFExpand
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+ec.derive_private_key + .exchange(ec.ECDH(), peer_pub)
+HKDF(algorithm=hashes.SHA256(), salt=..., info=..., length=...)
+AESGCM(cek).encrypt(nonce, plaintext, associated_data=None)
+```
+
+[CONFIRMED 2026-05-06 — corrected post Codex P0 round 1]
 
 ### D) Three-layer rate limit (pin §11.6.14 binding)
 
@@ -435,20 +577,67 @@ Layer 1 (outermost) — UI-write suppression
             UI-write events from consuming dedupe slots.
             (Codex P1 binding, UI-12 §6 UI-12c verbatim.)
 
-Layer 2 — Per-category debounce
+Layer 2 — Per-category debounce (TRAILING)
   Filter:   per (subscription_endpoint, category), at most
-            ONE push per 5 s. Within the 5 s window, the
-            single push that fires carries the MOST RECENT
-            event in the burst window.
+            ONE push per 5 s. The trailing-debounce
+            contract: events arriving within 5 s of each
+            other are coalesced; the SINGLE push that
+            fires after the 5 s quiet period carries the
+            MOST RECENT event in the burst window.
   Applied:  AFTER UI-write suppression, BEFORE event-id
             dedupe.
-  State:    in-memory dict keyed by
-            (endpoint_hash, category) → timestamp_of_last_push.
-            NOT persisted; restart-cleared by design.
+
+  State machine (Codex P1 round 1, 2026-05-06):
+    pending: dict[(endpoint_hash, category) →
+             {event: PendingEvent, timer: TimerHandle}]
+
+    On event arrival e for (endpoint_hash, category):
+      1. If a (endpoint_hash, category) entry exists in
+         `pending`, cancel its timer + REPLACE its event
+         with e (the most recent wins).
+      2. Otherwise, create a fresh entry with event=e.
+      3. (Re)start a 5 s timer that fires
+         `_dispatch_pending(endpoint_hash, category)`
+         on expiry.
+
+    On timer expiry for (endpoint_hash, category):
+      1. Pop the entry from `pending`.
+      2. Pass entry.event to Layer 3 (event-id dedupe).
+      3. If Layer 3 admits, call the dispatcher.
+
+  Operator-felt latency:
+    The first event of a burst is delayed by 5 s. Within
+    a burst, additional events restart the 5 s timer
+    (not extending it indefinitely — the brief reserves
+    the right to add a max-deferral cap if dogfood
+    surfaces problematic burst lengths). The first event
+    AFTER 5 s of quiet fires immediately on its own
+    timer expiry.
+
   CLI flag: --push-debounce-ms <int> (default 5000).
             Per-category override via env var
             KARASU_PUSH_DEBOUNCE_<CATEGORY>_MS deferred
             to a future chunk if dogfood demands it.
+
+  ALTERNATIVES considered:
+    - Leading-edge throttle (first event wins, dispatch
+      immediately on arrival; subsequent events within
+      5 s are dropped). REJECTED because UI-12 §6 UI-12c
+      verbatim says "the single push that fires carries
+      the MOST RECENT event in the burst window" —
+      leading edge wins the FIRST event, not the most
+      recent.
+    - Leading-edge with trailing flush (dispatch
+      immediately, then schedule a second flush at
+      t+5 s for the most recent). REJECTED: produces
+      potentially TWO pushes per 5 s window, breaking
+      "at most one push per 5 s".
+    - Trailing debounce with a max-deferral cap
+      (e.g. force-flush after 30 s of continuous burst
+      to bound operator-felt latency). DEFERRED: not
+      in UI-12c scope; if dogfood surfaces a real
+      operator complaint about delayed first-of-burst,
+      a follow-up chunk earns the cap.
 
 Layer 3 (innermost) — Event-id dedupe
   Filter:   per (subscription_endpoint, event_id), at most
@@ -515,6 +704,48 @@ Other 4xx          Log at WARNING + endpoint_hash. Do NOT
                    prune (the failure is reported by the
                    push service but the endpoint may still
                    be reachable on a later attempt).
+
+Transport          Connection-level failures BEFORE any
+exception          response (DNS resolution, TLS
+                   handshake, connection reset, socket
+                   timeout, protocol error from urllib /
+                   http.client).
+                   Critical privacy concern (Codex P1
+                   round 1, 2026-05-06): urllib /
+                   http.client exception strings can
+                   include the raw endpoint URL in the
+                   exception message (e.g.
+                   "URLError: <urlopen error [Errno 11001]
+                    getaddrinfo failed for fcm.googleapis
+                    .com/...>"). Naive logging would leak
+                   the raw endpoint into operator logs,
+                   violating pin §11.6.16.
+
+                   Discipline:
+                     - Catch the urllib / http.client
+                       exception at the dispatch site.
+                     - Log at WARNING with endpoint_hash
+                       + exception TYPE only:
+                       "transport failure <hash> (<type>)"
+                       e.g. "transport failure abc... (URLError)"
+                     - The exception's str() / repr() /
+                       message is NEVER logged.
+                     - Do NOT prune.
+                     - Do NOT emit a bus event.
+                     - Do NOT mutate the store.
+                     - Next dispatch retries naturally
+                       (no separate retry loop).
+
+                   Test surface:
+                     tests/test_push_emit_transport_privacy.py
+                       (or a section in test_push_emit_dispatch.py)
+                     + Sentinel-bearing endpoint + force
+                       URLError / TimeoutError / ConnectionError.
+                     + Capture log lines via caplog.
+                     + Assert raw endpoint absent from EVERY
+                       log line (only endpoint_hash + type
+                       allowed).
+                     + Assert no bus event, no store delta.
 ```
 
 Prune semantics — pin §11.6.13 binding from UI-12b
@@ -601,32 +832,108 @@ notification.
 
 [CONFIRMED 2026-05-06]
 
-### G) Writer concurrency boundary (forward-carry pin (d))
+### G) Writer concurrency boundary — filesystem lockfile
 
-PROPOSAL — UI-12c keeps push_emit in the same process as
-the UI server (per §3-A above). The writer concurrency
-boundary STAYS in-process; pin §11.6.15 (module-level
-threading.Lock across the FULL read-modify-write
-transaction) carries forward verbatim from UI-12b.
+PROPOSAL (corrected post Codex P0 round 1, 2026-05-06):
+UI-12c MUST graduate `_STORE_LOCK` from a module-level
+`threading.Lock` to a filesystem lockfile because UI-12b's
+POST handlers (in `karasu ui`) and UI-12c's auto-VAPID-seed
++ 410/404 prune (in `karasu watch`) are in SEPARATE
+processes. Forward-carry pin (d) materialises here.
 
-The 410 / 404 prune path uses the existing
-`push_store.remove_subscription` which already holds
-`_STORE_LOCK`. No new lock primitives, no new shared-state
-mechanism, no IPC.
+#### Cross-platform file lock
 
-If a future chunk introduces a SECOND writer process (e.g.
-splitting push_emit into a `karasu push-emit` daemon, or
-a Phase 4 multi-instance deployment with shared push
-store), THAT chunk earns the filesystem-lockfile graduation
-in its own brief. UI-12c reserves the right to defer; the
-brief is honest about scope.
+```text
+Platform    Primitive                   Module
+POSIX       fcntl.flock(LOCK_EX)        fcntl
+Windows     msvcrt.locking(LK_LOCK)     msvcrt
+```
 
-Test surface for concurrency carries forward UI-12b's
-16-thread lost-update test (`test_concurrent_appends_do_not_lose_updates`).
-UI-12c adds NO new concurrency tests — the lock boundary is
-unchanged.
+Both primitives are stdlib. No new dependency. The lock
+file is `<store_path>.lock` (separate from `<store_path>.tmp`
+which is the atomic-write staging file from UI-12b §3-E).
 
-[CONFIRMED 2026-05-06]
+#### Layered locking
+
+The thread lock from UI-12b §11.6.15 stays — multiple
+threads in the SAME process still need to serialise. The
+file lock composes ON TOP for the cross-process boundary:
+
+```text
+def _with_store_lock(store_path):
+    with _STORE_LOCK:                       # in-process
+        lock_path = store_path.with_suffix(
+            store_path.suffix + ".lock"
+        )
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock_path, "ab") as fh:
+            _flock_exclusive(fh)            # cross-process
+            try:
+                yield
+            finally:
+                _flock_release(fh)
+```
+
+`append_subscription`, `remove_subscription`, and the new
+`seed_vapid` helper all wrap their FULL read-modify-write
+transaction inside `_with_store_lock`. The atomic `tmp +
+rename` from UI-12b §3-E remains intact — file integrity
++ cross-process serialisation are independent guarantees.
+
+#### Lock acquisition discipline
+
+```text
+- Blocking acquire by default (the read-modify-write
+  transactions are bounded — typical <10 ms for a JSON
+  parse + serialise + replace).
+- Stale-lock recovery: NONE in UI-12c. fcntl.flock /
+  msvcrt.locking auto-release on process exit (kernel
+  handles it). A stale .lock file is harmless on its
+  own; only the held kernel lock matters.
+- Test discipline: _flock_exclusive / _flock_release
+  are named helpers so the unit tests can mock them
+  without monkeypatching fcntl / msvcrt directly.
+```
+
+#### Test surface
+
+```text
+tests/test_push_store_cross_process.py (NEW)
+  + multiprocessing-based test: spawn a second process,
+    each process writes N subscriptions to the SAME
+    store. Asserts no lost updates (every subscription
+    lands in the final store).
+  + Stress test: 4 processes × 16 subscriptions each.
+    Asserts sum after = sum expected.
+  + The existing 16-thread test from UI-12b is preserved
+    (in-process serialisation still works).
+  + Skipped silently on platforms where the test runner
+    cannot spawn child processes (e.g. some restricted
+    CI environments).
+
+tests/test_push_store_lock_file.py (NEW)
+  + Exercises _flock_exclusive / _flock_release directly
+    on POSIX vs Windows.
+  + Asserts the .lock file path is store_path + ".lock"
+    (parallel to .tmp).
+  + Asserts the lock is RELEASED on the with-block exit
+    so a subsequent acquirer can proceed.
+```
+
+ALTERNATIVES considered:
+
+- Single-CLI fold (`karasu ui` ↔ `karasu watch`).
+  Rejected: changes the operator-facing CLI contract.
+- File-lock-only, drop the thread Lock. Rejected: every
+  acquire would hit a syscall even within one process;
+  the thread Lock is fast and composes cleanly.
+- Database-backed store (SQLite). Rejected: scope creep
+  (UI-12 §3-F binding — JSON store).
+- POSIX-only lockf. Rejected: msvcrt.locking is the
+  Windows-side equivalent and stdlib; no need for a
+  POSIX-only path.
+
+[CONFIRMED 2026-05-06 — corrected post Codex P0 round 1]
 
 ### H) Push payload shape (UI-12 §3-H carry-forward)
 
@@ -714,15 +1021,57 @@ tests/test_push_emit_dispatch.py
     - VAPID JWT shape: header alg=ES256, claim aud +
                        exp + sub, signature verifies
                        against the public key
-    - Privacy negative-shape: capture HTTP requests +
-      log lines + bus + store; assert raw endpoint /
-      p256dh / auth never appear except in the in-flight
-      POST body to the push service
+    - Privacy negative-shape: capture the outbound
+      request URL + headers + body separately + log
+      lines + bus + store. Pin §11.6.16 carry-forward
+      (Codex P1 round 1 clarification, 2026-05-06):
+      the raw endpoint materialises as the OUTBOUND
+      REQUEST TARGET URL ONLY — never in the request
+      body (the body is RFC 8291 ciphertext, not the
+      endpoint). Tests assert:
+        - raw endpoint absent from log lines
+        - raw endpoint absent from bus events
+        - raw endpoint absent from store delta
+        - raw endpoint absent from request BODY
+          (encrypted ciphertext only)
+        - raw endpoint PRESENT only in the request URL
+          captured by the test fixture's HTTPServer
+          mock (the unavoidable transport carrier)
+
+tests/test_push_emit_keys.py (Codex P1 round 1, 2026-05-06)
+  Pin §11.6.13 binding — VAPID auto-generation is a
+  central UI-12c behavior; key bootstrap MUST be tested
+  in isolation.
+
+  Cases:
+    - Missing store file → bootstrap_if_missing creates
+      store + writes vapid.public + vapid.private.
+      Lengths pinned: public 65-byte uncompressed point →
+      86-char b64u; private 32-byte scalar → 43-char b64u.
+    - Store exists, missing "vapid" section → bootstrap
+      adds the section, leaves any existing
+      "subscriptions" untouched.
+    - Store exists, "vapid" present with both keys →
+      bootstrap is idempotent; no rewrite, no new keys.
+    - Store exists, "vapid" present but missing
+      "private" → bootstrap REGENERATES both keys
+      (treats as missing). The brief's stance on
+      partial-VAPID-seed: the operator's manual seed is
+      either complete or considered corrupt; no
+      half-state preserved.
+    - Malformed store (PushStoreError from
+      _read_or_empty_store) → bootstrap propagates the
+      error; the controller exits with the documented
+      generic 500 contract from UI-12a (no path leak).
+    - Privacy negative-shape: caplog assertion proves
+      no key material in any log line during bootstrap.
+      Only "generated VAPID keypair" with no lengths /
+      no fragments appears.
 
 tests/test_push_emit_import_scope.py
   Lint-style: cryptography is imported ONLY inside
-  push_emit/_signing.py + push_emit/_keys.py. Pin
-  §11.6.13 binding.
+  push_emit/_signing.py + push_emit/_keys.py +
+  push_emit/_encryption.py. Pin §11.6.13 binding.
 ```
 
 Playwright integration test (UI-12 §7 UI-12c binding):
@@ -740,16 +1089,39 @@ tests/test_ui_push_emit_browser.py
 PNGs + .webm (UI-12 §7 UI-12c):
 
 ```text
-1-2 PNGs of the OS notification tray as captured by
-Playwright (the OS chrome around the notification is
-outside Karasu's design system; the PNG is for audit
-provenance).
+Visual artefacts for the chunk. The OS notification tray
+chrome is operating-system-rendered and lives outside
+Karasu's design system; capturing it deterministically in
+headless Chromium is brittle (Codex P2 round 1, 2026-05-06):
 
-1 .webm of the edge-to-edge flow: operator subscribes
-(UI-12b modal flow, reused from existing recording
-walker) → push dispatched (synthetic via
-registration.showNotification) → notification rendered →
-notificationclick → surface tab focuses.
+  1-2 visual artefacts covering the notification render:
+    OPTION A — real OS tray PNG via Playwright. Works
+               on macOS / linux desktops where the tray
+               is browser-controlled. Brittle on
+               Windows / headless CI.
+    OPTION B — deterministic browser-side notification
+               mock PNG. Capture the synthetic push
+               handler firing inside a controlled DOM
+               surface (e.g. an injected
+               <div class="mock-notification"> styled
+               like the OS chrome). Stable across
+               platforms; loses the "real OS tray" feel
+               but proves the SW handler renders the
+               documented title.
+    The implementer chooses A or B based on the actual
+    capture stability when the chunk lands; either is
+    acceptable. The audit gate is that the chosen
+    artefact PROVES the §3-H title contract.
+
+  1 .webm of the edge-to-edge flow [BINDING — pin §11.6.10
+  carry-forward]:
+    operator subscribes (UI-12b modal flow, reused from
+    existing recording walker) → bus event triggers →
+    push dispatched (synthetic via
+    registration.showNotification) → notification
+    rendered → notificationclick → surface tab focuses.
+    The .webm IS the operator-felt audit; the PNGs are
+    provenance.
 ```
 
 [CONFIRMED 2026-05-06]
@@ -1017,11 +1389,12 @@ server-side only; no Lighthouse delta expected.
   new reader API.
 
 - push_store WRITER from UI-12b: append_subscription /
-  remove_subscription / atomic write / mode 0600 /
-  module-level threading.Lock. UI-12c uses
-  remove_subscription on prune; adds a NEW seed_vapid
-  helper that uses the SAME lock + atomic-write
-  discipline.
+  remove_subscription / atomic write / mode 0600. UI-12c
+  uses remove_subscription on prune; adds a NEW seed_vapid
+  helper that uses the SAME atomic-write discipline. The
+  module-level threading.Lock is preserved AND
+  COMPOSED with a cross-process filesystem lockfile
+  (§3-G corrected post Codex P0 round 1).
 
 - The SW fetch handler ordering from UI-8 (UI-12b
   §11.6.4 shape lock). UI-12c does NOT touch sw.js.
@@ -1070,10 +1443,14 @@ server-side only; no Lighthouse delta expected.
 - Scheduled / quiet-hours / DND respect beyond OS-level
   DND. UI-13+.
 
-- Multi-process writer concurrency (filesystem
-  lockfile). Scope deferred to a future chunk that
-  introduces a second writer process; the writer
-  concurrency boundary stays in-process for UI-12c.
+- Multi-host / multi-machine writer concurrency. UI-12c
+  ships a cross-process file lock (fcntl.flock on POSIX,
+  msvcrt.locking on Windows) that serialises writes
+  WITHIN A SINGLE FILESYSTEM. Multi-host (NFS / shared
+  storage / Phase 4 multi-instance deployment) is
+  deferred — fcntl.flock semantics over network
+  filesystems are not portable, and Phase 4 will earn
+  its own concurrency contract.
 
 - Push delivery to non-localhost surfaces. UI-12c ships
   local-only; deployed surfaces earn UI-13+ briefs.
@@ -1088,10 +1465,12 @@ server-side only; no Lighthouse delta expected.
 ```text
 1. push_emit lives inside the LoopController.
    PROPOSAL — same process as karasu watch (§3-A above).
-   Forward-carry pin (d) deferred — writer concurrency
-   stays in-process. Future chunk earns the
-   filesystem-lockfile graduation.
-   [CONFIRMED 2026-05-06]
+   The cross-CLI boundary (`karasu ui` vs `karasu
+   watch`) MEANS UI-12c introduces a second writer
+   process; forward-carry pin (d) materialises HERE as
+   a filesystem lockfile (§3-G corrected post Codex P0
+   round 1).
+   [CONFIRMED 2026-05-06 — corrected post Codex P0 round 1]
 
 2. cryptography version pin.
    PROPOSAL — `cryptography >= 42.0`. The 42.x line
@@ -1242,14 +1621,28 @@ UI-10 §11.6 / UI-11 §11.6 / UI-12 §11.6 / UI-12b §11.6):
 11. push_store reader is FROZEN. UI-12c uses
     remove_subscription + the new seed_vapid helper
     only.
-12. Writer concurrency stays in-process via
-    threading.Lock. Multi-process boundary deferred to
-    future chunk.
+12. Writer concurrency uses a CROSS-PROCESS filesystem
+    lockfile (fcntl.flock on POSIX, msvcrt.locking on
+    Windows) layered over the in-process threading.Lock
+    from UI-12b §11.6.15. The lock file is
+    `<store_path>.lock` (parallel to the .tmp staging
+    file). Both `karasu ui` POST handlers and `karasu
+    watch` push_emit acquire the lock for the FULL
+    read-modify-write transaction. (Codex P0 round 1
+    correction; was deferred in the draft.)
 13. Raw push endpoints are request-local secret
     material (pin §11.6.16 carry-forward). The 410 /
-    404 prune logs endpoint_hash only; the in-flight
-    POST body is the only place the raw endpoint
-    materialises in memory.
+    404 prune logs endpoint_hash only. The raw endpoint
+    materialises ONLY in two places beyond the push
+    store: (a) the OUTBOUND REQUEST TARGET URL to the
+    push service (the unavoidable transport carrier);
+    (b) the in-process subscription dict held during a
+    single dispatch. The request BODY is RFC 8291
+    encrypted ciphertext, NOT the endpoint. Tests
+    capture URL + headers + body separately; raw
+    endpoint MUST be absent from body, log lines, bus
+    events, and store delta. (Codex P1 round 1
+    clarification.)
 14. Multi-device fan-out is explicit: each active
     subscription is a separate POST. Pin §11.6.15 of
     UI-12 carry-forward.
@@ -1258,6 +1651,40 @@ UI-10 §11.6 / UI-11 §11.6 / UI-12 §11.6 / UI-12b §11.6):
 16. push_emit lifecycle is bound to LoopController.
     start() registers; stop() flushes any in-flight
     delivery + cleans up state.
+17. Web Push payload encryption follows RFC 8291
+    aes128gcm. ECDH(application_server_priv,
+    subscription.p256dh) → HKDF → AES-128-GCM. The
+    encryption code lives in
+    src/karasu/push_emit/_encryption.py; cryptography
+    imports CONFINED to that file plus _signing.py +
+    _keys.py. (Codex P0 round 1 — payload encryption
+    was underspecified in the draft.)
+18. Trailing debounce state machine (Codex P1 round 1
+    correction): pending dict keyed by (endpoint_hash,
+    category) carrying {event, timer}. On event arrival,
+    cancel pending timer, replace event, restart 5 s
+    timer. On timer fire, dispatch the most recent event.
+    Leading-edge throttle is REJECTED — UI-12 §6 UI-12c
+    "single push that fires carries the most recent
+    event in the burst window" demands trailing
+    debounce.
+19. Transport exception privacy (Codex P1 round 1):
+    timeout / DNS / TLS / connection reset / urllib
+    exceptions catch at the dispatch site; log at
+    WARNING with endpoint_hash + exception TYPE only;
+    NEVER log the exception's str() / repr() / message
+    (urllib exception messages can include the raw
+    endpoint URL). Do NOT prune; do NOT emit; do NOT
+    mutate the store. Sentinel-bearing endpoint tests
+    pin the privacy invariant.
+20. VAPID auto-generation key bootstrap is tested in
+    isolation via tests/test_push_emit_keys.py (Codex
+    P1 round 1): missing store / missing vapid section
+    / partial vapid (only public OR only private) /
+    existing keys preserved / malformed store
+    propagates PushStoreError / no key material in any
+    log line / public 86-char b64u / private 43-char
+    b64u length pinning.
 ```
 
 These are anticipated; final wording lands after Codex's
@@ -1267,22 +1694,52 @@ once Codex's audit closes.
 ## 12 · Status
 
 ```text
-Brief status:        CONFIRMED — operator sign-off complete
-                     (Victor, 2026-05-06: "avanzar"). Codex
-                     audit pending out-of-band.
+Brief status:        Round 1 CHANGES-REQUIRED → in-branch
+                     fixes applied; awaiting round 2.
 Operator sign-off:   COMPLETE (2026-05-06). Every §3 (A-I) +
                      §3.5 + §10 (1-10) PROPOSAL accepted as
                      the binding contract per default. §10.9
                      reaffirmed as carry-forward from UI-12b
-                     §3-E (push store missing parent dir
-                     handled by the existing writer's
-                     mkdir(parents=True, exist_ok=True)).
-Codex audit:         REQUESTED out-of-band. Audit prompt
-                     delivered to operator at sign-off close
-                     (per feedback_audit_prompt_automatic.md).
-                     Round 1 verdict ferried back via Victor;
-                     round-N follow-ups land in-branch per
-                     UI-10 / UI-11 / UI-12 / UI-12b lifecycle.
+                     §3-E. §3-A + §3-G + §10.1 corrected post
+                     Codex P0 round 1 (cross-CLI process
+                     boundary requires filesystem lockfile
+                     NOW; pin (d) materialises in this PR).
+Codex audit:         Round 1: CHANGES-REQUIRED (2 P0 + 4 P1
+                     + 1 P2). All seven findings addressed
+                     in-branch:
+                       P0  §3-A + §3-G filesystem lockfile
+                            for cross-CLI writer concurrency
+                            (`karasu ui` vs `karasu watch`).
+                       P0  §3-C RFC 8291 aes128gcm payload
+                            encryption subsection added
+                            (ECDH + HKDF + AES-128-GCM +
+                            headers + body framing).
+                       P1  §3-D rate-limit Layer 2 contract
+                            unambiguously trailing debounce
+                            with explicit state machine
+                            (pending dict + cancel/restart
+                            timer pattern).
+                       P1  §3-E transport-exception privacy
+                            branch added (urllib exceptions
+                            log endpoint_hash + type only;
+                            NEVER log exception message).
+                       P1  §3-I privacy negative-shape
+                            clarified — raw endpoint is the
+                            outbound TARGET URL only; the
+                            request body is encrypted
+                            ciphertext, NOT the endpoint.
+                       P1  §3-I tests/test_push_emit_keys.py
+                            added (VAPID auto-gen test
+                            surface in isolation).
+                       P2  §7.3 OS notification tray PNG
+                            allows real-tray OR
+                            deterministic browser-side mock
+                            (.webm stays binding).
+                     Pins 12, 13 corrected; pins 17-20 added
+                     to §11.6 anticipated. Loop budget: 1/5.
+                     Round 2 pending out-of-band; round-2
+                     verdict ferried back via Victor;
+                     additional follow-ups land in-branch.
 Implementation:      BLOCKED on this brief's merge.
                      UI-12c code branch does NOT open until
                      this brief lands in main per UI-9

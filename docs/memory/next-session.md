@@ -64,7 +64,10 @@ close:
 ### Modal contract
 - Copy that distinguishes browser-state (subscription) from
   bus-state (UI-10 scar revoke / UI-11 trust adjust).
-- Cancel + Esc UX (§11.6.4 — modal mandatory pattern).
+- Cancel + Esc UX. Modal mandatory pattern: UI-12 brief §3-B
+  (proposal) + inherited UI-11 §11.6.7 (modal mandatory for
+  any state-changing mutation), carried forward into UI-12
+  via §0.5 carry-forward pin 7.
 - Pre-checked categories on first subscribe (per brief §10.2:
   all three of {attention, errors, corrections}).
 - Unsubscribe modal copy + the same Cancel + Esc UX.
@@ -73,8 +76,11 @@ close:
 - `POST /api/push/subscribe`: body is the full
   `PushSubscription` dict (endpoint, keys.p256dh, keys.auth)
   + the operator-selected categories. The endpoint is
-  request-local secret material (§11.6.16); the response
-  echoes only state, never the subscription.
+  request-local secret material (§11.6.16). **Response 204
+  / no body** per brief §6 UI-12b + §11.6 (subscribe shape
+  pinned at 204 alongside unsubscribe). The response NEVER
+  echoes the subscription material — privacy contract is
+  symmetric across both POSTs.
 - `POST /api/push/unsubscribe`: body is `{endpoint}` only.
   Bare string carrier of the same secret material. Response
   204 / no body.
@@ -104,10 +110,13 @@ close:
   must remain calm (only the modal animates).
 
 ### Default opt-in posture
-- Pin §11.6.1 binds: opt-in only, no permission requested
-  on first visit. The brief must explicitly choose how the
-  operator gets to the modal (footer click is the only
-  affordance per §11.6.3).
+- Pin §11.6.1 binds: opt-in only (UI-12 is the first
+  proactive surface and stays opt-in by default). Pin
+  §11.6.2 binds: push permission must NEVER be requested
+  on first visit — the prompt is gated behind the modal,
+  the modal is gated behind the footer affordance. The
+  brief must explicitly choose how the operator gets to the
+  modal (footer click is the only affordance per §11.6.3).
 
 ### Localhost vs HTTPS
 - Web Push requires HTTPS outside localhost. The brief

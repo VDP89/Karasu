@@ -159,7 +159,12 @@ UI-12a CLOSED. Read paths shipped:
   - Default --push-store anchors to _bus_path.parent so
     the future private store stays under the gitignored
     bus directory.
-  - Three PNGs cover the three production states.
+  - Three PNGs ship as visual coverage (off, denied, on);
+    `unsupported` is intentionally covered by code + tests
+    only because its visual is identical to `denied` modulo
+    label text — the production CSS shares the .is-denied /
+    .is-unsupported branch (--warn). The fourth visual is
+    not absent, it is a deliberate non-duplicate.
   - Suite 527 passing (2 preexisting Windows quirks).
 Audit cycles: 2 rounds with Codex (out-of-band); round 1
 CHANGES-REQUIRED with 1 P1 + 2 P2 closed in-branch; round 2

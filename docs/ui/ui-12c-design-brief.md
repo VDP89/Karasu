@@ -27,13 +27,14 @@
 > criteria — once UI-12c lands, Telegram ceases to be the
 > only push channel.
 >
-> **STATUS:** Round 1 CHANGES-REQUIRED → fixes applied,
-> awaiting round 2. Operator sign-off complete (Victor,
+> **STATUS:** Round 2 CHANGES-REQUIRED → fixes applied,
+> awaiting round 3. Operator sign-off complete (Victor,
 > 2026-05-06: "avanzar" — every default PROPOSAL accepted
 > as the binding contract). Codex audit round 1
 > CHANGES-REQUIRED (2 P0 + 4 P1 + 1 P2, all addressed
-> in-branch). Round 2 pending out-of-band. Loop budget:
-> 1 of 5 consumed.
+> in-branch). Codex audit round 2 CHANGES-REQUIRED (4 P1
+> + 2 P2, all addressed in-branch). Round 3 pending
+> out-of-band. Loop budget: 2 of 5 consumed.
 
 ## 0 · Why this brief exists
 
@@ -352,23 +353,32 @@ no rate-limit slot consumed; no log line beyond DEBUG.
 ### C) VAPID JWT signing path + cryptography import scope
 
 PROPOSAL — `cryptography` is the named, scoped exception per
-UI-12 §11.6.13 binding. UI-12c materialises it under TWO
-new modules; no other module in the codebase may import
+UI-12 §11.6.13 binding. UI-12c materialises it under THREE
+new modules (Codex P1 round 2 — corrected to include
+_encryption.py from the §3-C payload-encryption
+subsection); no other module in the codebase may import
 the package:
 
 ```text
-src/karasu/push_emit/__init__.py    Public entry points
-                                     (start, stop, dispatch).
-                                     NO cryptography import.
-src/karasu/push_emit/_signing.py    VAPID JWT signing.
-                                     IMPORTS cryptography.
-                                     Functions: sign_vapid_jwt,
-                                     load_vapid_keys.
-src/karasu/push_emit/_keys.py       VAPID auto-generation.
-                                     IMPORTS cryptography.
-                                     Functions:
-                                     generate_vapid_keypair,
-                                     bootstrap_if_missing.
+src/karasu/push_emit/__init__.py     Public entry points
+                                      (start, stop, dispatch).
+                                      NO cryptography import.
+src/karasu/push_emit/_signing.py     VAPID JWT signing.
+                                      IMPORTS cryptography.
+                                      Functions: sign_vapid_jwt,
+                                      load_vapid_keys.
+src/karasu/push_emit/_keys.py        VAPID auto-generation.
+                                      IMPORTS cryptography.
+                                      Functions:
+                                      generate_vapid_keypair,
+                                      bootstrap_if_missing.
+src/karasu/push_emit/_encryption.py  RFC 8291 aes128gcm
+                                      payload encryption (see
+                                      §3-C payload encryption
+                                      subsection).
+                                      IMPORTS cryptography.
+                                      Functions:
+                                      encrypt_payload.
 ```
 
 Import scope test (pin §11.6.13 binding — round 1 P1
@@ -383,6 +393,7 @@ tests/test_push_emit_import_scope.py
   3. Asserts the only matches are inside
        src/karasu/push_emit/_signing.py
        src/karasu/push_emit/_keys.py
+       src/karasu/push_emit/_encryption.py
   4. Test fails if a future chunk imports cryptography
      anywhere else.
 
@@ -462,32 +473,63 @@ Inputs:
                                      (max 4096 bytes ciphertext;
                                      plaintext ≤ ~3990 bytes)
 
-Per-message flow (RFC 8291 §3 + RFC 8188 aes128gcm):
+Per-message flow (RFC 8291 §3 + RFC 8188 §2 aes128gcm).
+Three named intermediates — PRK_key, IKM, PRK_aes — so the
+implementation maps directly to the RFC steps without
+guessing (Codex P1 round 2, 2026-05-06):
+
   1. Generate one-time ECDH P-256 keypair
        (as_priv, as_pub) ← ec.generate_private_key(SECP256R1())
        as_pub serialised as 65-byte uncompressed point.
-  2. ECDH(as_priv, ua_pub) → 32-byte shared_secret.
-  3. HKDF-Extract:
-       PRK_key = HKDF(salt=auth, IKM=shared_secret,
-                      info="WebPush: info\x00" || ua_pub || as_pub,
-                      L=32) — RFC 8291 §3.4.
-  4. Generate 16-byte salt ← os.urandom(16).
-  5. HKDF-Expand:
-       cek = HKDF(salt=salt, IKM=PRK_key,
-                  info="Content-Encoding: aes128gcm\x00",
-                  L=16).
-       nonce = HKDF(salt=salt, IKM=PRK_key,
-                  info="Content-Encoding: nonce\x00",
-                  L=12).
-  6. Plaintext padding (RFC 8188 §2.1):
+
+  2. ecdh_secret (32 bytes):
+       ecdh_secret = ECDH(as_priv, ua_pub).
+
+  3. PRK_key (32 bytes) — RFC 8291 §3.3.
+     This is a single HMAC, NOT full HKDF. The auth
+     secret is the HMAC key; the ECDH shared secret is
+     the message:
+       PRK_key = HMAC-SHA256(key=auth_secret,
+                             msg=ecdh_secret).
+
+  4. key_info (RFC 8291 §3.4):
+       key_info = b"WebPush: info\x00" || ua_pub || as_pub.
+
+  5. IKM (32 bytes) — HKDF-Expand of PRK_key:
+       IKM = HKDF-Expand(PRK=PRK_key,
+                          info=key_info,
+                          L=32).
+
+  6. salt (16 bytes):
+       salt = os.urandom(16).
+
+  7. PRK_aes (32 bytes) — RFC 8188 HKDF-Extract on
+     (salt, IKM):
+       PRK_aes = HMAC-SHA256(key=salt, msg=IKM)
+       (equivalently HKDF-Extract(salt=salt, IKM=IKM)).
+
+  8. CEK (16 bytes) — HKDF-Expand of PRK_aes for content
+     encryption key:
+       CEK = HKDF-Expand(PRK=PRK_aes,
+                          info=b"Content-Encoding: aes128gcm\x00",
+                          L=16).
+
+  9. NONCE (12 bytes) — HKDF-Expand of PRK_aes for
+     content nonce:
+       NONCE = HKDF-Expand(PRK=PRK_aes,
+                            info=b"Content-Encoding: nonce\x00",
+                            L=12).
+
+ 10. Plaintext padding (RFC 8188 §2.1):
        padded = plaintext || 0x02 (delimiter).
-       Optional: append 0x00 bytes for size-class padding;
        UI-12c does not pad beyond the delimiter (smallest
        ciphertext, no metadata leak via length).
-  7. Encrypt:
-       ciphertext = AES_128_GCM_encrypt(cek, nonce, padded)
+
+ 11. Encrypt:
+       ciphertext = AES-128-GCM(CEK, NONCE, padded)
        (16-byte GCM tag appended).
-  8. Body framing (RFC 8188 §2.1 binary header):
+
+ 12. Body framing (RFC 8188 §2.1 binary header):
        record_size  uint32 BE = 4096
        idlen        uint8 = 65
        keyid        65 bytes = as_pub uncompressed point
@@ -587,23 +629,90 @@ Layer 2 — Per-category debounce (TRAILING)
   Applied:  AFTER UI-write suppression, BEFORE event-id
             dedupe.
 
-  State machine (Codex P1 round 1, 2026-05-06):
-    pending: dict[(endpoint_hash, category) →
-             {event: PendingEvent, timer: TimerHandle}]
+  State machine (Codex P1 round 1 + round 2, 2026-05-06):
 
-    On event arrival e for (endpoint_hash, category):
-      1. If a (endpoint_hash, category) entry exists in
-         `pending`, cancel its timer + REPLACE its event
-         with e (the most recent wins).
-      2. Otherwise, create a fresh entry with event=e.
-      3. (Re)start a 5 s timer that fires
-         `_dispatch_pending(endpoint_hash, category)`
-         on expiry.
+    Race protection (Codex P1 round 2): a Timer.cancel()
+    is best-effort — a timer thread can already be
+    executing its callback when cancel() returns. Without
+    a per-entry generation token + a shared lock, the
+    OLD timer can pop the REPLACEMENT event prematurely
+    (the new entry is in `pending` keyed by the same
+    (endpoint_hash, category) tuple). Both must be
+    serialised through a debounce-state mutex AND the
+    dispatch callback MUST verify its generation token
+    matches the current entry before popping.
 
-    On timer expiry for (endpoint_hash, category):
-      1. Pop the entry from `pending`.
-      2. Pass entry.event to Layer 3 (event-id dedupe).
-      3. If Layer 3 admits, call the dispatcher.
+    Concrete shape:
+
+      class _DebounceState:
+          lock: threading.Lock                  # state mutex
+          pending: dict[
+              (endpoint_hash, category),
+              {event, timer, generation: int},
+          ]
+
+      def on_event(state, eh, cat, event):
+          with state.lock:
+              entry = state.pending.get((eh, cat))
+              if entry is not None:
+                  entry["timer"].cancel()         # best-effort
+                  next_gen = entry["generation"] + 1
+              else:
+                  next_gen = 0
+              timer = threading.Timer(
+                  5.0,
+                  _dispatch_pending,
+                  args=(state, eh, cat, next_gen),
+              )
+              state.pending[(eh, cat)] = {
+                  "event": event,
+                  "timer": timer,
+                  "generation": next_gen,
+              }
+              timer.start()
+
+      def _dispatch_pending(state, eh, cat, gen_token):
+          with state.lock:
+              entry = state.pending.get((eh, cat))
+              if entry is None:
+                  return                          # already dispatched
+              if entry["generation"] != gen_token:
+                  return                          # superseded; the
+                                                  # newer timer will
+                                                  # fire on its own
+                                                  # schedule
+              event = entry["event"]
+              del state.pending[(eh, cat)]
+          # Release the lock BEFORE the outbound HTTP /
+          # Layer-3 dedupe so a slow push service does not
+          # block subsequent on_event calls.
+          dispatch(event)
+
+    The token is monotonic per (eh, cat); a stale timer
+    whose token does NOT match the current entry's
+    generation no-ops cleanly. The lock is released
+    before dispatch so push delivery latency does not
+    serialise unrelated events.
+
+    Test surface (Codex P1 round 2):
+      - test_old_cancelled_timer_fires_after_replacement
+        Force a timer to enter its callback BEFORE the
+        new event arrives (e.g. via a synthetic
+        threading.Event coordinator). Assert the
+        generation-token check no-ops the stale dispatch
+        and the replacement event still dispatches at its
+        own t+5s.
+      - test_arrival_races_with_expiry
+        Use a synthetic timer that fires on demand. New
+        event arrives WHILE the timer's callback is
+        waiting on state.lock. Assert exactly one
+        dispatch fires for the burst (the most recent
+        event), not two.
+      - test_dispatch_does_not_hold_lock_during_http
+        Stub dispatch with a slow synchronous mock;
+        assert on_event during the slow dispatch
+        completes without blocking on the dispatch
+        future (lock released before dispatch).
 
   Operator-felt latency:
     The first event of a burst is delayed by 5 s. Within
@@ -728,8 +837,21 @@ exception          response (DNS resolution, TLS
                        + exception TYPE only:
                        "transport failure <hash> (<type>)"
                        e.g. "transport failure abc... (URLError)"
-                     - The exception's str() / repr() /
-                       message is NEVER logged.
+                     - NEVER log the exception's str() /
+                       repr() / message / args /
+                       __cause__ / __context__ / traceback.
+                       Codex P2 round 2 binding
+                       (2026-05-06): exception CHAINS can
+                       resurface the raw endpoint via the
+                       __cause__ / __context__ links even
+                       when str/repr are avoided. Use
+                       logger.warning(...) WITHOUT
+                       exc_info=True, WITHOUT %s
+                       formatting against the exception
+                       object, and never pass exc.args to
+                       a downstream formatter. The only
+                       safe log shape is the literal
+                       string above with type(exc).__name__.
                      - Do NOT prune.
                      - Do NOT emit a bus event.
                      - Do NOT mutate the store.
@@ -866,6 +988,10 @@ def _with_store_lock(store_path):
             store_path.suffix + ".lock"
         )
         lock_path.parent.mkdir(parents=True, exist_ok=True)
+        # Open / create the lock file. "ab" semantics:
+        # binary append-mode create-if-missing; the file
+        # is never written to (the lock is on the file
+        # handle, not its content).
         with open(lock_path, "ab") as fh:
             _flock_exclusive(fh)            # cross-process
             try:
@@ -880,6 +1006,45 @@ transaction inside `_with_store_lock`. The atomic `tmp +
 rename` from UI-12b §3-E remains intact — file integrity
 + cross-process serialisation are independent guarantees.
 
+#### Windows region discipline (Codex P1 round 2, 2026-05-06)
+
+`msvcrt.locking` is REGION-BASED from the current file
+pointer. Without explicit pinning, an implementation can
+accidentally lock and release different regions and leave
+the lock held forever. The helpers MUST pin the region:
+
+```text
+_flock_exclusive(fh) discipline:
+  POSIX  fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+         (region-agnostic; locks the whole inode)
+  Windows
+         fh.seek(0)
+         msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+         (locks ONE byte starting at offset 0)
+
+_flock_release(fh) discipline:
+  POSIX  fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+  Windows
+         fh.seek(0)
+         msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+         (releases the SAME ONE byte at offset 0)
+
+The seek-to-0 is mandatory on Windows for both acquire
+AND release. The open/append-mode handle has its file
+pointer at end-of-file; without seek(0) the locking
+call would target a different region than expected
+(typically beyond EOF, which on Windows allocates a
+zero-filled extension — a silent bug that would let
+two processes hold "different" locks against the same
+.lock file).
+
+The lock byte is the FIRST byte (offset 0) by
+convention. Future chunks introducing additional
+inter-process synchronization can negotiate other byte
+offsets per resource if needed; UI-12c uses byte 0
+exclusively.
+```
+
 #### Lock acquisition discipline
 
 ```text
@@ -892,7 +1057,10 @@ rename` from UI-12b §3-E remains intact — file integrity
   own; only the held kernel lock matters.
 - Test discipline: _flock_exclusive / _flock_release
   are named helpers so the unit tests can mock them
-  without monkeypatching fcntl / msvcrt directly.
+  without monkeypatching fcntl / msvcrt directly. The
+  helpers are also the binding point for the Windows
+  region discipline — tests assert the helper uses the
+  same byte-0 region for acquire AND release.
 ```
 
 #### Test surface
@@ -918,6 +1086,12 @@ tests/test_push_store_lock_file.py (NEW)
     (parallel to .tmp).
   + Asserts the lock is RELEASED on the with-block exit
     so a subsequent acquirer can proceed.
+  + Windows region discipline (Codex P1 round 2): asserts
+    _flock_exclusive seeks to byte 0 + locks 1 byte;
+    _flock_release seeks to the SAME byte 0 + unlocks
+    1 byte. The test stubs msvcrt.locking with a recording
+    spy and asserts both calls target offset 0 with
+    length 1.
 ```
 
 ALTERNATIVES considered:
@@ -1061,8 +1235,16 @@ tests/test_push_emit_keys.py (Codex P1 round 1, 2026-05-06)
       half-state preserved.
     - Malformed store (PushStoreError from
       _read_or_empty_store) → bootstrap propagates the
-      error; the controller exits with the documented
-      generic 500 contract from UI-12a (no path leak).
+      error; the `karasu watch` controller exits/logs
+      generically with no path leak + no key fragment
+      leak (Codex P2 round 2 — `karasu watch` is not an
+      HTTP context so the UI server's documented
+      generic 500 contract does NOT apply here; the
+      contract is "loud-stderr generic message + bus
+      tail untouched + non-zero exit code"; UI-12a's
+      HTTP 500 contract continues to govern the GET
+      /api/push read path which is unrelated to
+      bootstrap).
     - Privacy negative-shape: caplog assertion proves
       no key material in any log line during bootstrap.
       Only "generated VAPID keypair" with no lengths /
@@ -1179,18 +1361,29 @@ UI-0 §4 + UI-12 §4 + UI-12b §4 still hold. UI-12c adds:
 
 ```text
 + cryptography >= 42.0 as a runtime dep. Named, scoped
-  exception per UI-12 §11.6.13 binding. Imports confined
-  to src/karasu/push_emit/_signing.py +
-  src/karasu/push_emit/_keys.py. Pinned by
-  test_push_emit_import_scope.py. Pyproject.toml
+  exception per UI-12 §11.6.13 binding. Imports CONFINED
+  to three files (Codex P1 round 2 — was two in the
+  draft):
+    src/karasu/push_emit/_signing.py     VAPID JWT
+    src/karasu/push_emit/_keys.py        VAPID auto-gen
+    src/karasu/push_emit/_encryption.py  RFC 8291 aes128gcm
+                                          payload encryption
+  Pinned by test_push_emit_import_scope.py. Pyproject.toml
   documents the exception alongside the version pin.
 
 + src/karasu/push_emit/ package (NEW) — bus subscriber +
-  category classifier + JWT signing + delivery loop +
-  prune handler.
+  category classifier + JWT signing + payload encryption +
+  delivery loop + prune handler.
 
-+ tests/test_push_emit_*.py — 4 new test files (~600
-  LOC total).
++ src/karasu/push_store.py — additive helpers
+  (seed_vapid + cross-process file-lock primitives
+  _flock_exclusive / _flock_release / _with_store_lock).
+
++ src/karasu/controller/loop.py — additive registration
+  hook (push_emit as TriggerSource).
+
++ tests/test_push_emit_*.py + tests/test_push_store_*.py —
+  9 new test files (~1300 LOC total; see §6 file split).
 
 NO new build / framework dependency. NO new front-end
 files. NO new HTTP API surface (pin (a) carry-forward —
@@ -1204,9 +1397,12 @@ The cryptography exception in pyproject.toml:
 dependencies = [
     # ... existing deps ...
     # UI-12c §11.6.13 named scoped exception to UI-0 §4.
-    # Used ONLY by src/karasu/push_emit/_signing.py +
-    # src/karasu/push_emit/_keys.py for VAPID JWT
-    # signing + ECDSA P-256 key generation. Import scope
+    # Used ONLY by:
+    #   src/karasu/push_emit/_signing.py     (VAPID JWT)
+    #   src/karasu/push_emit/_keys.py        (VAPID auto-gen)
+    #   src/karasu/push_emit/_encryption.py  (RFC 8291 enc)
+    # for VAPID JWT signing + ECDSA P-256 key generation +
+    # RFC 8291 aes128gcm payload encryption. Import scope
     # pinned by tests/test_push_emit_import_scope.py.
     "cryptography>=42.0",
 ]
@@ -1222,28 +1418,86 @@ design system (UI-12 §5.6 binding).
 ## 6 · Roadmap (single chunk)
 
 ```text
-UI-12c — single chunk. ~400 LOC including tests.
+UI-12c — single chunk. ~700 LOC including tests + docs
+(updated post Codex P1 round 2 — encryption module +
+cross-process lock tests + corrected controller path).
 
   Code:
     src/karasu/push_emit/__init__.py          ~80 LOC
     src/karasu/push_emit/_classifier.py       ~60 LOC
-    src/karasu/push_emit/_rate_limit.py       ~80 LOC
+    src/karasu/push_emit/_rate_limit.py       ~100 LOC
+                                              (debounce state
+                                              machine + race
+                                              protection
+                                              tokens)
     src/karasu/push_emit/_signing.py          ~120 LOC
-    src/karasu/push_emit/_keys.py             ~50 LOC
-    src/karasu/push_emit/_dispatch.py         ~120 LOC
-    src/karasu/loop_controller.py             +20 LOC
+                                              (VAPID JWT)
+    src/karasu/push_emit/_keys.py             ~60 LOC
+                                              (VAPID auto-gen
+                                              + bootstrap)
+    src/karasu/push_emit/_encryption.py       ~120 LOC
+                                              (RFC 8291
+                                              aes128gcm
+                                              payload
+                                              encryption)
+    src/karasu/push_emit/_dispatch.py         ~140 LOC
+                                              (HTTP delivery +
+                                              transport
+                                              exception
+                                              privacy)
+    src/karasu/controller/loop.py             +20 LOC
                                               (register
                                               push_emit as
-                                              TriggerSource)
-    src/karasu/push_store.py                  +30 LOC
-                                              (seed_vapid
-                                              helper)
+                                              TriggerSource;
+                                              file path
+                                              corrected from
+                                              the draft)
+    src/karasu/push_store.py                  +60 LOC
+                                              (seed_vapid +
+                                              cross-process
+                                              file-lock helpers
+                                              _flock_exclusive
+                                              + _flock_release
+                                              + _with_store_lock
+                                              context manager
+                                              + Windows region
+                                              discipline)
 
   Tests:
     tests/test_push_emit_classifier.py        ~150 LOC
-    tests/test_push_emit_rate_limit.py        ~200 LOC
+    tests/test_push_emit_rate_limit.py        ~250 LOC
+                                              (race protection
+                                              + generation
+                                              token tests)
     tests/test_push_emit_dispatch.py          ~250 LOC
+                                              (200 / 410 / 404
+                                              / 5xx / 429 +
+                                              transport
+                                              exception
+                                              privacy)
+    tests/test_push_emit_encryption.py        ~150 LOC
+                                              (RFC 8291
+                                              round-trip +
+                                              header shape +
+                                              uniqueness +
+                                              privacy negative
+                                              shape)
+    tests/test_push_emit_keys.py              ~120 LOC
+                                              (7 bootstrap
+                                              cases + length
+                                              pinning + no
+                                              key material in
+                                              logs)
     tests/test_push_emit_import_scope.py      ~50 LOC
+    tests/test_push_store_cross_process.py    ~120 LOC
+                                              (multiprocessing-
+                                              based no-lost-
+                                              update test)
+    tests/test_push_store_lock_file.py        ~100 LOC
+                                              (acquire / release
+                                              region discipline
+                                              + Windows byte-0
+                                              spy)
     tests/test_ui_push_emit_browser.py        ~80 LOC
                                               (Playwright,
                                               optional)
@@ -1591,7 +1845,8 @@ UI-10 §11.6 / UI-11 §11.6 / UI-12 §11.6 / UI-12b §11.6):
 ```text
 1.  cryptography is imported ONLY from
     src/karasu/push_emit/_signing.py +
-    src/karasu/push_emit/_keys.py. Pinned by
+    src/karasu/push_emit/_keys.py +
+    src/karasu/push_emit/_encryption.py. Pinned by
     tests/test_push_emit_import_scope.py.
 2.  The category classifier returns None for events
     outside the closed enum {attention, errors,
@@ -1736,8 +1991,46 @@ Codex audit:         Round 1: CHANGES-REQUIRED (2 P0 + 4 P1
                             deterministic browser-side mock
                             (.webm stays binding).
                      Pins 12, 13 corrected; pins 17-20 added
-                     to §11.6 anticipated. Loop budget: 1/5.
-                     Round 2 pending out-of-band; round-2
+                     to §11.6 anticipated.
+
+                     Round 2: CHANGES-REQUIRED (4 P1 + 2 P2).
+                     All six findings addressed in-branch:
+                       P1  §3-C RFC 8291 HKDF Extract /
+                            Expand precision: three named
+                            intermediates (PRK_key, IKM,
+                            PRK_aes) so the implementation
+                            maps directly to the RFC
+                            without guessing. Steps 3-9
+                            rewritten.
+                       P1  §3-D debounce race protection:
+                            per-entry generation token +
+                            shared mutex + lock-released-
+                            before-dispatch discipline.
+                            Three new tests pinned.
+                       P1  §3-G Windows region discipline:
+                            seek(0) + lock 1 byte + seek(0)
+                            + unlock 1 byte. Helper-shape
+                            pinned in test_push_store_lock_file.
+                       P1  §3-C + §4 + §6 + §11.6 pin 1
+                            scope summaries: corrected to
+                            include _encryption.py, the
+                            new test files, and the actual
+                            controller path
+                            (src/karasu/controller/loop.py).
+                       P2  §3-E transport privacy: ban
+                            exception chains (args /
+                            __cause__ / __context__ /
+                            traceback / exc_info=True).
+                       P2  §3-F bootstrap malformed-store
+                            HTTP-500 misstatement: `karasu
+                            watch` is not an HTTP context;
+                            wording corrected to "loud-
+                            stderr generic message + bus
+                            tail untouched + non-zero exit
+                            code".
+
+                     Loop budget: 2 of 5 consumed.
+                     Round 3 pending out-of-band; round-3
                      verdict ferried back via Victor;
                      additional follow-ups land in-branch.
 Implementation:      BLOCKED on this brief's merge.

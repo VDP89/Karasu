@@ -432,6 +432,61 @@
     </div>
 </div>
 
+<!-- UI-12b — Push opt-in modal. Same .modal primitive as UI-10 /
+     UI-11b. Brief §3-A pre-subscribe layout: lede + 3 pre-checked
+     categories + foot copy + Cancel | Enable notifications.
+     Post-subscribe layout switches the primary to "Update
+     categories" + reveals the unsubscribe foot button.
+     Pin §11.6.14: when /api/push.vapid_public_key is null, the
+     primary is disabled and the foot copy switches to the
+     manual-seed pointer; native permission prompt NEVER fires
+     from this state. -->
+<div class="modal" id="push-modal" hidden role="dialog" aria-modal="true"
+     aria-labelledby="push-modal-title" aria-describedby="push-modal-lede">
+    <h2 class="modal-title" id="push-modal-title">Notifications</h2>
+    <p class="modal-lede" id="push-modal-lede">
+        Karasu can ping you when the bus crosses a threshold you
+        opted in to. Pick the moments worth breaking quiet for.
+    </p>
+    <p class="modal-push-state" id="push-modal-state" hidden></p>
+    <fieldset class="modal-push-categories" id="push-modal-categories"
+              aria-label="Notification categories">
+        <label class="modal-push-category">
+            <input type="checkbox" name="push-category" value="attention" checked>
+            <span class="modal-push-category-name">attention</span>
+            <span class="modal-push-category-description">
+                Operator review needed
+            </span>
+        </label>
+        <label class="modal-push-category">
+            <input type="checkbox" name="push-category" value="errors" checked>
+            <span class="modal-push-category-name">errors</span>
+            <span class="modal-push-category-description">
+                An adapter failed
+            </span>
+        </label>
+        <label class="modal-push-category">
+            <input type="checkbox" name="push-category" value="corrections" checked>
+            <span class="modal-push-category-name">corrections</span>
+            <span class="modal-push-category-description">
+                A scar was recorded out-of-band
+            </span>
+        </label>
+    </fieldset>
+    <p class="modal-push-foot-copy" id="push-modal-foot-copy">
+        Confirming will ask your browser for notification permission.
+    </p>
+    <p class="modal-push-error" id="push-modal-error" hidden></p>
+    <div class="modal-actions">
+        <button class="modal-action modal-cancel" id="push-modal-cancel"
+                type="button">Cancel</button>
+        <button class="modal-action modal-confirm" id="push-modal-confirm"
+                type="button">Enable notifications</button>
+    </div>
+    <button class="modal-push-unsubscribe" id="push-modal-unsubscribe"
+            type="button" hidden>Unsubscribe this browser</button>
+</div>
+
 <!-- UI-11b - Trust adjust modal. Same .modal primitive as UI-10,
      but the body is a constrained radio gradient: no free-form
      trust value, no settings page, no live adapter mutation copy. -->
@@ -476,6 +531,13 @@
                 type="button">Confirm</button>
     </div>
 </div>
+<!-- UI-12b — push opt-in surface logic. Loaded BEFORE the inline
+     <script> block so the inline init can reach push.js's
+     top-level functions (browsers attach `function` declarations
+     to the global object). Single static file per UI-12b §4;
+     UI-0 §4 still binds — no toolchain, no bundler, no
+     framework. -->
+<script src="/assets/js/push.js"></script>
 <script>
 const REFRESH_MS = 3000;
 
@@ -547,10 +609,14 @@ async function loadPushState() {
     const browser = browserPushSupport();
     if (browser === 'unsupported') {
         renderPushFooter('unsupported', 'is-unsupported');
+        if (typeof recordPushPayload === 'function') recordPushPayload(null);
+        if (typeof wirePushFooter === 'function') wirePushFooter();
         return;
     }
     if (browser === 'denied') {
         renderPushFooter('denied', 'is-denied');
+        if (typeof recordPushPayload === 'function') recordPushPayload(null);
+        if (typeof wirePushFooter === 'function') wirePushFooter();
         return;
     }
     try {
@@ -562,16 +628,28 @@ async function loadPushState() {
              * path will surface a structured error to the
              * server console too. */
             renderPushFooter('unsupported', 'is-unsupported');
+            if (typeof recordPushPayload === 'function') recordPushPayload(null);
+            if (typeof wirePushFooter === 'function') wirePushFooter();
             return;
         }
         const payload = await r.json();
+        /* UI-12b — feed the payload to push.js so the modal
+         * pre-fills the post-subscribe state row + can read
+         * vapid_public_key when the operator confirms. */
+        if (typeof recordPushPayload === 'function') recordPushPayload(payload);
         if (payload.subscription_count > 0) {
             renderPushFooter('on', 'is-on');
         } else {
             renderPushFooter('off', 'is-off');
         }
+        /* Re-wire the footer click handler AFTER the state
+         * class is set; wirePushFooter() reads the class to
+         * decide whether the affordance is interactive. */
+        if (typeof wirePushFooter === 'function') wirePushFooter();
     } catch {
         renderPushFooter('unsupported', 'is-unsupported');
+        if (typeof recordPushPayload === 'function') recordPushPayload(null);
+        if (typeof wirePushFooter === 'function') wirePushFooter();
     }
 }
 
@@ -1408,6 +1486,11 @@ tick();
 wireDrawer();
 wireModal();
 wireTrustModal();
+/* UI-12b — wire the push modal listeners. wirePushFooter() is
+ * called from loadPushState() after each state change so the
+ * footer click handler attaches/detaches according to the
+ * rendered state class. */
+if (typeof wirePushModal === 'function') wirePushModal();
 registerServiceWorker();
 setInterval(tick, REFRESH_MS);
 </script>

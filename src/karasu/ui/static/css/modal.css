@@ -278,6 +278,140 @@
 }
 
 
+/* --- UI-12b push opt-in modal micro-elements ----------------------
+ *
+ * Pin §11.6.8 (UI-11 carry-forward) — scoped under .modal so the
+ * push categories cannot leak to timeline rows, map nodes, drawer
+ * scar rows, or the trust-adjust modal.
+ *
+ * Layout follows the .modal-trust-* sibling pattern but with
+ * checkboxes (multi-select) instead of radios (single-select), an
+ * optional "Subscribed: N categories" state row above the
+ * fieldset (post-subscribe layout), and a quiet "Unsubscribe this
+ * browser" secondary button at the modal foot. The unsubscribe
+ * button is --fg-2 (NOT --danger) per §3.5: unsubscribing is
+ * reversible by re-subscribing.
+ */
+
+.modal .modal-push-state {
+    /* "Subscribed: 2 categories" — single editorial line above
+     * the fieldset when the modal reopens post-subscribe. */
+    font-family: var(--font-mono);
+    font-size: var(--fs-12);
+    color: var(--fg-2);
+    margin: var(--space-4) 0 0 0;
+}
+
+.modal .modal-push-categories {
+    border: 0;
+    padding: 0;
+    margin: var(--space-4) 0 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.modal .modal-push-category {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--fg-3);
+    border-radius: var(--radius-1);
+    color: var(--fg-2);
+    cursor: pointer;
+    transition:
+        color var(--duration-micro) var(--ease-out),
+        background-color var(--duration-micro) var(--ease-out),
+        border-color var(--duration-micro) var(--ease-out);
+}
+
+.modal .modal-push-category:hover {
+    background: var(--bg-2);
+}
+
+.modal .modal-push-category:focus-within,
+.modal .modal-push-category:has(input:checked) {
+    color: var(--fg-1);
+    border-color: var(--accent);
+}
+
+.modal .modal-push-category input {
+    margin: 0;
+    accent-color: var(--accent);
+}
+
+.modal .modal-push-category-name {
+    font-family: var(--font-mono);
+    font-size: var(--fs-14);
+    color: var(--fg-1);
+}
+
+.modal .modal-push-category-description {
+    font-family: var(--font-display);
+    font-size: var(--fs-14);
+    line-height: var(--lh-body);
+}
+
+.modal .modal-push-foot-copy {
+    /* "Confirming will ask your browser for notification
+     * permission." OR "VAPID keys not provisioned. See
+     * docs/local-dogfood.md for manual setup." (the
+     * VAPID-null branch). Quiet, single line, no chrome. */
+    font-family: var(--font-display);
+    font-size: var(--fs-12);
+    color: var(--fg-3);
+    margin: var(--space-4) 0 0 0;
+}
+
+.modal .modal-push-unsubscribe {
+    /* Quiet secondary at the modal foot, only rendered when
+     * the operator is currently subscribed. --fg-2 (NOT
+     * --danger) per §3.5: unsubscribing is reversible by
+     * re-subscribing; the verb does not warrant the
+     * destructive token. */
+    display: block;
+    margin: var(--space-3) auto 0 auto;
+    font-family: var(--font-display);
+    font-size: var(--fs-12);
+    color: var(--fg-2);
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid transparent;
+    padding: 0 0 var(--space-1) 0;
+    cursor: pointer;
+    transition:
+        color var(--duration-micro) var(--ease-out),
+        border-color var(--duration-micro) var(--ease-out);
+}
+
+.modal .modal-push-unsubscribe:hover {
+    color: var(--fg-1);
+    border-color: var(--fg-2);
+}
+
+.modal .modal-push-unsubscribe:focus {
+    outline: none;
+    box-shadow: var(--focus-ring);
+}
+
+.modal .modal-push-error {
+    /* Editorial single-line error surfaced inside the modal
+     * (network failure, post-204 unsubscribe rejection, etc.).
+     * Rendered ABOVE the actions row so the operator sees the
+     * cause before deciding to retry. */
+    font-family: var(--font-display);
+    font-size: var(--fs-14);
+    color: var(--warn);
+    margin: var(--space-3) 0 0 0;
+}
+
+.modal .modal-push-error[hidden] {
+    display: none;
+}
+
+
 /* --- Drawer revoke affordance --------------------------------------
  *
  * Brief §1: revoke lives inside the existing detail drawer (UI-7).

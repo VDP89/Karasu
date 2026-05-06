@@ -69,6 +69,12 @@ const PRECACHE_URLS = [
     '/assets/crow/crow-flight.svg',
     '/assets/icons/karasu-192.png',
     '/assets/icons/karasu-512.png',
+    /* UI-12b — push.js carries the modal flow + two-phase
+     * mutation rollback paths. Precached so the offline shell
+     * and the live page share the same byte-identical script
+     * (pin §11.6.4 — fetch ordering keeps /api/* network-only;
+     * /assets/* including push.js is cache-first). */
+    '/assets/js/push.js',
 ];
 
 self.addEventListener('install', (event) => {

@@ -247,6 +247,38 @@ class PushStoreNotFound(Exception):
 _STORE_LOCK = threading.Lock()
 
 
+def has_vapid_keys(store_path: Path) -> bool:
+    """Return ``True`` iff the store has BOTH a VAPID public
+    and private key as non-empty strings.
+
+    UI-12b's POST /api/push/subscribe handler uses this as the
+    defensive 503 gate — the frontend short-circuits BEFORE
+    calling the endpoint when ``/api/push.vapid_public_key`` is
+    null (pin §11.6.14), but a stale client tab from before the
+    keys were provisioned could still send a stale request.
+    The defensive check ensures the server never accepts a
+    subscribe POST that would fail downstream in UI-12c emit
+    (no private key = no JWT signing = no delivery).
+
+    Raises :class:`PushStoreError` on a malformed store via
+    :func:`_read_or_empty_store`. The handler folds that into
+    a structured 500 so the operator sees one error contract
+    across the read + write paths.
+    """
+    raw = _read_or_empty_store(store_path)
+    vapid = raw.get("vapid")
+    if not isinstance(vapid, dict):
+        return False
+    public = vapid.get("public")
+    private = vapid.get("private")
+    return (
+        isinstance(public, str)
+        and bool(public)
+        and isinstance(private, str)
+        and bool(private)
+    )
+
+
 def compute_endpoint_hash(endpoint: str) -> str:
     """Return the audit-only ``endpoint_hash`` for a Web Push
     endpoint URL.

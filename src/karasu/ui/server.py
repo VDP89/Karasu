@@ -105,12 +105,29 @@ PUSH_STORE_PATH = Path("karasu-push.json")
 _REVOKE_BODY_MAX_BYTES = 4096
 _TRUST_BODY_MAX_BYTES = 4096
 
+# UI-12b — body cap parity (brief §10.5): both POSTs share one
+# 4 KiB cap. Real subscribe payloads are ~600 bytes; unsubscribe
+# is ~200; the parity simplifies the test surface.
+_PUSH_BODY_MAX_BYTES = 4096
+
 # UI-10 — scar id character set (brief §10.1). Mirrored on the
 # wire and in the URL pattern so an id outside the regex is a
 # server-side bug, not a UI input concern.
 _SCAR_ID_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
 _REVOKE_PATH_RE = re.compile(r"^/api/scars/([A-Za-z0-9._:-]+)/revoke$")
 _TRUST_PATH_RE = re.compile(r"^/api/agents/([A-Za-z0-9._:-]+)/trust$")
+
+# UI-12b — push opt-in surface. Two new POST routes, both
+# 204-on-success, both inside /api/* (network-only by SW
+# construction per pin §11.6.4).
+_PUSH_SUBSCRIBE_PATH = "/api/push/subscribe"
+_PUSH_UNSUBSCRIBE_PATH = "/api/push/unsubscribe"
+
+# UI-12b §3-B — Web Push endpoints are always HTTPS URLs; a
+# plain HTTP endpoint cannot be a real PushSubscription. The
+# regex matches scheme://host/path with at least one path
+# character so an empty path does not slip through.
+_PUSH_HTTPS_ENDPOINT_RE = re.compile(r"^https://[^/]+/.+$")
 
 # Sentinels returned by ``UIHandler._read_revoke_reason`` so the
 # caller can map distinct error shapes to distinct HTTP statuses
@@ -120,6 +137,18 @@ _MALFORMED_BODY = object()
 _BODY_TOO_LARGE = object()
 _BODY_NOT_OBJECT = object()
 _INVALID_TRUST_LEVEL = object()
+
+# UI-12b sentinels — the brief §3-B distinguishes the
+# malformed-JSON branch (400) from the non-object-body branch
+# (422), with distinct generic response bodies. Existing UI-10 /
+# UI-11b reuse _MALFORMED_BODY for both at 422; UI-12b's
+# response shape diverges to honour pin §11.6.5 (400 + 422 with
+# generic bodies that never echo request fragments).
+_PUSH_MALFORMED_JSON = object()
+_PUSH_BODY_NOT_OBJECT = object()
+_PUSH_BODY_TOO_LARGE = object()
+_PUSH_INVALID_FIELDS = object()
+_PUSH_VAPID_NOT_PROVISIONED = object()
 
 # Default page size for /api/events. Operator can override via
 # ?limit=N (capped at MAX_EVENT_LIMIT to bound memory in the
@@ -556,6 +585,19 @@ def _list_push_state() -> dict[str, Any]:
     return project_push_state_payload(state)
 
 
+def _push_store_has_vapid() -> bool:
+    """Lazy wrapper around :func:`push_store.has_vapid_keys`
+    against the configured ``PUSH_STORE_PATH``.
+
+    Lazy import keeps the read-only paths free of the import
+    cost on every event tick (the bus pumps /api/events 3 s and
+    only POST handlers reach this helper).
+    """
+    from karasu.ui.push_store import has_vapid_keys
+
+    return has_vapid_keys(PUSH_STORE_PATH)
+
+
 def _emit_human_decision(action: str, data: dict[str, Any]) -> None:
     """Append a ``human_decision`` event to the configured bus.
 
@@ -808,14 +850,23 @@ class UIHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 — BaseHTTPRequestHandler API
         """Write paths.
 
-        UI-10 ships scar revoke. UI-11b adds trust adjust. Both
+        UI-10 ships scar revoke. UI-11b adds trust adjust.
+        UI-12b adds push subscribe + unsubscribe. All four
         return 204 with no body on success and emit auditable
         ``human_decision`` events.
         """
         path, _, _ = self.path.partition("?")
         revoke = _REVOKE_PATH_RE.match(path)
         trust = _TRUST_PATH_RE.match(path)
-        if revoke is None and trust is None:
+        push_subscribe = path == _PUSH_SUBSCRIBE_PATH
+        push_unsubscribe = path == _PUSH_UNSUBSCRIBE_PATH
+
+        if (
+            revoke is None
+            and trust is None
+            and not push_subscribe
+            and not push_unsubscribe
+        ):
             # Method-not-allowed for paths the GET handler knows
             # about (so a stray POST to /api/health gets a 405,
             # not a 404 that hides the typo); 404 for everything
@@ -830,10 +881,18 @@ class UIHandler(BaseHTTPRequestHandler):
                 "/api/meta",
                 "/api/agents",
                 "/api/scars",
+                "/api/push",
             ):
                 self._send(405, b"method not allowed", "text/plain")
                 return
             self._send(404, b"not found", "text/plain")
+            return
+
+        if push_subscribe:
+            self._handle_push_subscribe_post()
+            return
+        if push_unsubscribe:
+            self._handle_push_unsubscribe_post()
             return
 
         if trust is not None:
@@ -928,6 +987,328 @@ class UIHandler(BaseHTTPRequestHandler):
         _emit_human_decision("trust_adjust", event_data)
 
         self._send(204, b"", "application/octet-stream")
+
+    # --- UI-12b push handlers --------------------------------------
+
+    def _handle_push_subscribe_post(self) -> None:
+        """Handle ``POST /api/push/subscribe``.
+
+        Brief §3-B happy path: 204, NO body, store updated +
+        idempotent UPDATE for duplicate endpoints, fresh
+        push_subscribe event emitted on the bus regardless
+        (operator's intent is authoritative).
+
+        Validation matrix per brief §3-B + pin §11.6.5:
+
+          400 — body NOT valid JSON. Generic body
+                 ``{"error": "invalid request"}``; never echoes
+                 raw bytes or JSONDecodeError text.
+          413 — body > 4 KiB.
+          422 — body shape wrong (top-level non-object, missing
+                 required field, invalid endpoint, invalid
+                 categories enum / shape, duplicates).
+          503 — VAPID public + private not provisioned in store.
+                 Generic body; defensive only — the frontend
+                 short-circuits BEFORE calling this endpoint
+                 when /api/push.vapid_public_key is null
+                 (pin §11.6.14).
+          500 — push store malformed (read failed). Generic
+                 body matching the GET /api/push 500 contract.
+          204 — happy path + idempotent UPDATE.
+        """
+        from karasu.ui.push_store import (
+            PushStoreError,
+            append_subscription,
+            compute_endpoint_hash,
+        )
+
+        # Defensive: if the store is malformed, both the read
+        # (for VAPID check) and the writer would raise. Surface
+        # one structured 500 rather than letting a bare
+        # PushStoreError reach the wire.
+        try:
+            vapid_ok = _push_store_has_vapid()
+        except PushStoreError:
+            self._send(
+                500,
+                b'{"error": "push store malformed"}',
+                "application/json",
+            )
+            return
+
+        if not vapid_ok:
+            self._send(
+                503,
+                b'{"error": "vapid keys not provisioned"}',
+                "application/json",
+            )
+            return
+
+        payload = self._read_push_subscribe_body()
+        if payload is _PUSH_BODY_TOO_LARGE:
+            self._send(413, b"payload too large", "text/plain")
+            return
+        if payload is _PUSH_MALFORMED_JSON:
+            self._send(
+                400,
+                b'{"error": "invalid request"}',
+                "application/json",
+            )
+            return
+        if payload is _PUSH_BODY_NOT_OBJECT:
+            self._send(
+                422,
+                b'{"error": "request body must be an object"}',
+                "application/json",
+            )
+            return
+        if payload is _PUSH_INVALID_FIELDS:
+            self._send(
+                422,
+                b'{"error": "invalid subscription"}',
+                "application/json",
+            )
+            return
+
+        assert isinstance(payload, dict)
+        subscription = payload["subscription"]
+        categories = payload["categories"]
+        endpoint = subscription["endpoint"]
+
+        try:
+            append_subscription(
+                PUSH_STORE_PATH,
+                subscription=subscription,
+                categories=categories,
+            )
+        except PushStoreError:
+            # The writer's "partial write recovery needed" path,
+            # or any malformed-store path the read leg surfaces.
+            # Surface as the same generic 500 the GET path uses.
+            self._send(
+                500,
+                b'{"error": "push store malformed"}',
+                "application/json",
+            )
+            return
+
+        # Pin §11.6.6 + §11.6.16: ONLY the hash + categories
+        # land on the bus. Raw endpoint never crosses the
+        # human_decision boundary.
+        _emit_human_decision(
+            "push_subscribe",
+            {
+                "endpoint_hash": compute_endpoint_hash(endpoint),
+                "categories": list(categories),
+            },
+        )
+
+        self._send(204, b"", "application/octet-stream")
+
+    def _handle_push_unsubscribe_post(self) -> None:
+        """Handle ``POST /api/push/unsubscribe``.
+
+        Brief §3-B unsubscribe contract: 204 on store mutation,
+        404 when the endpoint is absent (pin §11.6.13 binding —
+        the 404 path emits ZERO bus events; the audit is server
+        silence on a non-mutation).
+
+        Validation matrix:
+
+          400 — body NOT valid JSON. Same generic shape as
+                 subscribe.
+          413 — body > 4 KiB.
+          422 — non-object body, missing endpoint, or endpoint
+                 fails the HTTPS regex.
+          404 — endpoint not present in store. Generic body
+                 ``{"error": "subscription not found"}``; the
+                 supplied endpoint is NOT echoed (pin §11.6.16).
+                 NO bus event emitted; NO store mutation.
+          500 — push store malformed.
+          204 — happy path. push_unsubscribe event emitted.
+        """
+        from karasu.ui.push_store import (
+            PushStoreError,
+            PushStoreNotFound,
+            compute_endpoint_hash,
+            remove_subscription,
+        )
+
+        payload = self._read_push_unsubscribe_body()
+        if payload is _PUSH_BODY_TOO_LARGE:
+            self._send(413, b"payload too large", "text/plain")
+            return
+        if payload is _PUSH_MALFORMED_JSON:
+            self._send(
+                400,
+                b'{"error": "invalid request"}',
+                "application/json",
+            )
+            return
+        if payload is _PUSH_BODY_NOT_OBJECT:
+            self._send(
+                422,
+                b'{"error": "request body must be an object"}',
+                "application/json",
+            )
+            return
+        if payload is _PUSH_INVALID_FIELDS:
+            self._send(
+                422,
+                b'{"error": "invalid endpoint"}',
+                "application/json",
+            )
+            return
+
+        assert isinstance(payload, dict)
+        endpoint = payload["endpoint"]
+        endpoint_hash = compute_endpoint_hash(endpoint)
+
+        try:
+            remove_subscription(PUSH_STORE_PATH, endpoint=endpoint)
+        except PushStoreNotFound:
+            # Pin §11.6.13: 404 path emits ZERO bus events. The
+            # server silence is the audit truth — no store
+            # mutation, no human_decision. The body is generic
+            # so the supplied endpoint never echoes back.
+            self._send(
+                404,
+                b'{"error": "subscription not found"}',
+                "application/json",
+            )
+            return
+        except PushStoreError:
+            self._send(
+                500,
+                b'{"error": "push store malformed"}',
+                "application/json",
+            )
+            return
+
+        _emit_human_decision(
+            "push_unsubscribe",
+            {"endpoint_hash": endpoint_hash},
+        )
+
+        self._send(204, b"", "application/octet-stream")
+
+    def _read_push_subscribe_body(self) -> "dict[str, Any] | object":
+        """Read + validate the subscribe POST body.
+
+        Validation order matches brief §3-B:
+          1. Content-Length cap (413).
+          2. JSON parse failure (400 sentinel).
+          3. Non-object root (422 sentinel).
+          4. Missing / wrong-shape required fields (422 sentinel).
+          5. Categories shape (422 sentinel).
+          6. Endpoint regex (422 sentinel).
+
+        Returns either the validated dict
+        ``{"subscription": {...}, "categories": [...]}`` (with
+        categories canonical-sorted per pin §11.6.10) or one of
+        the push sentinels.
+        """
+        try:
+            declared = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            declared = 0
+        if declared > _PUSH_BODY_MAX_BYTES:
+            return _PUSH_BODY_TOO_LARGE
+        if declared == 0:
+            return _PUSH_MALFORMED_JSON
+
+        body = self.rfile.read(declared)
+        if not body:
+            return _PUSH_MALFORMED_JSON
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return _PUSH_MALFORMED_JSON
+        if not isinstance(payload, dict):
+            return _PUSH_BODY_NOT_OBJECT
+
+        subscription = payload.get("subscription")
+        categories = payload.get("categories")
+
+        if not isinstance(subscription, dict):
+            return _PUSH_INVALID_FIELDS
+        endpoint = subscription.get("endpoint")
+        keys = subscription.get("keys")
+        if not isinstance(endpoint, str) or not endpoint:
+            return _PUSH_INVALID_FIELDS
+        if not _PUSH_HTTPS_ENDPOINT_RE.match(endpoint):
+            return _PUSH_INVALID_FIELDS
+        if not isinstance(keys, dict):
+            return _PUSH_INVALID_FIELDS
+        p256dh = keys.get("p256dh")
+        auth = keys.get("auth")
+        if not isinstance(p256dh, str) or not p256dh:
+            return _PUSH_INVALID_FIELDS
+        if not isinstance(auth, str) or not auth:
+            return _PUSH_INVALID_FIELDS
+
+        if not isinstance(categories, list):
+            return _PUSH_INVALID_FIELDS
+        # Pin §11.6.10 — closed enum, no duplicates. Empty array
+        # is allowed (zero-noise subscription per pin §11.6.9).
+        from karasu.ui.push_store import PUSH_CATEGORIES
+
+        seen: set[str] = set()
+        for c in categories:
+            if not isinstance(c, str):
+                return _PUSH_INVALID_FIELDS
+            if c not in PUSH_CATEGORIES:
+                return _PUSH_INVALID_FIELDS
+            if c in seen:
+                return _PUSH_INVALID_FIELDS
+            seen.add(c)
+
+        # Canonical sort order — easier to test, easier to grep
+        # the bus later. Maps each input to its position in the
+        # documented enum so duplicates cannot smuggle through
+        # via an alternate ordering.
+        canonical = [c for c in PUSH_CATEGORIES if c in seen]
+
+        return {
+            "subscription": {
+                "endpoint": endpoint,
+                "keys": {"p256dh": p256dh, "auth": auth},
+            },
+            "categories": canonical,
+        }
+
+    def _read_push_unsubscribe_body(self) -> "dict[str, Any] | object":
+        """Read + validate the unsubscribe POST body.
+
+        Same sentinel discipline as
+        :meth:`_read_push_subscribe_body`. Successful return is
+        ``{"endpoint": "<url>"}``."""
+        try:
+            declared = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            declared = 0
+        if declared > _PUSH_BODY_MAX_BYTES:
+            return _PUSH_BODY_TOO_LARGE
+        if declared == 0:
+            return _PUSH_MALFORMED_JSON
+
+        body = self.rfile.read(declared)
+        if not body:
+            return _PUSH_MALFORMED_JSON
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return _PUSH_MALFORMED_JSON
+        if not isinstance(payload, dict):
+            return _PUSH_BODY_NOT_OBJECT
+
+        endpoint = payload.get("endpoint")
+        if not isinstance(endpoint, str) or not endpoint:
+            return _PUSH_INVALID_FIELDS
+        if not _PUSH_HTTPS_ENDPOINT_RE.match(endpoint):
+            return _PUSH_INVALID_FIELDS
+
+        return {"endpoint": endpoint}
 
     def _read_revoke_reason(self) -> "str | None | object":
         """Read + validate the optional ``{reason}`` body.

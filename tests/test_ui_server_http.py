@@ -1768,6 +1768,35 @@ def _assert_no_secrets_on_bus() -> None:
         )
 
 
+def _state_snapshot() -> tuple[int, str]:
+    """Capture (bus_event_count, store_raw_text) so an error
+    branch can assert ZERO bus + store delta. Codex P1 round 1
+    on PR #102: every error branch must prove non-mutation,
+    not just generic response body shape."""
+    bus_count = len(_read_bus_events())
+    store_text = (
+        ui_server.PUSH_STORE_PATH.read_text(encoding="utf-8")
+        if ui_server.PUSH_STORE_PATH.exists()
+        else ""
+    )
+    return bus_count, store_text
+
+
+def _assert_no_state_delta(before: tuple[int, str]) -> None:
+    """Assert bus + store unchanged since ``before`` snapshot.
+    Used after every error branch to pin pin §11.6.5 binding:
+    error paths emit zero bus events AND zero store mutation.
+    """
+    after = _state_snapshot()
+    assert after[0] == before[0], (
+        f"bus delta on error branch: {before[0]} → {after[0]} — "
+        f"pin §11.6.5 violation"
+    )
+    assert after[1] == before[1], (
+        "store mutated on error branch — pin §11.6.5 violation"
+    )
+
+
 def test_subscribe_happy_path_no_secrets_in_response_or_bus(
     ui_http: tuple[str, int]
 ) -> None:
@@ -1934,3 +1963,205 @@ def test_api_push_get_response_no_secrets_after_subscribe(
         "DO-NOT-LEAK",
     ):
         assert forbidden not in body_text
+
+
+# ---------------------------------------------------------------------------
+# Codex P1 round 1 on PR #102 — invalid-UTF-8 body coverage
+# ---------------------------------------------------------------------------
+#
+# Pin §11.6.5 binding: every error branch that accepts or
+# parses request body material — including non-UTF-8 bytes —
+# must surface a generic body, zero bus events, zero store
+# delta, and no sentinel material in any captured surface.
+# The handler catches UnicodeDecodeError alongside
+# JSONDecodeError; this test pins the contract.
+
+
+def test_post_push_subscribe_invalid_utf8_body_returns_400(
+    ui_http: tuple[str, int]
+) -> None:
+    """Pin §11.6.5 round-1 on PR #102: a body with bytes that
+    are not valid UTF-8 (forbidden lead bytes 0xff / 0xfe / 0xfd)
+    must surface as 400 with a generic body — no
+    UnicodeDecodeError repr, no echo of the raw bytes."""
+    host, port = ui_http
+    _seed_vapid()
+    before = _state_snapshot()
+
+    # 0xff is the canonical "never valid UTF-8 lead byte"
+    # sentinel; embedded with sentinel substring AROUND it so
+    # the test proves both the bytes and the substring stay
+    # off-wire.
+    body = (
+        b'\xff\xfe\xfd{"subscription": {"endpoint": '
+        b'"https://x/sentinel-DO-NOT-LEAK-utf8"}}'
+    )
+    status, resp_body, _ = _post(
+        host, port, "/api/push/subscribe", body=body
+    )
+    assert status == 400
+    assert json.loads(resp_body) == {"error": "invalid request"}
+    _assert_no_secrets_anywhere(response_body=resp_body)
+    _assert_no_state_delta(before)
+
+
+def test_post_push_unsubscribe_invalid_utf8_body_returns_400(
+    ui_http: tuple[str, int]
+) -> None:
+    """Same contract on the unsubscribe POST — non-UTF-8 lead
+    bytes surface as 400 with a generic body."""
+    host, port = ui_http
+    _seed_vapid()
+    before = _state_snapshot()
+
+    body = b'\xff\xfe\xfd{"endpoint": "https://x/DO-NOT-LEAK-utf8"}'
+    status, resp_body, _ = _post(
+        host, port, "/api/push/unsubscribe", body=body
+    )
+    assert status == 400
+    assert json.loads(resp_body) == {"error": "invalid request"}
+    _assert_no_secrets_anywhere(response_body=resp_body)
+    _assert_no_state_delta(before)
+
+
+# ---------------------------------------------------------------------------
+# Codex P1 round 1 on PR #102 — full state-delta coverage
+# ---------------------------------------------------------------------------
+#
+# Each error branch below takes a snapshot before the request
+# and asserts after-state matches via _assert_no_state_delta.
+# The earlier _assert_no_secrets_anywhere helper proves the
+# response body is generic; these tests prove the side-effect
+# surface is also clean.
+
+
+def test_subscribe_422_invalid_endpoint_no_state_delta(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    before = _state_snapshot()
+    body = _push_subscribe_body(endpoint="not-a-url-DO-NOT-LEAK")
+    status, _, _ = _post(host, port, "/api/push/subscribe", body=body)
+    assert status == 422
+    _assert_no_state_delta(before)
+
+
+def test_subscribe_422_invalid_categories_no_state_delta(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    before = _state_snapshot()
+    body = _push_subscribe_body(categories=["broadcast"])
+    status, _, _ = _post(host, port, "/api/push/subscribe", body=body)
+    assert status == 422
+    _assert_no_state_delta(before)
+
+
+def test_subscribe_503_vapid_missing_no_state_delta(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    # No _seed_vapid() — defensive 503 path.
+    before = _state_snapshot()
+    status, _, _ = _post(
+        host, port, "/api/push/subscribe", body=_push_subscribe_body()
+    )
+    assert status == 503
+    _assert_no_state_delta(before)
+
+
+def test_subscribe_413_oversize_no_state_delta(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    before = _state_snapshot()
+    huge = b"{" + b"x" * (ui_server._PUSH_BODY_MAX_BYTES + 1)
+    status, _, _ = _post(host, port, "/api/push/subscribe", body=huge)
+    assert status == 413
+    _assert_no_state_delta(before)
+
+
+def test_subscribe_400_malformed_json_no_state_delta(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    before = _state_snapshot()
+    body = (
+        b'{"subscription": {"endpoint": "https://x/sentinel-DO-NOT-LEAK",'
+        b' "keys"'
+    )
+    status, _, _ = _post(host, port, "/api/push/subscribe", body=body)
+    assert status == 400
+    _assert_no_state_delta(before)
+
+
+def test_subscribe_422_top_level_array_no_state_delta(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    before = _state_snapshot()
+    status, _, _ = _post(
+        host, port, "/api/push/subscribe", body=b'["DO-NOT-LEAK"]'
+    )
+    assert status == 422
+    _assert_no_state_delta(before)
+
+
+def test_unsubscribe_404_no_state_delta(
+    ui_http: tuple[str, int]
+) -> None:
+    """Pin §11.6.13 binding (also): 404 path emits zero bus
+    events AND zero store delta."""
+    host, port = ui_http
+    _seed_vapid()
+    before = _state_snapshot()
+    status, _, _ = _post(
+        host, port, "/api/push/unsubscribe",
+        body=_push_unsubscribe_body(
+            endpoint="https://no.such.endpoint/DO-NOT-LEAK"
+        ),
+    )
+    assert status == 404
+    _assert_no_state_delta(before)
+
+
+def test_unsubscribe_400_malformed_json_no_state_delta(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    before = _state_snapshot()
+    body = b'{"endpoint": "https://x/DO-NOT-LEAK",'  # truncated
+    status, _, _ = _post(host, port, "/api/push/unsubscribe", body=body)
+    assert status == 400
+    _assert_no_state_delta(before)
+
+
+def test_unsubscribe_422_top_level_number_no_state_delta(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    before = _state_snapshot()
+    status, _, _ = _post(
+        host, port, "/api/push/unsubscribe", body=b"42"
+    )
+    assert status == 422
+    _assert_no_state_delta(before)
+
+
+def test_unsubscribe_413_oversize_no_state_delta(
+    ui_http: tuple[str, int]
+) -> None:
+    host, port = ui_http
+    _seed_vapid()
+    before = _state_snapshot()
+    huge = b"{" + b"x" * (ui_server._PUSH_BODY_MAX_BYTES + 1)
+    status, _, _ = _post(host, port, "/api/push/unsubscribe", body=huge)
+    assert status == 413
+    _assert_no_state_delta(before)

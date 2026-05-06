@@ -478,28 +478,27 @@ def test_unsubscribe_404_converges_with_no_bus_event(
 def test_unsubscribe_browser_failure_after_204_can_retry_via_404(
     push_http: tuple[str, int, Path, Path],
 ) -> None:
-    """Pin §11.6.13 binding (round-2 follow-up): first attempt
-    POST 204 mutates the store + emits one push_unsubscribe;
-    subscription.unsubscribe() rejects; the modal foot surfaces
-    an editorial error.
+    """Pin §11.6.13 binding: full two-attempt flow.
 
-    The brief's retry path — operator re-opens the modal,
-    sees POST 404 (store already empty), browser unsubscribe
-    succeeds the second time — depends on the modal showing
-    the unsubscribe verb for an orphaned-browser state
-    (server count=0 + browser still subscribed). The current
-    push.js gates the post-subscribe layout on the SERVER's
-    count, so the orphan retry path is not reachable from
-    UI-12b's modal alone. The brief's pin §11.6.13 binding is
-    that the BUS COUNT stays at exactly 1 across the whole
-    flow — that invariant is the contract this test pins.
+    First attempt: POST 204 mutates the store + emits one
+    push_unsubscribe. subscription.unsubscribe() rejects (one-
+    shot via __karasuPushSetUnsubscribeFail(true)); the modal
+    foot surfaces an editorial error and re-enables the
+    Unsubscribe button.
 
-    Orphan recovery beyond the first attempt is documented in
-    docs/local-dogfood.md as an operator-side step (clear the
-    browser's notification permission OR wait for UI-12c's 410
-    prune to clean up the orphaned subscription on the push
-    service side). The test verifies the bus contract; the
-    operator-recovery surface is out of UI-12b scope.
+    Retry: operator clicks Unsubscribe again WHILE THE MODAL
+    IS STILL OPEN. push.js calls getSubscription() (returns
+    the still-subscribed fake), POSTs /api/push/unsubscribe
+    (server returns 404 because the first 204 already emptied
+    the store), audit_emitted=false branch fires (no bus
+    event), then subscription.unsubscribe() succeeds (the
+    one-shot fail flag has reset), modal closes, footer flips
+    to "off".
+
+    Pin §11.6.13 binding: the bus push_unsubscribe count
+    across BOTH attempts is exactly 1 (from the first 204);
+    the 404 retry path emits zero events per the
+    audit-event-correspondence invariant.
     """
     host, port, bus, push_store = push_http
     _seed_vapid(push_store)
@@ -519,8 +518,8 @@ def test_unsubscribe_browser_failure_after_204_can_retry_via_404(
         try:
             page.wait_for_selector("#footer-push.is-on", timeout=5000)
 
-            # Force the browser unsubscribe to reject on the
-            # next call.
+            # First attempt — force the browser unsubscribe to
+            # reject on the next call.
             page.evaluate("__karasuPushSetUnsubscribeFail(true)")
             page.locator("#footer-push").click()
             page.locator("#push-modal").wait_for(state="visible", timeout=2000)
@@ -538,16 +537,45 @@ def test_unsubscribe_browser_failure_after_204_can_retry_via_404(
             # Browser mock still claims subscribed=true because
             # the rejected unsubscribe didn't flip the flag.
             assert mock_state["subscribed"] is True
+            # First 204 emitted exactly one push_unsubscribe.
+            assert len(_push_decisions(bus, "push_unsubscribe")) == 1
+            # Store IS empty (the 204 mutated it before the
+            # browser unsubscribe rejected).
+            raw = json.loads(push_store.read_text(encoding="utf-8"))
+            assert raw["subscriptions"] == []
+
+            # Retry — modal is still open, button re-enabled.
+            # confirmPushUnsubscribe will:
+            #   1. getSubscription() → still-subscribed fake.
+            #   2. POST /api/push/unsubscribe → real server
+            #      returns 404 (store already empty).
+            #   3. audit_emitted=false branch → no bus event.
+            #   4. subscription.unsubscribe() → succeeds (the
+            #      one-shot fail flag has reset to false).
+            #   5. modal closes; footer flips to "off".
+            page.locator("#push-modal-unsubscribe").click()
+
+            # Modal should close on success.
+            page.locator("#push-modal").wait_for(
+                state="hidden", timeout=5000
+            )
+
+            mock_state = page.evaluate("__karasuPushMockState()")
+            # Browser unsubscribe was attempted TWICE total
+            # across the two clicks; second call resolved.
+            assert mock_state["unsubscribeCalls"] == 2
+            # Mock now reports unsubscribed.
+            assert mock_state["subscribed"] is False
         finally:
             browser.close()
 
     # Pin §11.6.13 binding: total bus count of push_unsubscribe
     # events is exactly 1 (from the first POST 204), regardless
-    # of the rejected browser unsubscribe. The 204 IS the audit
-    # truth; the browser-side retry does not produce additional
-    # bus events.
+    # of the rejected browser unsubscribe + the retry. The 204
+    # IS the audit truth; the 404 retry path emits zero events
+    # per the audit-event-correspondence invariant.
     assert len(_push_decisions(bus, "push_unsubscribe")) == 1
-    # Store IS empty (the 204 mutated it before the browser
-    # unsubscribe rejected).
+    # Store remains empty (no further mutation on the 404
+    # retry path).
     raw = json.loads(push_store.read_text(encoding="utf-8"))
     assert raw["subscriptions"] == []

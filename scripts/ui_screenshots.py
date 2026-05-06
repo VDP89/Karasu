@@ -1503,6 +1503,62 @@ CAPTURES: dict[str, list[dict]] = {
 # (``seed_events``, ``wait_ms``, ``eval_js``); ``_record_video``
 # applies them in order between the page.goto and the context
 # close.
+# UI-12b §11.6.10 recording mock — drives PushManager.subscribe /
+# getSubscription against an in-memory fake so the .webm captures
+# the operator-felt subscribe → confirm → footer "on" → unsubscribe
+# flow without a real Web Push service. Mirrors the test_ui_push_modal
+# init script; kept inline here so the recording walker is
+# self-contained.
+_PUSH_RECORDING_MOCK = r"""
+(() => {
+    const TEST_ENDPOINT =
+        'https://fcm.googleapis.com/screenshot-recording-endpoint';
+    let subscribed = false;
+    const fakeSubscription = {
+        endpoint: TEST_ENDPOINT,
+        toJSON() {
+            return {
+                endpoint: TEST_ENDPOINT,
+                keys: { p256dh: 'recordingP256dh', auth: 'recordingAuth' },
+            };
+        },
+        async unsubscribe() {
+            subscribed = false;
+            return true;
+        },
+    };
+    Object.defineProperty(navigator, 'serviceWorker', {
+        configurable: true,
+        value: {
+            ready: Promise.resolve({
+                pushManager: {
+                    async subscribe() { subscribed = true; return fakeSubscription; },
+                    async getSubscription() {
+                        return subscribed ? fakeSubscription : null;
+                    },
+                },
+            }),
+            register: () => Promise.resolve({}),
+            addEventListener: () => {},
+        },
+    });
+    if (!('PushManager' in window)) window.PushManager = function () {};
+    if (!('Notification' in window)) {
+        window.Notification = {
+            permission: 'granted',
+            requestPermission: async () => 'granted',
+        };
+    } else {
+        window.Notification.requestPermission = async () => 'granted';
+        Object.defineProperty(window.Notification, 'permission', {
+            configurable: true,
+            get: () => 'granted',
+        });
+    }
+})();
+"""
+
+
 RECORDINGS: dict[str, dict] = {
     "UI-5-crow": {
         "viewport": {"width": 1024, "height": 640},
@@ -1690,6 +1746,104 @@ RECORDINGS: dict[str, dict] = {
             {
                 "eval_js": "document.getElementById('drawer-backdrop').click()",
                 "wait_ms": 500,
+            },
+        ],
+    },
+    # UI-12b §11.6.10 — operator-felt subscribe → footer "on" →
+    # unsubscribe → footer "off" walkthrough. Pin §11.6.10 binding:
+    # the .webm must read as deliberate operator intent, not as a
+    # settings panel flow. The PushManager mock injected via
+    # init_scripts lets the recording walker drive the full
+    # client-side subscribe/unsubscribe flow against the real UI
+    # server (the server validates the mock subscription's HTTPS
+    # endpoint + keys + categories and lands a subscription in the
+    # store; the next loadPushState picks it up and flips the
+    # footer to "on").
+    "UI-12-push": {
+        "viewport": {"width": 1024, "height": 640},
+        "url": "/",
+        "init_scripts": [_PUSH_RECORDING_MOCK],
+        "grant_permissions": ["notifications"],
+        "frames": [
+            # Frame 0: page boots with VAPID seeded but no
+            # subscription. Footer reads "off".
+            {
+                "push_seed": [],
+                "wait_ms": 800,
+            },
+            # Frame 1: open the modal via openPushModal (proxy
+            # for the operator clicking the footer affordance —
+            # the cursor is not visible in headless recordings,
+            # so the modal-open transition is the operator-felt
+            # signal).
+            {
+                "eval_js": (
+                    "(async () => { "
+                    "  if (typeof window.loadPushState === 'function') "
+                    "    await window.loadPushState(); "
+                    "  if (typeof window.openPushModal === 'function') "
+                    "    window.openPushModal(); "
+                    "})();"
+                ),
+                "wait_ms": 1000,
+            },
+            # Frame 2: click "Enable notifications" — drives the
+            # full confirmPushSubscribe flow (mock requestPermission
+            # → mock subscribe → real POST /api/push/subscribe →
+            # 204 → modal closes).
+            {
+                "eval_js": (
+                    "(async () => { "
+                    "  document.getElementById('push-modal-confirm').click(); "
+                    "  await new Promise(r => setTimeout(r, 800)); "
+                    "})();"
+                ),
+                "wait_ms": 1500,
+            },
+            # Frame 3: refresh footer state. The store now has
+            # one subscription → "on" branch fires.
+            {
+                "eval_js": (
+                    "(async () => { "
+                    "  if (typeof window.loadPushState === 'function') "
+                    "    await window.loadPushState(); "
+                    "})();"
+                ),
+                "wait_ms": 800,
+            },
+            # Frame 4: re-open the modal. Post-subscribe layout
+            # (state row + Update categories + Unsubscribe).
+            {
+                "eval_js": (
+                    "(async () => { "
+                    "  if (typeof window.openPushModal === 'function') "
+                    "    window.openPushModal(); "
+                    "})();"
+                ),
+                "wait_ms": 1200,
+            },
+            # Frame 5: click "Unsubscribe this browser" — drives
+            # confirmPushUnsubscribe (mock getSubscription → real
+            # POST /api/push/unsubscribe → 204 → mock unsubscribe
+            # → modal closes).
+            {
+                "eval_js": (
+                    "(async () => { "
+                    "  document.getElementById('push-modal-unsubscribe').click(); "
+                    "  await new Promise(r => setTimeout(r, 800)); "
+                    "})();"
+                ),
+                "wait_ms": 1200,
+            },
+            # Frame 6: refresh footer state. Store empty → "off".
+            {
+                "eval_js": (
+                    "(async () => { "
+                    "  if (typeof window.loadPushState === 'function') "
+                    "    await window.loadPushState(); "
+                    "})();"
+                ),
+                "wait_ms": 600,
             },
         ],
     },
@@ -2015,12 +2169,26 @@ def _record_video(slug: str, port: int, workdir: Path) -> None:
                     file=sys.stderr,
                 )
                 sys.exit(2)
-            context = browser.new_context(
-                viewport=viewport,
-                record_video_dir=str(raw_path),
-                record_video_size=viewport,
-            )
+            context_kwargs = {
+                "viewport": viewport,
+                "record_video_dir": str(raw_path),
+                "record_video_size": viewport,
+            }
+            # UI-12-push needs a permission grant for the
+            # Notification API stub to resolve to ``granted``.
+            grant_perms = plan.get("grant_permissions")
+            if grant_perms:
+                context_kwargs["permissions"] = list(grant_perms)
+            context = browser.new_context(**context_kwargs)
             page = context.new_page()
+
+            # Plan-level init scripts (UI-12b: PushManager mock
+            # so the recording can drive subscribe / unsubscribe
+            # without a real push service). add_init_script
+            # injects BEFORE any page script runs.
+            for script in plan.get("init_scripts", []):
+                page.add_init_script(script)
+
             try:
                 # Boot frame: the page renders against whatever the
                 # server sees on the bus right now. We seed the
@@ -2033,6 +2201,7 @@ def _record_video(slug: str, port: int, workdir: Path) -> None:
                     events=_resolve_seed_events(first),
                     scars=first.get("seed_scars"),
                     config=first.get("seed_config"),
+                    push_subscriptions=first.get("push_seed"),
                 )
                 page.goto(f"http://127.0.0.1:{port}{plan['url']}")
                 page.wait_for_load_state("networkidle")
@@ -2046,6 +2215,7 @@ def _record_video(slug: str, port: int, workdir: Path) -> None:
                             events=seed_events,
                             scars=frame.get("seed_scars"),
                             config=frame.get("seed_config"),
+                            push_subscriptions=frame.get("push_seed"),
                         )
                         # Force an immediate /api/health + /api/events
                         # round-trip so the next CSS class swap fires
@@ -2053,6 +2223,14 @@ def _record_video(slug: str, port: int, workdir: Path) -> None:
                         # ``tick`` is a top-level async function in
                         # the page script.
                         page.evaluate("async () => { await tick(); }")
+                    elif "push_seed" in frame:
+                        # Frame seeds push state without bus events
+                        # (UI-12b recording). Re-write the push
+                        # store but keep the bus alone.
+                        _seed_workdir(
+                            workdir,
+                            push_subscriptions=frame["push_seed"],
+                        )
                     if "eval_js" in frame:
                         page.evaluate(frame["eval_js"])
                     page.wait_for_timeout(frame.get("wait_ms", 1000))

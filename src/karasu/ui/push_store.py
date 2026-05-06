@@ -48,10 +48,11 @@ import os
 import stat
 import sys
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 
 _log = logging.getLogger(__name__)
@@ -240,11 +241,158 @@ class PushStoreNotFound(Exception):
 # read-modify-write transactions — without this lock, two
 # threads both reading the same old store and writing diverging
 # tmp files race, and the later rename clobbers the earlier
-# mutation (lost-update). One Lock per process is sufficient
-# because http.server's ThreadingHTTPServer is the only writer
-# in scope; UI-12c re-audits the boundary if a second writer
-# process appears (filesystem lockfile graduation).
+# mutation (lost-update).
+#
+# UI-12c §3-G + forward-carry pin (d) — the in-process
+# threading.Lock is no longer sufficient on its own: ``karasu
+# ui`` (UI-12b POST handlers) and ``karasu watch`` (UI-12c
+# auto-VAPID-seed + 410/404 prune) are SEPARATE processes that
+# both write the same ``karasu-push.json``. The in-process Lock
+# stays — it serialises threads inside one process — and is now
+# COMPOSED with a cross-process filesystem lockfile by
+# :func:`_with_store_lock`. The two locks layer cleanly:
+#
+#   * The thread Lock is fast (no syscall) and prevents a
+#     ThreadingHTTPServer worker from racing another worker in
+#     the SAME ``karasu ui`` process.
+#   * The filesystem lockfile (``<store>.lock``) prevents
+#     ``karasu ui`` and ``karasu watch`` from clobbering each
+#     other across processes.
 _STORE_LOCK = threading.Lock()
+
+
+# ---------------------------------------------------------------------------
+# UI-12c §3-G — cross-process file lock
+# ---------------------------------------------------------------------------
+
+
+def _flock_exclusive(fh: Any) -> None:
+    """Acquire an exclusive cross-process lock on the given handle.
+
+    Brief §3-G binding:
+
+      * POSIX  — ``fcntl.flock(LOCK_EX)``. Region-agnostic; locks
+        the whole inode.
+      * Windows — ``msvcrt.locking(LK_LOCK, 1)`` against byte 0
+        of the file. Mandatory ``seek(0)`` first because the
+        ``"ab"`` open leaves the file pointer at EOF, and
+        ``msvcrt.locking`` is REGION-BASED from the current
+        pointer. Without seek the lock would target a region
+        beyond EOF (which Windows allocates as zero-filled
+        extension), letting two processes hold "different" locks
+        against the same .lock file.
+
+    Codex P1 round 2 binding (UI-12c brief §3-G Windows region
+    discipline). Tests in ``test_push_store_lock_file.py`` assert
+    the seek-then-lock-byte-0 invariant via a recording spy.
+    """
+    if sys.platform.startswith("win"):  # pragma: no cover - Windows-only
+        import msvcrt
+
+        fh.seek(0)
+        msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+    else:  # pragma: no cover - POSIX-only
+        import fcntl
+
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+
+
+def _flock_release(fh: Any) -> None:
+    """Release the exclusive lock acquired by :func:`_flock_exclusive`.
+
+    Symmetric with the acquire path: POSIX uses ``LOCK_UN``,
+    Windows seeks to byte 0 again and unlocks the SAME 1 byte
+    region. The seek is mandatory on Windows for the same reason
+    as acquire — different region offsets would leave the lock
+    held silently.
+
+    Safe to call even when the file pointer was moved by
+    intervening reads (we explicitly seek to 0 before the unlock
+    call).
+    """
+    if sys.platform.startswith("win"):  # pragma: no cover - Windows-only
+        import msvcrt
+
+        fh.seek(0)
+        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+    else:  # pragma: no cover - POSIX-only
+        import fcntl
+
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def _with_store_lock(store_path: Path) -> Iterator[None]:
+    """Hold both the in-process Lock AND the cross-process flock
+    for the duration of the ``with`` block.
+
+    Layered acquire order:
+
+      1. ``_STORE_LOCK`` (in-process Lock) — fast, contends only
+         with sibling threads in the SAME process.
+      2. Open ``<store_path>.lock`` in append-binary mode (creates
+         the file if absent; never writes content).
+      3. ``_flock_exclusive(fh)`` — blocks until any other process
+         holding the lock releases it.
+
+    Release order is reversed (flock → close fh → release thread
+    Lock). The .lock file itself is left on disk — kernels release
+    the lock on file-handle close (POSIX) or on
+    ``msvcrt.LK_UNLCK`` (Windows), so a stale .lock file is
+    harmless on its own (no automatic cleanup, per brief §3-G
+    "stale-lock recovery: NONE in UI-12c").
+
+    The lock file path is computed as
+    ``store_path.with_suffix(store_path.suffix + ".lock")`` so a
+    store at ``karasu-push.json`` locks via
+    ``karasu-push.json.lock`` (parallel to the ``.tmp`` staging
+    file from UI-12b §3-E).
+    """
+    with _STORE_LOCK:
+        lock_path = store_path.with_suffix(store_path.suffix + ".lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        # ``ab`` = binary append, create-if-missing. The lock byte
+        # is region 0; ``msvcrt.locking`` against a fresh 0-byte
+        # file extends it to 1 byte (NTFS allocates a zero-filled
+        # extension), which is the agreed convention.
+        fh = open(lock_path, "ab")
+        try:
+            _flock_exclusive(fh)
+            try:
+                yield
+            finally:
+                _flock_release(fh)
+        finally:
+            fh.close()
+
+
+def seed_vapid(
+    store_path: Path,
+    *,
+    public: str,
+    private: str,
+) -> None:
+    """Persist a VAPID keypair to the store.
+
+    Used by UI-12c's auto-bootstrap path on first
+    ``karasu watch`` start (see :mod:`karasu.push_emit._keys`).
+    Held under :func:`_with_store_lock` so a concurrent UI-12b
+    subscribe POST cannot interleave between the read and the
+    rewrite.
+
+    Idempotent on the keys: the caller (``bootstrap_if_missing``)
+    already short-circuits when both keys are present. Calling
+    this directly with new keys overwrites the section
+    unconditionally; existing ``subscriptions`` are preserved.
+
+    Pin §11.6.16 binding: NEVER log the key material. The caller
+    logs ``"generated VAPID keypair"`` without lengths or
+    fragments.
+    """
+    with _with_store_lock(store_path):
+        store = _read_or_empty_store(store_path)
+        store["vapid"] = {"public": public, "private": private}
+        _atomic_write(store_path, store)
 
 
 def has_vapid_keys(store_path: Path) -> bool:
@@ -318,17 +466,21 @@ def append_subscription(
     is preserved. New entries get the same ``created_at`` and
     ``updated_at`` on first append.
 
-    Held under :data:`_STORE_LOCK` for the full transaction
-    (pin §11.6.15). The atomic tmp+rename inside
-    :func:`_atomic_write` keeps the file integrity guarantee;
-    the lock keeps the read-modify-write atomicity guarantee.
+    Held under :func:`_with_store_lock` for the full transaction
+    — the in-process :data:`_STORE_LOCK` (pin §11.6.15) AND the
+    cross-process file lock (UI-12c §3-G + forward-carry pin (d)).
+    The atomic tmp+rename inside :func:`_atomic_write` keeps the
+    file integrity guarantee; the lock keeps the read-modify-write
+    atomicity guarantee across both threads in this process and
+    siblings in any other ``karasu`` process touching the same
+    store.
     """
     endpoint = subscription["endpoint"]
     endpoint_hash = compute_endpoint_hash(endpoint)
     keys = subscription["keys"]
     now = _utc_now_iso8601()
 
-    with _STORE_LOCK:
+    with _with_store_lock(store_path):
         store = _read_or_empty_store(store_path)
         subs = store.setdefault("subscriptions", [])
         if not isinstance(subs, list):
@@ -391,12 +543,14 @@ def remove_subscription(store_path: Path, *, endpoint: str) -> None:
     a generic body that does NOT echo the supplied endpoint
     (pin §11.6.16).
 
-    Held under :data:`_STORE_LOCK` for the full read-modify-
-    write transaction (pin §11.6.15).
+    Held under :func:`_with_store_lock` for the full read-modify-
+    write transaction — in-process :data:`_STORE_LOCK`
+    (pin §11.6.15) layered with the cross-process file lock
+    (UI-12c §3-G).
     """
     endpoint_hash = compute_endpoint_hash(endpoint)
 
-    with _STORE_LOCK:
+    with _with_store_lock(store_path):
         store = _read_or_empty_store(store_path)
         subs = store.get("subscriptions")
         if not isinstance(subs, list):

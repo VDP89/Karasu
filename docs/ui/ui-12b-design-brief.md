@@ -22,14 +22,14 @@
 > first proactive write surface deserves the same brief-before-code
 > discipline UI-10 / UI-11 / UI-12 ratified.
 >
-> **STATUS:** Round 2 CHANGES-REQUIRED → fixes applied,
-> awaiting round 3. Operator sign-off complete (Victor,
-> 2026-05-06: "avanzar" — every default PROPOSAL accepted as
-> the binding contract). Codex audit round 1
-> CHANGES-REQUIRED (1 P0 + 5 P1 + 1 P2, all addressed
-> in-branch). Codex audit round 2 CHANGES-REQUIRED (3 P1 +
-> 1 P2, all addressed in-branch). Round 3 pending
-> out-of-band. Loop budget: 2 of 5 consumed.
+> **STATUS:** APPROVED-with-observations — mergeable. Operator
+> sign-off complete (Victor, 2026-05-06: "avanzar"). Codex
+> audit closed at round 3 of 5: round 1 CHANGES-REQUIRED
+> (1 P0 + 5 P1 + 1 P2, all addressed in-branch); round 2
+> CHANGES-REQUIRED (3 P1 + 1 P2, all addressed in-branch);
+> round 3 APPROVED-with-observations (1 P2 pin-5 wording
+> tightening, applied). Sixteen §11.6 pins ratified as
+> binding for UI-12b implementation.
 
 ## 0 · Why this brief exists
 
@@ -1954,11 +1954,18 @@ All bind UI-12b implementation. Verbatim:
     sw.js diff in the PR commit ordering.
 5.  Privacy negative-shape test MUST cover both POSTs +
     /api/push body + log capture (raw endpoint absent
-    everywhere) AND every error branch that accepts an
-    endpoint in the request body (422 / 404 / 413 / 503).
-    Sentinel-substring assertions are mandatory on every
-    error response body, every captured log, every store
-    delta, every bus event count.
+    everywhere) AND every error branch that accepts or
+    parses request body material, including 400 / 422 /
+    404 / 413 / 503. The 400 branch (malformed JSON / non-
+    UTF-8 bytes) and the 422 branches (non-object body,
+    field-level validation) are mandatory because they
+    fire BEFORE field validation and can leak request
+    fragments through parser exception messages or echoed
+    bodies if the implementation is sloppy. Sentinel-
+    substring assertions are mandatory on every error
+    response body, every captured log, every store delta,
+    every bus event count, and every JSONDecodeError /
+    UnicodeDecodeError repr.
 6.  Idempotent subscribe MUST emit a push_subscribe event
     each time (operator's intent is authoritative).
 7.  0600 mode warning MUST surface when the writer
@@ -2048,8 +2055,8 @@ shape) + pin §11.6.16 (raw endpoint never on /api/*).
 ## 12 · Status
 
 ```text
-Brief status:        Round 1 CHANGES-REQUIRED → in-branch
-                     fixes applied; awaiting round 2.
+Brief status:        APPROVED-with-observations + operator
+                     sign-off complete. Mergeable.
 Operator sign-off:   COMPLETE (2026-05-06). Every §3 (A-F) +
                      §3.5 + §10 (1-10) PROPOSAL accepted as
                      the binding contract per default. The
@@ -2113,10 +2120,18 @@ Codex audit:         Round 1: CHANGES-REQUIRED (1 P0 + 5 P1
                             added (404 convergence,
                             post-204 browser-rejection retry).
 
-                     Loop budget: 2 of 5 consumed.
-                     Round 3 pending out-of-band; round-3
-                     verdict ferried back via Victor;
-                     additional follow-ups land in-branch.
+                     Round 3: APPROVED-with-observations
+                     (1 P2). Finding addressed in-branch:
+                       P2  Pin 5 verbatim wording extended
+                            to name 400 explicitly alongside
+                            422 / 404 / 413 / 503; mandatory
+                            sentinel assertions on every
+                            JSONDecodeError / UnicodeDecodeError
+                            repr called out.
+
+                     Codex audit CLOSED at round 3 of 5.
+                     Loop budget: 3 of 5 consumed.
+                     Sixteen §11.6 pins ratified as binding.
 Implementation:      BLOCKED on this brief's merge.
                      UI-12b code branch does NOT open until
                      this brief lands in main per UI-9

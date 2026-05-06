@@ -261,3 +261,31 @@ Discarded:
 - Global `defaults.adapter_timeout_s`: not needed yet; per-agent unblocks Phase 2 work and the operator can copy the same number into multiple agents until a default is required.
 - Coerce `0` to "no timeout": opaque footgun.
 
+
+---
+
+### UI-12c — `cryptography` runtime dep as named scoped exception (PR pending)
+
+Decision:
+- Add `cryptography>=42.0` to `pyproject.toml` `dependencies`.
+- Restrict the import to exactly THREE files under `src/karasu/push_emit/`:
+    - `_signing.py`     (VAPID JWT — RFC 8292 ES256)
+    - `_keys.py`        (VAPID keypair generation + bootstrap)
+    - `_encryption.py`  (RFC 8291 aes128gcm payload encryption)
+- Pin the import scope structurally with `tests/test_push_emit_import_scope.py` (lint-style walk over `src/karasu/`, regex against `from cryptography` / `import cryptography`).
+- Document the exception inline in `pyproject.toml` (the comment names the three allowed files explicitly).
+
+Reason:
+- UI-12c needs to sign VAPID JWTs and encrypt Web Push payloads. Both operations are infeasible with stdlib (Python's stdlib has no ECDSA / no AES-GCM).
+- UI-0 §4 forbids "new build / framework / runtime dependencies"; UI-12 §11.6.13 carved the exception specifically for this purpose, and the brief sealed Codex audits over 4 rounds with the named, scoped form.
+- Without the structural import-scope test, a future chunk could re-open the UI-0 §4 conversation by accident (e.g. by adding a HKDF call in another module). The test catches the regression at CI time.
+
+Scope (binding):
+- The exception applies ONLY to `cryptography` and ONLY to those three files.
+- Future chunks asking for additional runtime deps re-open the UI-0 §4 conversation per chunk; this precedent does NOT generalise.
+- `_dispatch.py` originally imported `cryptography.hazmat.primitives.asymmetric.ec` for a type annotation on `DispatcherConfig.private_key`. The import-scope test caught the leak; the type was relaxed to `Any` (with a comment pointing to `_signing.load_private_key` for the actual type). Type narrowing is sacrificed for the import-scope guarantee.
+
+Discarded:
+- A PEP 561 stub package vendored under `src/karasu/push_emit/_typing/` so `_dispatch.py` could keep the type annotation without importing `cryptography` at runtime. Rejected: increases surface area + indirection for a single dataclass field; `Any` + a comment is honest about what the dispatcher does (pass-through).
+- A `TYPE_CHECKING` guard in `_dispatch.py`. The import-scope regex would still flag the import statement, and reasoning about what's a runtime vs type-checking import is one more thing to audit.
+- Replacing `cryptography` with a pure-Python ECDSA library (e.g. `ecdsa`, `python-ecdsa`). Rejected: those libraries are not constant-time and have known side-channel vulnerabilities; `cryptography` (libsodium / OpenSSL backed) is the right primitive for any handling of operator key material.

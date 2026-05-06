@@ -49,8 +49,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from cryptography.hazmat.primitives.asymmetric import ec
-
 from karasu.eventbus import Event
 from karasu.push_emit._encryption import encrypt_payload
 from karasu.push_emit._signing import (
@@ -58,6 +56,16 @@ from karasu.push_emit._signing import (
     audience_for,
     sign_vapid_jwt,
 )
+
+# Pin §11.6.1 binding: ``cryptography`` MUST NOT be imported
+# anywhere except _signing.py / _keys.py / _encryption.py.
+# DispatcherConfig.private_key is therefore typed as ``Any``;
+# the underlying object is an ``ec.EllipticCurvePrivateKey``
+# produced by :func:`load_private_key` from _signing.py.
+# _dispatch.py only PASSES the object through to
+# :func:`sign_vapid_jwt` which lives behind the import scope
+# guard. Tests/test_push_emit_import_scope.py is the
+# structural lock against this drift.
 from karasu.ui.push_store import (
     PushStoreNotFound,
     _read_or_empty_store,
@@ -146,10 +154,15 @@ class DispatcherConfig:
     runs for the lifetime of the watcher. The private key is
     loaded once at start; rotation requires a watcher restart
     (brief §10.4).
+
+    ``private_key`` is typed ``Any`` so this module respects
+    the pin §11.6.1 cryptography import scope (the actual type
+    is ``ec.EllipticCurvePrivateKey`` from
+    :mod:`._signing.load_private_key`).
     """
 
     store_path: Path
-    private_key: ec.EllipticCurvePrivateKey
+    private_key: Any
     public_key_b64u: str
     subject: str
     ttl_seconds: int = DEFAULT_TTL_SECONDS

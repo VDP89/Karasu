@@ -466,103 +466,109 @@ Recommendation for early dogfood:
   chain) bounds further amplification when the implementation
   PR lands.
 
-## UI-12b — Manual VAPID seed (push notifications)
+## UI-12c — Push delivery walkthrough
 
-UI-12b ships the push opt-in surface (footer affordance →
-modal → POST `/api/push/subscribe` → store update → bus
-`human_decision`). It does NOT generate VAPID keys —
-the `cryptography` runtime dep that signs Web Push JWTs lands
-with UI-12c (named scoped exception per UI-12 §11.6.13).
+UI-12c closes the push loop: `karasu watch` runs the
+server-side emitter which classifies bus events into the
+closed enum (`attention`, `errors`, `corrections`), debounces
+per (subscription, category), encrypts payloads per RFC 8291,
+and POSTs VAPID-signed deliveries to FCM / APNs / Mozilla
+autopush. Telegram is no longer the only push channel.
 
-To dogfood UI-12b, the operator seeds VAPID keys manually with
-`openssl` and pastes the b64u-encoded values into
-`karasu-push.json`. This section is **REMOVED** when UI-12c
-lands (auto-generation supersedes the manual step).
+### First start
 
-### Generate
-
-VAPID keys are an ECDSA P-256 keypair. The public key is the
-65-byte uncompressed point (`0x04` prefix + 32-byte X + 32-byte
-Y). The private key is the 32-byte scalar. Both values are
-base64url-encoded with no padding for the on-disk store
-(matching the format `PushManager.subscribe` expects for
-`applicationServerKey`).
+`karasu watch` auto-generates a fresh ECDSA P-256 VAPID
+keypair on first start when `karasu-push.json` has no `vapid`
+section. The store is written under the cross-process file
+lock from UI-12c §3-G so a concurrent `karasu ui` POST
+handler cannot race the bootstrap.
 
 ```bash
-# Generate the keypair.
-openssl ecparam -genkey -name prime256v1 -noout -out vapid.pem
+# In one terminal — start the watcher (auto-generates VAPID
+# on first run).
+karasu watch
 
-# Public key — uncompressed point, b64url, no padding.
-openssl ec -in vapid.pem -pubout -outform DER 2>/dev/null \
-  | tail -c 65 \
-  | base64 -w0 \
-  | tr '+/' '-_' \
-  | tr -d '='
-
-# Private key — 32-byte scalar, b64url, no padding.
-openssl ec -in vapid.pem -outform DER 2>/dev/null \
-  | tail -c 32 \
-  | base64 -w0 \
-  | tr '+/' '-_' \
-  | tr -d '='
+# In another terminal — start the UI (read-only over the bus,
+# UI-12b POST handlers for subscribe / unsubscribe).
+karasu ui
 ```
 
-### Seed `karasu-push.json`
+The keypair is durable: subsequent `karasu watch` starts
+read the existing pair and skip generation. Rotation is
+operator-driven (delete `karasu-push.json` + restart); the
+emitter never rotates automatically because doing so would
+invalidate every existing browser subscription (UI-12 §10.4
+binding).
 
-The store path defaults to `<bus_dir>/karasu-push.json` (next
-to `events.jsonl`). Override with `karasu ui --push-store
-<path>`. The file mode MUST be `0o600` on POSIX — the writer
-emits a loud-stderr warning if it observes a looser mode and
-will not silently re-mode an existing file (the next write +
-rename lands a fresh `0o600` replacement, so the end-state is
-correct, but the warning is the operator's signal to
-investigate why the file ever had a looser mode).
+The `mailto:` claim in the VAPID JWT defaults to
+`operator@localhost.invalid`. Production deployments should
+configure a real address in `karasu.yaml`:
 
-Seed shape (the writer adds `subscriptions` on first
-subscribe; the manual seed only needs the `vapid` block):
-
-```json
-{
-  "vapid": {
-    "public":  "<paste b64url public key here>",
-    "private": "<paste b64url private key here>"
-  }
-}
+```yaml
+push:
+  contact_email: ops@example.com
 ```
 
-Mode + ownership:
+### Subscribe a browser
 
-```bash
-chmod 600 karasu-push.json
+1. Open the surface in a desktop or mobile browser.
+2. The footer reads `Notifications: off` (supported, no
+   subscription). Click → the modal opens with the three
+   categories pre-checked.
+3. Click `Enable notifications` → the browser prompts for OS
+   permission → grant → the subscription lands in the store
+   and the footer flips to `Notifications: on`.
+
+### Trigger a push
+
+The category classifier is conservative — better to miss a
+marginal push than flood the OS notification tray. Two easy
+attention triggers:
+
+* `/scar` from Telegram against the latest `agent_response`
+  — the controller resubmits with `priority=high`, the
+  resubmit loops back as a `human_decision` with
+  `source="telegram"` (NOT `source="ui"`), and the classifier
+  routes it to the `corrections` category for any browser
+  subscribed to that bucket.
+* A `file_change` whose dispatch produces an
+  `agent_response` with `requires_human=True` (e.g. an
+  adapter that hits a guardrail) → `attention`.
+
+### Receive the push
+
+The OS notification tray shows the `§3-H` payload:
+
+```text
+Karasu paused — operator review needed.
 ```
 
-The store is gitignored alongside `events.jsonl`. Never commit
-it. Never paste the private key into chat / logs / external
-issue trackers.
+(or `An adapter failed.` / `A scar was recorded out-of-band.`
+depending on the category). The body is intentionally empty;
+the title carries the editorial line. The tag is the singular
+`karasu` so a fresh push REPLACES pending notifications
+rather than stacking — the operator gets the latest pulse,
+not a queue.
 
-### Verify
+Click the notification → the SW `notificationclick` listener
+focuses an existing surface tab matching `/`, or opens a new
+one if none is open.
 
-`GET /api/push` returns the public key in
-`vapid_public_key`; the private key NEVER leaves the store.
-The footer affordance flips to "off" (supported, no
-subscription) when the seed lands; clicking opens the modal
-with the primary "Enable notifications" enabled. Without the
-seed, the modal still opens but the primary is disabled and
-the foot copy points back to this section (pin §11.6.14).
+### Tuning
 
-### Subscribe
-
-1. Run the openssl recipe above once (per Karasu instance).
-2. Paste both b64url values into `karasu-push.json`.
-3. `chmod 600 karasu-push.json`.
-4. Start `karasu ui`. Open the surface; the footer reads
-   "Notifications: off" (supported state, no subscription).
-5. Click the footer → modal opens → confirm → browser
-   prompts for permission → grant → subscription lands in
-   the store.
-6. Open the modal again to see the post-subscribe layout
-   ("Subscribed: 1 subscription" + "Update categories" +
-   "Unsubscribe this browser").
+* `karasu watch --push-debounce-ms 5000` — Layer-2 trailing
+  debounce default (brief §10.5). Lower for tight dogfood
+  loops where you want immediate feedback; higher for noisier
+  buses.
+* The Layer-3 dedupe ring is bounded at 64 events per
+  subscription, in-memory, restart-cleared. A second
+  identical event within the same `karasu watch` session is
+  dropped silently; restart and the next replay dispatches
+  again.
+* 410 / 404 from the push service prunes the subscription
+  silently. The operator does not get a "your subscription
+  expired" notice; the next visit to the surface shows one
+  fewer subscription in the count.
 
 ### TLS for cross-device dogfood
 
@@ -583,10 +589,15 @@ caddy reverse-proxy --from https://<lan-ip>:8443 \
 UI-13+ deployed surfaces earn their own brief covering
 certificate provisioning + auth + multi-operator push fan-out.
 
-### When UI-12c lands
+### Privacy invariants
 
-UI-12c auto-generates VAPID keys on first server start and
-removes this section in the SAME PR (UI-12c PR body documents
-the doc deletion). At that point, the operator-side step
-disappears; `karasu ui` boots with a fresh keypair if the
-store has no VAPID block.
+* Raw push endpoints are request-local secret material
+  (pin §11.6.16). They materialise ONLY as the outbound
+  request URL when delivering; never in logs, bus events,
+  request bodies, or screenshots.
+* The 410 / 404 prune emits ZERO bus events — server-side
+  housekeeping is silent (pin §11.6.13).
+* Transport-level failures log `endpoint_hash + exception
+  type` only; `urllib.error.URLError.reason` and similar can
+  carry the raw URL, so the dispatcher never passes the
+  exception object to a formatter.

@@ -89,6 +89,35 @@ def _scars_path(config: dict) -> Path:
     return Path(config.get("scars", {}).get("rules_path", str(DEFAULT_SCARS)))
 
 
+def _push_store_path(config: dict) -> Path:
+    """Default path for the UI-12 push subscription store.
+
+    Codex P1 (PR #98 round-1 audit): the store anchors next
+    to ``events.jsonl`` so the gitignored ``.karasu/`` parent
+    is reused. Operators can override with the
+    ``event_bus.path`` config (this helper follows along).
+    """
+    return _bus_path(config).parent / "karasu-push.json"
+
+
+def _push_contact_email(config: dict) -> str:
+    """VAPID ``sub`` claim contact email.
+
+    Read from ``push.contact_email`` in karasu.yaml. Defaults
+    to the placeholder per brief §10.4 — works for localhost
+    dogfood; production should configure a real address.
+    """
+    from karasu.push_emit import DEFAULT_CONTACT_EMAIL
+
+    push_cfg = config.get("push") or {}
+    if not isinstance(push_cfg, dict):
+        return DEFAULT_CONTACT_EMAIL
+    raw = push_cfg.get("contact_email")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return DEFAULT_CONTACT_EMAIL
+
+
 def _classifier(config: dict) -> RuleClassifier:
     rules = [
         ClassificationRule(**entry)
@@ -338,6 +367,26 @@ def cmd_watch(args: argparse.Namespace) -> int:
         debounce_ms=int(watch_cfg.get("debounce_ms", 250)),
     )
     controller.add_source(watcher)
+
+    # UI-12c — register PushEmit as a TriggerSource so the
+    # controller manages its lifecycle alongside the watcher.
+    # Bootstrap auto-generates a VAPID keypair on first start;
+    # subsequent starts read the existing pair. Brief §3-A
+    # binding: lives inside karasu watch (not karasu ui); the
+    # cross-process file lock from UI-12c §3-G serialises the
+    # prune writes against UI-12b's POST handlers.
+    from karasu.push_emit import PushEmit, PushEmitConfig
+
+    push_emit = PushEmit(
+        PushEmitConfig(
+            store_path=_push_store_path(config),
+            bus_path=bus.path,
+            contact_email=_push_contact_email(config),
+            debounce_seconds=float(args.push_debounce_ms) / 1000.0,
+        )
+    )
+    controller.add_source(push_emit)
+
     print(f"karasu watch: writing events to {bus.path}", file=sys.stderr)
     controller.run_forever()
     return 0
@@ -739,7 +788,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="path to karasu.yaml (default: ./karasu.yaml)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("watch", help="start the filesystem watcher").set_defaults(func=cmd_watch)
+    watch = sub.add_parser("watch", help="start the filesystem watcher")
+    watch.add_argument(
+        "--push-debounce-ms",
+        type=int,
+        default=5000,
+        metavar="MS",
+        help=(
+            "UI-12c per-(endpoint, category) trailing debounce "
+            "window in milliseconds. Brief §10.5 default 5000. "
+            "Lower for tight dogfood loops; higher for noisier "
+            "buses."
+        ),
+    )
+    watch.set_defaults(func=cmd_watch)
     sub.add_parser("status", help="print a summary of the event log").set_defaults(func=cmd_status)
 
     tail = sub.add_parser("tail", help="print events from the JSONL event log")

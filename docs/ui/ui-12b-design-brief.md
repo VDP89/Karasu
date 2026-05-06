@@ -22,9 +22,12 @@
 > first proactive write surface deserves the same brief-before-code
 > discipline UI-10 / UI-11 / UI-12 ratified.
 >
-> **STATUS:** CONFIRMED — operator sign-off complete (Victor,
-> 2026-05-06: "avanzar" — every default PROPOSAL accepted as the
-> binding contract). Codex audit pending out-of-band.
+> **STATUS:** CHANGES-REQUIRED → in-branch fixes applied,
+> awaiting round 2. Operator sign-off complete (Victor,
+> 2026-05-06: "avanzar" — every default PROPOSAL accepted as
+> the binding contract). Codex audit round 1 CHANGES-REQUIRED
+> (1 P0 + 5 P1 + 1 P2, all addressed in-branch). Round 2
+> pending out-of-band.
 
 ## 0 · Why this brief exists
 
@@ -414,6 +417,149 @@ Both endpoints sit inside `/api/*` and inherit the SW
 network-only contract (UI-8 fetch handler ordering, pin §11.6.12
 shape-locked in §3-D). Neither participates in any cache.
 
+#### Browser ⇄ store two-phase mutation contract (Codex P0 round 1, 2026-05-06)
+
+The browser owns the PushSubscription; the server owns the
+store. Each write path crosses both surfaces, so each path
+needs an explicit ordering + rollback rule. Without it,
+either side can be left holding state the other side does
+not know about.
+
+##### Subscribe — happy path
+
+```text
+1. Preflight: GET /api/push.
+   - If state != "supported" or vapid_public_key is null,
+     short-circuit per §3-A unsupported branch / §3-E
+     VAPID-not-provisioned branch. NO further calls.
+2. Open modal. Operator confirms categories + clicks
+   "Enable notifications".
+3. await Notification.requestPermission().
+   - If "denied" or "default": close modal, footer flips to
+     "denied" (denied case) or stays "off" (default).
+     EMIT NOTHING. NO PushManager call. NO POST.
+   - If "granted": continue.
+4. await registration.pushManager.subscribe({
+       userVisibleOnly: true,
+       applicationServerKey: <vapid_public_key bytes>
+   })
+   - On rejection (browser-side error, e.g. push service
+     unreachable): close modal, surface a single-sentence
+     editorial error in the modal footer ("Push service
+     unreachable. Try again."), no POST, no human_decision,
+     no store write. Operator can retry.
+   - On success: hold the PushSubscription object as
+     `subscription`.
+5. await fetch('/api/push/subscribe', {method, body, ...}).
+   - On 204: SUCCESS. Close modal. Re-fetch /api/push so
+     the footer flips to "on". The bus carries the
+     push_subscribe event by the next /api/events tick.
+   - On 422 / 413 / 503 / network failure / non-204:
+     ROLLBACK (next subsection).
+```
+
+##### Subscribe — rollback rule
+
+```text
+If step 5 returns anything other than 204, the browser
+holds a PushSubscription that the server has no record of.
+That is a leaked subscription — UI-12c would never reach
+it (because the store has no entry), but the push service
+would still hold the endpoint indefinitely.
+
+Rollback (synchronous, before user-visible feedback):
+
+  await subscription.unsubscribe()
+
+The frontend MUST call subscription.unsubscribe() on EVERY
+non-204 path. After rollback:
+  - Close the modal.
+  - Surface a single-sentence editorial error in the modal
+    footer that names the failure mode (network /
+    validation / VAPID not provisioned).
+  - EMIT NOTHING on the bus (no human_decision).
+  - The store is unchanged (the failed POST never wrote).
+  - The browser is unsubscribed (rollback restores parity).
+
+Both sides are now back to pre-attempt state; the operator
+can retry without the leaked subscription.
+```
+
+##### Unsubscribe — happy path + rollback
+
+```text
+1. Get current subscription from the browser:
+     subscription = await registration.pushManager.getSubscription()
+   - If null (browser already unsubscribed out-of-band, e.g.
+     OS-level revocation): the modal-foot "Unsubscribe this
+     browser" verb is NOT rendered. The server-side store
+     entry is orphaned; the operator can remove it via a
+     POST /api/push/unsubscribe with the endpoint observed
+     from /api/push.subscriptions (UI-13+ — out of UI-12b
+     scope). For UI-12b, an orphaned entry is noise UI-12c
+     emit will eventually prune (410 Gone from push
+     service) once UI-12c lands.
+   - If non-null: continue.
+2. await fetch('/api/push/unsubscribe', {endpoint, ...}).
+   - On 204: server side removed. Continue to step 3.
+   - On 404 (endpoint not in store — store was already
+     pruned): treat as success and continue to step 3.
+     Both sides converge to "unsubscribed".
+   - On 422 / 413 / network failure: surface error in modal
+     foot, do NOT call subscription.unsubscribe() — the
+     browser stays subscribed so a retry can complete the
+     server-side removal first.
+3. await subscription.unsubscribe()
+   - On rejection: surface error in modal foot. The store
+     is now empty for this endpoint but the browser still
+     holds the subscription. Operator must retry from the
+     modal (which will see getSubscription() return non-null
+     and offer the unsubscribe verb again; step 2 will
+     return 404 the second time and the flow converges).
+   - On success: close modal, footer flips to "off",
+     human_decision (push_unsubscribe) lands by the next
+     /api/events tick.
+
+Order matters: server-removal-first, then browser-unsubscribe.
+If the order were reversed (browser first), a network
+failure on step 2 would leave the store with a dead
+endpoint that UI-12c would dispatch against (push service
+returns 410, UI-12c prunes — eventually) but the operator
+would believe they had unsubscribed cleanly.
+```
+
+##### Test coverage (Playwright + HTTP)
+
+```text
+The Playwright cancel + confirm + Esc + backdrop +
+native-deny suite (§3-A) gains TWO new tests:
+
+  test_subscribe_post_failure_rolls_back_browser
+    Mock POST /api/push/subscribe to return 503.
+    Drive the full happy-path UI through to step 5.
+    Assert:
+      - subscription.unsubscribe was called exactly once.
+      - PushManager.getSubscription() returns null
+        post-rollback.
+      - Bus has zero push_subscribe events.
+      - Store has zero subscriptions delta.
+      - Modal foot displays an editorial error.
+
+  test_unsubscribe_browser_call_is_made_after_204
+    Drive the full happy-path UI through to step 3 of
+    unsubscribe. Mock POST /api/push/unsubscribe to return
+    204.
+    Assert:
+      - subscription.unsubscribe was called exactly once
+        AFTER the 204 lands.
+      - Bus carries exactly one push_unsubscribe event.
+      - Store has the entry removed.
+
+The HTTP shape lock in §7.3 already covers the server side
+of these flows; the Playwright tests pin the BROWSER side
+of the contract.
+```
+
 #### Privacy reaffirmations (binding)
 
 ```text
@@ -697,6 +843,52 @@ UI-12a shipped the READER side; the file path resolution
    cleanup that could mask a concurrent write.
 ```
 
+#### Writer lock — read-modify-write atomicity (Codex P1 round 1, 2026-05-06)
+
+```text
+The atomic tmp+rename guarantees the FILE on disk is never
+partially written, but it does NOT guarantee read-modify-write
+atomicity across concurrent server threads. Two threads can
+both call push_store.read, both produce diverging entry sets,
+both write tmp + rename sequentially — the later write
+clobbers the earlier mutation (lost-update race).
+
+UI-12b closes this with a module-level threading.Lock held
+across the FULL transaction (read + mutate + write + rename):
+
+  _STORE_LOCK = threading.Lock()
+
+  def append_subscription(store_path, subscription_dict):
+      with _STORE_LOCK:
+          state = read(store_path)
+          state = _mutate(state, subscription_dict)
+          _atomic_write(store_path, state)
+
+  def remove_subscription(store_path, endpoint):
+      with _STORE_LOCK:
+          state = read(store_path)
+          state = _filter(state, endpoint)
+          _atomic_write(store_path, state)
+
+The lock is module-level (single Lock instance per process)
+because the http.server thread pool is the only writer in
+scope. The lock is held for the full transaction, NOT
+released between read and write.
+
+Multi-process scope is OUT OF SCOPE for UI-12b — only one
+`karasu ui` instance writes to a given store path. If a
+future chunk introduces a second writer process (e.g. the
+UI-12c server-side emitter writes back prune metadata), the
+lock graduates to a filesystem lockfile (e.g. fcntl.flock
+on POSIX, msvcrt.locking on Windows) held across the same
+transaction. UI-12c re-audits this boundary in its own PR.
+
+The .tmp-already-exists branch (step 5 above) remains as
+defence-in-depth against a process crash that left a stale
+.tmp behind across restarts; the lock prevents lost updates
+WITHIN a single process lifetime.
+```
+
 `remove_subscription(store_path, endpoint)`:
 
 ```text
@@ -743,8 +935,55 @@ Windows:
 Pin §11.6.13 binding: the `cryptography` runtime dep is the
 named, scoped exception that lands with **UI-12c**, not earlier.
 
+##### UI behavior when vapid_public_key is null (Codex P1 round 1, 2026-05-06)
+
 ```text
-On first POST /api/push/subscribe, if the store has no
+The browser CANNOT call PushManager.subscribe without an
+applicationServerKey, and applicationServerKey IS the VAPID
+public key the server published via GET /api/push. If the
+store has no VAPID section, /api/push.vapid_public_key is
+null. The frontend MUST detect this and short-circuit BEFORE
+the native permission prompt fires:
+
+  loadPushState():
+    state = await fetch('/api/push').json()
+    if state.vapid_public_key is null:
+      mark UI as VAPID-not-provisioned (see below)
+      footer continues to render "Notifications: off"
+    else:
+      normal flow
+
+  Modal opening from footer click is ALLOWED in the VAPID-
+  not-provisioned state — the modal is the place where the
+  operator finds out WHY they cannot subscribe yet — but:
+    - The "Enable notifications" primary button is DISABLED
+      (--fg-3 weight, aria-disabled="true").
+    - A single-line copy renders below the categories,
+      replacing the foot copy "Confirming will ask your
+      browser for notification permission." with:
+        "VAPID keys not provisioned. See
+         docs/local-dogfood.md for manual setup."
+    - Notification.requestPermission is NEVER called from
+      this state (pin §11.6.2 carry-forward — no permission
+      prompt without operator confirmation, and the operator
+      cannot confirm because the primary is disabled).
+    - PushManager.subscribe is NEVER called.
+    - Cancel / Esc / backdrop close the modal as usual; no
+      state mutation, no human_decision.
+
+  The server-side 503 (next subsection) STAYS as defensive
+  behaviour for forged or stale clients that bypass the
+  preflight — e.g. an operator running a UI tab from before
+  the keys were provisioned, then the keys appear, then the
+  client sends a stale request. The 503 ensures the server
+  never accepts a subscribe POST that would fail downstream
+  in UI-12c emit.
+```
+
+##### Server-side 503 (defensive, not the primary gate)
+
+```text
+On POST /api/push/subscribe, if the store has no
 "vapid" section OR the section lacks `public` / `private`:
   - The handler returns 503 with body
     {"error": "vapid keys not provisioned"}.
@@ -982,9 +1221,13 @@ How this pin shapes UI-12b implementation if accepted:
        context.clearPermissions / grantPermissions(['notifications'])
        contrast).
   Each path asserts: zero bytes appended to events.jsonl,
-  zero bytes in the push store delta, zero PushManager.subscribe
-  calls fired (Cancel) or one fired-and-rejected call
-  (native deny).
+  zero bytes in the push store delta, zero
+  PushManager.subscribe calls fired, zero POSTs, zero store
+  delta. The native-deny path additionally asserts: exactly
+  one Notification.requestPermission call fired and resolved
+  to "denied"; PushManager.subscribe was NEVER called (browser
+  permission denial short-circuits before subscribe per the
+  Web Push API contract).
 
 - "Unsubscribe one click away" → reopening the modal post-
   subscribe shows the unsubscribe verb at the modal foot, in
@@ -1254,6 +1497,35 @@ Assertions (all three MUST pass):
   - All three sentinel substrings ("DO-NOT-LEAK-7d9f2e",
     "DO-NOT-LEAK-KEYS") are absent from every observable
     surface.
+
+Error-path sentinel coverage (Codex P1 round 1, 2026-05-06):
+  Privacy is auditable on the happy path AND on every error
+  branch that accepts an endpoint in the request body. The
+  test MUST additionally trigger:
+    - POST /api/push/subscribe with a malformed endpoint
+      (does not match the HTTPS regex) carrying the
+      sentinel substring → 422.
+    - POST /api/push/subscribe with categories outside the
+      enum, body still carrying the sentinel endpoint → 422.
+    - POST /api/push/subscribe with VAPID keys absent in
+      the store, body carrying the sentinel endpoint → 503.
+    - POST /api/push/subscribe with body size > 4 KiB,
+      sentinel endpoint embedded inside oversized payload
+      → 413.
+    - POST /api/push/unsubscribe with an endpoint that is
+      NOT in the store but IS sentinel-bearing → 404.
+    - POST /api/push/unsubscribe with a malformed endpoint
+      → 422.
+  For each error branch, assert:
+    - HTTP response body is generic (no sentinel substring,
+      no raw endpoint, no keys).
+    - Bus has zero new events emitted.
+    - Store has zero delta (read store hash before + after,
+      assert equal).
+    - Captured logs contain neither sentinel substring.
+  The error-body assertions close the gap that "validation
+  rejection paths" could otherwise echo input back to the
+  client. Pin §11.6 candidate (round 1 P1).
 ```
 
 ### 7.5 SW fetch ordering shape-lock test (§3-D)
@@ -1414,6 +1686,15 @@ Same as UI-12 §8 + UI-12a additive contracts:
    /api/push/subscribe without firing the native permission
    prompt. The endpoint is already present in the store;
    the WRITER's idempotent branch just updates categories.
+   Endpoint sourcing (Codex P2 round 1, 2026-05-06): the
+   endpoint posted on the update-categories path MUST be
+   read from
+   `registration.pushManager.getSubscription()` — i.e.
+   from the browser's live PushSubscription object — and
+   NEVER from /api/push, the DOM, localStorage, sessionStorage,
+   any prior server projection, or any cached client-side
+   value. The browser is the sole source of truth for the
+   raw endpoint; every other surface holds only the hash.
    ALTERNATIVE — split the path into a third endpoint
    (POST /api/push/categories) so subscribe is always
    accompanied by a fresh PushManager.subscribe. Rejected:
@@ -1534,22 +1815,32 @@ Same as UI-12 §8 + UI-12a additive contracts:
 
 ## 11.6 · Implementation pins (Codex audit, pending)
 
-UI-12b earns whatever pins Codex sets on this brief during the
-upcoming audit cycle. Anticipated pin shape (mirrors UI-10
-§11.6 / UI-11 §11.6 / UI-12 §11.6):
+Sixteen pins set by Codex on the UI-12b brief audit (round 1
+CHANGES-REQUIRED, 2026-05-06; in-branch fixes applied to §3-A /
+§3-B / §3-E / §3.5 / §7.4 / §10.4 / §11.6 before re-audit).
+All bind UI-12b implementation. Verbatim:
 
 ```text
 1.  Modal entry MUST be footer-only; no other surface opens
     it (footer is the affordance, modal is the gate).
 2.  Cancel paths MUST NOT mutate the bus or the store.
-    Playwright pins all four cancel paths.
+    Playwright pins all four cancel paths plus the
+    POST-failure rollback path.
 3.  Native permission prompt MUST fire only after modal
-    confirm.
+    confirm. PushManager.subscribe MUST NOT be called when
+    Notification.requestPermission resolves to "denied" or
+    "default" (browser API contract — there is no fired-and-
+    rejected subscribe call on a denied permission; the
+    permission gate short-circuits before subscribe).
 4.  SW fetch-ordering shape-lock test MUST pre-date the
     sw.js diff in the PR commit ordering.
 5.  Privacy negative-shape test MUST cover both POSTs +
     /api/push body + log capture (raw endpoint absent
-    everywhere).
+    everywhere) AND every error branch that accepts an
+    endpoint in the request body (422 / 404 / 413 / 503).
+    Sentinel-substring assertions are mandatory on every
+    error response body, every captured log, every store
+    delta, every bus event count.
 6.  Idempotent subscribe MUST emit a push_subscribe event
     each time (operator's intent is authoritative).
 7.  0600 mode warning MUST surface when the writer
@@ -1558,27 +1849,67 @@ upcoming audit cycle. Anticipated pin shape (mirrors UI-10
 8.  Manual VAPID seed instructions MUST be removed from
     docs/local-dogfood.md when UI-12c lands (the UI-12c
     PR body covers the doc deletion).
-9.  Categories validation MUST reject duplicates + empty +
-    out-of-enum at 422; empty array allowed by deliberate
-    choice (zero-noise subscription).
+9.  Categories validation MUST reject duplicates and
+    out-of-enum values at 422; empty array MUST remain
+    allowed as a deliberate zero-noise subscription
+    (§3-B). The store + the bus event record the empty
+    array verbatim; UI-12c emit will simply never match
+    for that endpoint until categories are updated.
 10. The .webm MUST read as deliberate operator intent, not
     as a settings panel flow (operator-feel pin from
     UI-12 §11.6.12 carry-forward).
 11. /api/push read shape from UI-12a MUST NOT change.
 12. push_store reader functions from UI-12a MUST NOT change.
+13. Browser ⇄ store two-phase mutation MUST be transactional
+    (§3-B). Subscribe: any non-204 server response triggers
+    subscription.unsubscribe() rollback BEFORE user-visible
+    feedback; no human_decision emits on rollback paths.
+    Unsubscribe: server-removal-first (POST), then
+    subscription.unsubscribe(); 404 on the POST is treated
+    as success (both sides converge to "unsubscribed").
+    Playwright tests cover BOTH the subscribe rollback path
+    AND the post-204 browser-unsubscribe path.
+14. The frontend MUST short-circuit BEFORE
+    Notification.requestPermission when /api/push.vapid_public_key
+    is null. The modal opens (so the operator finds out
+    why), the primary button is DISABLED, and no native
+    permission prompt fires from this state. Server-side
+    503 stays as defensive behaviour for forged / stale
+    clients that bypass the preflight.
+15. The push_store WRITER MUST hold a module-level
+    threading.Lock across the FULL read-modify-write
+    transaction (read + mutate + write + rename). The
+    atomic tmp+rename does NOT alone prevent lost updates;
+    the lock does. Multi-process scope (filesystem
+    lockfile) is out of UI-12b; UI-12c re-audits this
+    boundary.
+16. The update-categories-only POST endpoint MUST be
+    sourced from registration.pushManager.getSubscription()
+    — i.e. from the browser's live PushSubscription object
+    — and NEVER from /api/push, the DOM, localStorage,
+    sessionStorage, any prior server projection, or any
+    cached client-side value. The browser is the sole
+    source of truth for the raw endpoint.
 ```
 
-These are anticipated; final wording lands after Codex's
-verdict (Round 1 typically returns 1-2 P0 + a handful of
-P1/P2). Pins flip from anticipated to verbatim binding once
-Codex's audit closes.
+Pins 1-10 + 12 parallel UI-10 §11.6 / UI-11 §11.6 / UI-12
+§11.6 contracts (drawer / modal / scope / privacy / schema /
+operator-feel). Pin 11 freezes the UI-12a read shape. Pins
+13-16 are the four new bindings Codex set on round 1
+specifically for UI-12b (P0 two-phase mutation, P1 VAPID-null
+UI behavior, P1 writer lock, P2 endpoint sourcing
+discipline). Pin 9 was rewritten in round 1 to remove the
+internal contradiction with §3-B (empty categories allowed
+as zero-noise subscription). Pin 5 was extended in round 1
+to cover error-body sentinel assertions. Pin 3 was clarified
+in round 1 to remove the "fired-and-rejected
+PushManager.subscribe" misstatement.
 
 ## 12 · Status
 
 ```text
-Brief status:        CONFIRMED — operator sign-off complete
-                     (Victor, 2026-05-06: "avanzar"). Codex
-                     audit pending out-of-band.
+Brief status:        Round 1 CHANGES-REQUIRED → in-branch
+                     fixes applied; awaiting round 2.
 Operator sign-off:   COMPLETE (2026-05-06). Every §3 (A-F) +
                      §3.5 + §10 (1-10) PROPOSAL accepted as
                      the binding contract per default. The
@@ -1586,12 +1917,42 @@ Operator sign-off:   COMPLETE (2026-05-06). Every §3 (A-F) +
                      UI-12 (§10.1 pre-checked categories,
                      §10.6 Esc precedence) reaffirmed without
                      deviation.
-Codex audit:         REQUESTED out-of-band. Audit prompt
-                     delivered to operator at sign-off close
-                     (per feedback_audit_prompt_automatic.md).
-                     Round 1 verdict ferried back via Victor;
-                     round-N follow-ups land in-branch per
-                     UI-10 / UI-11 / UI-12 lifecycle.
+Codex audit:         Round 1: CHANGES-REQUIRED (1 P0 + 5 P1
+                     + 1 P2). All seven findings addressed
+                     in-branch:
+                       P0  §3-B browser-store two-phase
+                            rollback contract added.
+                       P1  §3-E + §3-F VAPID-null UI
+                            behavior defined (modal opens
+                            but primary disabled; no native
+                            prompt; server 503 defensive).
+                       P1  §3-E module-level threading.Lock
+                            added across full read-modify-
+                            write transaction.
+                       P1  §7.4 privacy negative-shape test
+                            extended to cover all error
+                            branches (422 / 404 / 413 / 503).
+                       P1  §3.5 native-deny assertion
+                            corrected (Notification permission
+                            denial short-circuits before
+                            PushManager.subscribe; zero
+                            subscribe calls on deny path).
+                       P1  §11.6 anticipated pin 9
+                            contradiction with §3-B fixed
+                            (empty categories allowed; only
+                            duplicates + out-of-enum
+                            rejected).
+                       P2  §10.4 update-categories-only
+                            endpoint sourcing pinned to
+                            registration.pushManager
+                            .getSubscription() (never DOM /
+                            localStorage / cached values).
+                     Pins 13-16 added to §11.6; pin 5 + pin 9
+                     extended; pin 3 clarified. Loop budget:
+                     1 of 5 consumed.
+                     Round 2 pending out-of-band; round-2
+                     verdict ferried back via Victor;
+                     additional follow-ups land in-branch.
 Implementation:      BLOCKED on this brief's merge.
                      UI-12b code branch does NOT open until
                      this brief lands in main per UI-9
@@ -1605,17 +1966,17 @@ The brief follows the lifecycle `ui-10-design-brief.md` (PR
 
 ```text
 1. Implementer drafts the brief as a doc-only PR with
-   [CONFIRMED 2026-05-06] markers.
+   sign-off markers.
 2. Operator reviews and confirms ("segun tus criterios" or
-   per-marker). Markers flip to [CONFIRMED YYYY-MM-DD].
+   per-marker). Markers flip to a confirmed-date stamp.
 3. Implementer entrega the audit prompt copy-paste to the
    operator immediately.
 4. Codex audits the brief; verdict ferried back via the
    operator. Round 1 typically returns 1-2 P0 + a handful
    of P1/P2.
-5. Implementer applies follow-ups in-branch. Re-audit only
-   if Codex round 1 was CHANGES-REQUIRED with P0;
-   APPROVED-with-observations + P1/P2 land as in-branch
-   follow-ups without a re-audit.
+5. Implementer applies follow-ups in-branch. Re-audit
+   triggered when Codex round 1 was CHANGES-REQUIRED with
+   P0 (THIS brief's case); APPROVED-with-observations +
+   P1/P2 land as in-branch follow-ups without a re-audit.
 6. Brief PR merges BEFORE the UI-12b code branch opens.
 ```

@@ -1,276 +1,229 @@
 # Next Session Entry Point
 
-## Status: UI-12b CODE chunk — brief sealed, code branch can open
+## Status: UI-12c — server-side push emit (NEXT)
 
-main HEAD: `b07aae3` (UI-12b design brief PR #100 merged,
-2026-05-06).
+main HEAD: `8434391` (UI-12b code chunk merged, 2026-05-06).
 0 PRs open. 0 branches open.
 
-UI-12b brief is now binding contract in main. UI-12a (read
-display) shipped at PR #98. UI-12b code chunk is the next
-working PR.
+UI-12b code closed cleanly: 21 files, +4435 / -15 lines, 139
+tests passing on Windows. Codex audit closed at round 2 of 5
+(round 1 CHANGES-REQ 3 P1 → all closed in-branch; round 2
+APPROVED clean). The 16 §11.6 pins from the UI-12b brief
+are now binding implementation contracts in `main`.
 
-```text
-Notifications: off       (--fg-2)   supported, no subscription
-Notifications: on        (--accent) supported, ≥1 subscription
-Notifications: denied    (--warn)   Notification.permission denied
-Notifications: unsupported (--warn) no SW / no PushManager / etc.
-```
+## Context recap (UI-12b code session 2026-05-06)
 
-UI-12a's `GET /api/push` returns `{state, categories,
-subscription_count, vapid_public_key}`; raw endpoint material
-never leaves the store (pins §11.6.5 + §11.6.16, locked by
-negative-shape HTTP test). UI-12b adds the WRITER side: two
-POSTs + push_store writer + modal + sw.js push handlers + 4
-Playwright tests + privacy negative-shape extended to all
-error branches.
+1. **PR #102**: UI-12b code chunk. 9 logical commits:
+   1. `029c411` test(ui-12b): SW fetch-ordering shape lock —
+      pre-dates sw.js diff (pin §11.6.4)
+   2. `a55156d` feat(ui-12b): SW push + notificationclick +
+      CACHE_NAME bump (additive — same shape lock still
+      passes)
+   3. `fecb6fa` feat(ui-12b): push_store writer with
+      threading.Lock + atomic 0600
+   4. `576e8ec` feat(ui-12b): POST /api/push/subscribe +
+      /unsubscribe handlers
+   5. `60ec190` test(ui-12b): HTTP shape locks + privacy
+      negative-shape (happy + error + malformed)
+   6. `8807c0b` feat(ui-12b): modal.css push micro-elements
+      + push.js + index.html wiring
+   7. `7dbd549` test(ui-12b): Playwright modal flows — pin
+      §11.6.13 four flows
+   8. `[screenshots]` docs(ui-12b): screenshot script
+      extension + 4 modal PNGs
+   9. `e94c719` docs(ui-12b): event schema + manual VAPID
+      seed walkthrough
+   10. `1abd75b` fix(ui-12b): round-1 audit follow-ups —
+       3 P1s closed in-branch (Test 4 retry flow,
+       state-delta + UTF-8 privacy, .webm 462 KB)
 
-## Context recap (UI-12b brief session 2026-05-06)
+   - Round 1 audit: CHANGES-REQUIRED (3 P1, no P0). All 3
+     closed in-branch.
+   - Round 2 audit: APPROVED clean.
+   - Loop budget: 1/5.
+   - Merge: Claude Code lands the merge per
+     feedback_karasu_merge_es_implementer.md (`gh pr merge
+     102 --squash --delete-branch`).
 
-1. **PR #100**: UI-12b design brief (doc-only, ~2160 lines).
-   - Sign-off: Victor "avanzar" 2026-05-06; 17 markers
-     flipped to `[CONFIRMED 2026-05-06]`.
-   - Round 1 audit: CHANGES-REQUIRED (1 P0 + 5 P1 + 1 P2).
-     All 7 closed in-branch:
-       P0 §3-B browser ⇄ store two-phase mutation contract
-          (subscribe rollback via subscription.unsubscribe();
-          unsubscribe server-removal-first; 2 Playwright
-          tests pinned). Pin 13 added.
-       P1 §3-E + §3-F VAPID-null UI behavior (modal opens
-          but primary disabled; no native prompt; server 503
-          stays defensive). Pin 14 added.
-       P1 §3-E module-level threading.Lock across full
-          read-modify-write transaction. Pin 15 added.
-       P1 §7.4 privacy negative-shape extended to error
-          branches. Pin 5 extended.
-       P1 §3.5 native-deny corrected (Notification permission
-          denial short-circuits before PushManager.subscribe).
-          Pin 3 clarified.
-       P1 §11.6 anticipated pin 9 contradiction with §3-B
-          fixed (empty categories allowed; only duplicates +
-          out-of-enum rejected).
-       P2 §10.4 endpoint sourcing pinned to
-          registration.pushManager.getSubscription() (never
-          DOM/localStorage/cached). Pin 16 added.
-   - Round 2 audit: CHANGES-REQUIRED (3 P1 + 1 P2). All 4
-     closed in-branch:
-       P1 §3-B unsubscribe 404 audit-event ambiguity
-          (audit_emitted flag; 404 emits zero events).
-          Pin 13 extended.
-       P1 §3-B `/api/push.subscriptions` raw-endpoint
-          projection reference removed (would have violated
-          pins §11.6.11 + §11.6.16). Orphan handling
-          deferred to UI-12c 410 prune.
-       P1 §3-B + §7.4 malformed JSON + non-object body
-          validation rows added (400 + 422 generic; no
-          JSONDecodeError text; no offset leakage; 5
-          sentinel-bearing tests). Pin 5 extended again.
-       P2 test_unsubscribe_browser_failure_after_204_can_retry_via_404
-          + test_unsubscribe_404_converges_with_no_bus_event
-          added (4 Playwright tests total).
-   - Round 3 audit: APPROVED-with-observations (1 P2). Fix
-     in-branch:
-       P2 Pin 5 verbatim wording extended to name 400
-          explicit + JSONDecodeError/UnicodeDecodeError repr.
-   - Codex audit CLOSED at round 3 of 5. Loop budget: 3/5.
-   - Merge: Claude Code lanzo `gh pr merge 100 --squash
-     --delete-branch` per Victor's working agreement
-     ("el merge no es del operador").
+2. **PR #103** (this PR): docs/memory sync after UI-12b
+   code merge.
 
 ## Entry point for THIS session
 
-**UI-12b CODE chunk. ~400 LOC.**
+**UI-12c — server-side push emit. Closes Phase 3 exit
+criteria (Telegram ceases to be the only push channel).**
 
-Brief at `docs/ui/ui-12b-design-brief.md` is binding. The
-16 §11.6 pins constrain implementation. Suggested branch:
-`feat/ui-12b-push-opt-in-surface` (mirrors
-`feat/ui-12a-push-read-display`).
+UI-12c is the chunk that introduces the `cryptography`
+runtime dep as the named, scoped exception per UI-12
+§11.6.13. The implementation requires:
 
 ### Deliverables
 
 ```text
-src/karasu/ui/server.py
-  + POST /api/push/subscribe handler (validation matrix
-    per §3-B: 400 malformed JSON, 422 non-object, 422
-    field-level, 422 categories duplicates/out-of-enum,
-    422 endpoint not HTTPS, 413 oversize, 503 VAPID
-    missing, 204 happy + idempotent UPDATE).
-  + POST /api/push/unsubscribe handler (400 / 422 /
-    404 / 413 / 204).
-  + Both handlers compute endpoint_hash sha256-hex,
-    write store via push_store writer, emit
-    human_decision with source="ui".
-  + Logging discipline: hash only, never raw endpoint.
+src/karasu/push_emit.py (NEW, ~200-300 LOC)
+  + Bus subscriber (similar to TelegramInterface pattern in
+    Phase 2 — JsonlTailReader feeding a single-thread loop).
+  + Category classifier on each bus event:
+      attention   = agent_response with requires_human=True,
+                    OR a file_change that the controller cap
+                    would block (chain depth at limit)
+      errors      = agent_response with status="failed"
+      corrections = human_decision originating from a source
+                    OTHER THAN "ui" — UI-write events MUST
+                    NOT push back to the operator (pin §11.6.9)
+  + VAPID JWT signing via cryptography (P-256 ECDSA + JWT
+    ES256). Imports gated to this module (the named, scoped
+    exception per UI-12 §11.6.13 — UI-12c is the ONLY
+    approved import site).
+  + Push delivery via stdlib urllib.request (or
+    http.client). One HTTP POST per active subscription per
+    matching event. Headers: Authorization (VAPID JWT),
+    Crypto-Key, Content-Encoding (aes128gcm if payload
+    encrypted, otherwise empty), TTL.
+  + 410 Gone / 404 Not Found prune: when the push service
+    returns 410 / 404, remove the subscription from the
+    store (under _STORE_LOCK).
+  + Three-layer rate limit (UI-12 brief §6 binding):
+      1. Event-id dedupe — each event id is dispatched at
+         most once per subscription.
+      2. Per-category debounce — at most one push per
+         category per 5 s per subscription.
+      3. UI-write suppression — events with source="ui"
+         NEVER dispatch as pushes regardless of category.
+         Filter applied BEFORE event-id dedupe so UI-write
+         events do not consume dedupe slots.
 
-src/karasu/ui/push_store.py
-  + append_subscription(store_path, subscription_dict)
-    - Read current store (UI-12a reader untouched).
-    - UPDATE existing entry's categories OR append new.
-    - Atomic write via O_CREAT|O_WRONLY|O_EXCL, mode
-      0o600 on POSIX.
-    - Module-level threading.Lock across full
-      read-modify-write (pin 15).
-  + remove_subscription(store_path, endpoint)
-    - Filter by exact endpoint match.
-    - Raise PushStoreNotFound on miss (handler → 404).
-  + File mode discipline: stat existing file before
-    write; loud-stderr warning if observed mode > 0600
-    on POSIX; never silently re-mode.
+src/karasu/push_emit_keys.py (NEW or merged into push_emit.py)
+  + VAPID key auto-generation on first server start when
+    karasu-push.json has no "vapid" section. ECDSA P-256
+    keypair via cryptography.hazmat.primitives.asymmetric.ec.
+    Public key serialised as raw uncompressed point (65 bytes
+    → 86-char b64u). Private key serialised as 32-byte raw
+    scalar (43-char b64u).
+  + Persists the keypair into the store via
+    _atomic_write (push_store writer, mode 0600).
+  + REMOVES the docs/local-dogfood.md "Manual VAPID seed"
+    section in the SAME PR (pin §11.6.13 binding).
 
-src/karasu/ui/static/css/modal.css
-  + .modal-push-categories (fieldset, no border, padding 0).
-  + .modal-push-category (label + checkbox + name + desc).
-  + .modal-push-state (single-line "Subscribed: N categories").
-  + .modal-push-unsubscribe (secondary --fg-2 button).
-  All scoped under .modal per pin §0.5.8.
+pyproject.toml
+  + cryptography = ">=42" (or current LTS) added under
+    [project] dependencies. Scoped exception to UI-0 §4
+    documented in the PR body (UI-12 §11.6.13 binding).
 
-src/karasu/ui/static/js/push.js (NEW, ~150 LOC)
-  + Footer click handler (state-gated: opens modal only
-    on "off" / "on"; "denied" / "unsupported" handler-less).
-  + openPushModal()
-  + confirmPushSubscribe() — implements §3-B subscribe
-    happy path + rollback rule:
-    1. Preflight GET /api/push (already loaded by UI-12a).
-    2. Notification.requestPermission().
-    3. PushManager.subscribe({applicationServerKey}).
-    4. POST /api/push/subscribe.
-    5. On non-204: subscription.unsubscribe() rollback;
-       no human_decision; modal foot error.
-  + confirmPushUnsubscribe() — implements §3-B unsubscribe
-    flow with audit_emitted tracking:
-    1. registration.pushManager.getSubscription().
-    2. POST /api/push/unsubscribe (audit_emitted=true on
-       204; audit_emitted=false on 404).
-    3. subscription.unsubscribe() (after server confirm).
-  + VAPID-null short-circuit: modal opens with primary
-    disabled when /api/push.vapid_public_key is null.
+tests/test_push_emit.py (NEW)
+  + VAPID JWT generation tested (header alg=ES256, claim
+    aud / exp / sub).
+  + Category classifier tested on each event shape.
+  + Three-layer rate limit:
+      - event-id dedupe: same id dispatched at most once
+      - per-category debounce: 5 s window
+      - UI-write suppression: source="ui" never dispatches
+  + 410 / 404 prune: subscription removed from store + bus
+    carries no event (pruning is server-side housekeeping;
+    no human_decision).
+  + cryptography import scope test: imports are confined
+    to push_emit.py + push_emit_keys.py; no other module
+    transitively imports cryptography.
 
-src/karasu/ui/static/sw.js
-  + 'push' event listener.
-  + 'notificationclick' event listener (clients.matchAll +
-    client.focus or clients.openWindow).
-  + CACHE_NAME bumps karasu-ui-v8 → karasu-ui-v12b.
-  + Fetch handler ordering UNCHANGED.
-
-tests/test_ui_sw.py (NEW)
-  + Three-branch fetch-ordering shape-lock test:
-    1. GET /api/* → network only (cache pre-populated;
-       network was called; cache.match NOT consulted).
-    2. Navigate / → network first, /offline.html on
-       rejection.
-    3. GET /assets/* → cache first (hit) / fall through
-       to network (miss).
-  + Commit MUST pre-date sw.js diff in PR ordering (pin 4).
-
-tests/test_ui_server_http.py (extended)
-  + Subscribe shape lock: 204 happy, 422 missing field,
-    422 invalid category, 422 empty categories ALLOWED
-    → 204, 413 oversize, 204 idempotent duplicate, 422
-    not HTTPS, 503 VAPID missing, 400 malformed JSON,
-    422 non-object body.
-  + Unsubscribe shape lock: 204 happy, 422 missing
-    endpoint, 422 not HTTPS, 404 unknown, 413 oversize,
-    400 malformed JSON, 422 non-object body.
-
-tests/test_ui_push_privacy.py (NEW or merged with existing
-                              negative-shape tests)
-  + Sentinel-substring assertions across:
-    - Bus events (data.endpoint_hash present; raw
-      endpoint, p256dh, auth ABSENT).
-    - GET /api/push response body.
-    - Captured INFO + DEBUG + ERROR logs.
-  + Error-path coverage: 422 invalid endpoint, 422
-    invalid categories, 503 VAPID missing, 413 oversize,
-    404 unsubscribe, 422 unsubscribe malformed.
-  + Malformed-body coverage: truncated JSON, JSON array,
-    JSON string, non-JSON unsubscribe body, JSON number
-    unsubscribe — all sentinel-bearing.
-  + Each error branch asserts: generic body (no sentinel),
-    no JSONDecodeError text, no offset leakage, zero new
-    bus events, zero store delta, no sentinel in logs.
-
-Playwright suite (existing modal tests + 4 new)
-  + Existing: cancel + confirm + Esc + backdrop +
-    native-deny (5 paths).
-  + NEW: test_subscribe_post_failure_rolls_back_browser.
-  + NEW: test_unsubscribe_browser_call_is_made_after_204.
-  + NEW: test_unsubscribe_404_converges_with_no_bus_event.
-  + NEW: test_unsubscribe_browser_failure_after_204_can_retry_via_404.
-
-scripts/ui_screenshots.py extended
-  + UI-12b capture plan:
-    - footer-off → modal-default (categories pre-checked).
-    - modal with one category unchecked.
-    - modal post-subscribe (categories + unsubscribe verb).
-    - modal reduced-motion (slide-in clamped).
-    - footer-on after successful subscribe.
-  + .webm walkthrough: footer hover → click → modal →
-    Enable notifications → permission grant simulated →
-    modal close → footer "on" → re-click → modal reopen →
-    Unsubscribe → modal close → footer "off". ~9s, 1024×640.
+scripts/ui_screenshots.py
+  + 1-2 PNGs of the OS notification tray (Playwright
+    notification capture). The recording walker from UI-12b
+    can be extended to a full edge-to-edge .webm: operator
+    subscribes → triggers an event → push arrives → click
+    notification → surface focuses.
 
 docs/event-schema.md
-  + Additive section under "human_decision":
-    push_subscribe   data.action, data.endpoint_hash,
-                     data.categories, source="ui"
-    push_unsubscribe data.action, data.endpoint_hash,
-                     source="ui"
+  + No new event types. Push delivery is server-side
+    house­keeping; the bus sees the originating events
+    (agent_response, file_change, human_decision) and the
+    push receiver routes against them in-process.
 
 docs/local-dogfood.md
-  + New section: "Manual VAPID seed (UI-12b)" with
-    openssl commands + JSON snippet shape. Notes the
-    section is REMOVED when UI-12c lands.
-  + (If scope allows) "TLS for cross-device dogfood"
-    section with mkcert + caddy recipe.
+  + DELETE the "UI-12b — Manual VAPID seed" section. UI-12c
+    auto-generates on first server start; the operator step
+    disappears.
+  + Add a "UI-12c — Push delivery walkthrough": subscribe a
+    browser via the modal, trigger an attention event (e.g.
+    a /scar from Telegram or a file_change with
+    requires_human=true), confirm the push arrives in the
+    OS tray, click the notification to focus the surface
+    tab.
 ```
 
-### Lifecycle
+### Forward-carry pins from Codex round-2 audit on UI-12b (PR #102)
 
-Same out-of-band Codex audit pattern (no `@codex review`
-tag, no ChatGPT Codex Connector). Operator ferries verdicts.
-Brief PR is already merged; no brief-vs-code dependency.
-
-After UI-12b code merges, UI-12c opens (server-side emit +
-`cryptography` dep + 410/404 prune + 3-layer rate-limit).
-UI-12c closes Phase 3 exit criteria.
-
-## Brief lifecycle (UI-10 / UI-11 / UI-12 / UI-12b confirmed)
+Codex flagged four binding pins for UI-12c in the
+APPROVED-clean verdict. Apply during the UI-12c brief
+phase:
 
 ```text
-1. Implementer drafts the brief as a doc-only PR with
-   sign-off markers.
-2. Operator reviews and confirms ("avanzar" or per-marker).
-   Markers flip to a confirmed-date stamp.
-3. Implementer entrega the audit prompt copy-paste to
-   the operator immediately (per
-   feedback_audit_prompt_automatic.md).
-4. Codex audits the brief; verdict ferried back via the
-   operator. Round 1 typically returns 1-2 P0 + a handful
-   of P1/P2.
-5. Implementer applies follow-ups in-branch. Re-audit
-   triggered when Codex round 1 was CHANGES-REQUIRED with
-   P0 (UI-12b's case: 3 audit rounds before APPROVED).
-6. Brief PR merges BEFORE the code branch opens. Claude
-   Code lands the merge per
-   feedback_karasu_merge_es_implementer.md (NOT the
-   operator).
+1. Do NOT change UI-12b POST response shapes or the
+   /api/push read shape while adding emit. UI-12b's
+   subscribe / unsubscribe / GET read contracts are now
+   frozen.
+
+2. Remove the manual VAPID seed docs (docs/local-dogfood.md
+   "UI-12b — Manual VAPID seed" section) in the SAME PR
+   that introduces auto-generation. No two-step doc rot.
+
+3. Preserve raw endpoint privacy across push delivery,
+   410/404 prune, logs, and bus events. Pin §11.6.5 +
+   §11.6.16 carry forward verbatim — endpoint_hash is the
+   only audit metadata; the raw endpoint stays in
+   karasu-push.json (mode 0600) and in the in-flight POST
+   to the push service.
+
+4. Re-audit the writer concurrency boundary if UI-12c
+   introduces a second writer process. UI-12b's
+   threading.Lock is per-process; UI-12c's emit might run
+   in a separate process from the UI server (the watcher's
+   loop). If so, graduate to a filesystem lockfile
+   (fcntl.flock on POSIX, msvcrt.locking on Windows) held
+   across the same transaction.
+```
+
+### UI-12c brief lifecycle
+
+Per the established brief-before-code pattern (UI-9 audit
+pin #1, reaffirmed UI-10 / UI-11 / UI-12 / UI-12b): UI-12c
+introduces the `cryptography` dep + new write paths
+(VAPID gen + push delivery), so it earns its own brief
+before any code lands.
+
+```text
+1. Implementer drafts ui-12c-design-brief.md as a doc-only
+   PR with [NEEDS OPERATOR SIGN-OFF] markers. Inherits
+   118 binding pins (52 base + 6 UI-10 §0.5 + 12 UI-11
+   §11.6 + 16 UI-12 §11.6 + 16 UI-12b §11.6 + 16
+   anticipated UI-12b implementation pins folded in by
+   round 2 audit + the 4 forward-carry pins above).
+2. Operator reviews + confirms ("avanzar" or per-marker).
+3. Implementer entrega the audit prompt copy-paste to the
+   operator immediately.
+4. Codex audits; verdict ferried back via the operator.
+5. In-branch follow-ups; re-audit if round 1 was
+   CHANGES-REQUIRED with P0.
+6. Brief PR merges BEFORE the UI-12c code branch opens.
+   Claude Code lands the merge per
+   feedback_karasu_merge_es_implementer.md.
 ```
 
 ## Accumulated state
 
-- 102 binding pins inherited (52 base + 6 UI-10 §0.5 + 12
-  UI-11 §11.6 + 16 UI-12 §11.6 + 16 UI-12b §11.6).
-- Test suite on main: 527 passing, 2 preexisting Windows
-  CRLF / POSIX-path quirks (also fail on `main` pre-UI-12a;
-  documented). 0 regressions.
-- Lighthouse contract unchanged (87/95/95/90 with
-  performance threshold lowered to 85 under operator-signed
-  rationale).
+- 118 binding pins inherited (52 base + 6 UI-10 §0.5 +
+  12 UI-11 §11.6 + 16 UI-12 §11.6 + 16 UI-12b §11.6 + the
+  16 implementation pins UI-12b's round 2 audit ratified +
+  4 forward-carry pins from PR #102 round 2).
+- Test suite on main: 139 passing on Windows for UI tests
+  alone; full suite ~593 passing + 3 skipped (POSIX-only)
+  + 2 known Windows CRLF/POSIX-path quirks documented.
+- Lighthouse contract unchanged.
 
 ## Open issues
 
 ```text
-(none — #66, #76, #77 all closed during UI-12 wave)
+(none — #66, #76, #77 all closed during UI-12 wave;
+no UI-12b regressions or follow-ups left open.)
 ```
 
 ## Operator-side TODOs
@@ -281,9 +234,6 @@ UI-12c closes Phase 3 exit criteria.
 - Uninstall ChatGPT Codex Connector App from repo if still
   installed (PR #67 retired working agreement; physical
   uninstall closes the loop).
-- Optional cleanup: delete merged feature branches via the
-  GitHub UI (PR auto-deletes on squash-merge but the
-  pre-stack branches from earlier sessions may linger).
 ```
 
 ## Phase / prototype status
@@ -292,16 +242,14 @@ UI-12c closes Phase 3 exit criteria.
 Phase 1 — Local daemon + Telegram         ✔ CLOSED.
 Phase 2 — Git-aware + A2A                 ✔ CLOSED.
 Phase 3 — PWA + Advanced                  ⚠ EXIT CRITERIA
-                                            BLOCKED ON UI-12.
+                                            BLOCKED ON UI-12c.
                                             UI-12a ✔ merged.
-                                            UI-12b brief
-                                              ✔ merged.
-                                            UI-12b code ←
-                                              NEXT.
-                                            UI-12c queued
-                                              behind UI-12b
-                                              code.
-                                            UI-12c merge
-                                              closes the
-                                              prototype.
+                                            UI-12b brief ✔ merged.
+                                            UI-12b code ✔ merged.
+                                            UI-12c brief ←
+                                              NEXT (doc-only PR).
+                                            UI-12c code queued
+                                              behind brief.
+                                            UI-12c code merge
+                                              CLOSES the prototype.
 ```

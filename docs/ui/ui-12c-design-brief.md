@@ -27,8 +27,9 @@
 > criteria — once UI-12c lands, Telegram ceases to be the
 > only push channel.
 >
-> **STATUS:** DRAFT — operator sign-off pending. Codex audit
-> not yet requested.
+> **STATUS:** CONFIRMED — operator sign-off complete (Victor,
+> 2026-05-06: "avanzar" — every default PROPOSAL accepted as
+> the binding contract). Codex audit pending out-of-band.
 
 ## 0 · Why this brief exists
 
@@ -217,11 +218,11 @@ operator's tray. The capture is OS-specific and outside
 Karasu's design system; the marketing-as-product anchor
 cannot override the OS notification template.
 
-## 3 · Confirmed decisions (operator sign-off pending)
+## 3 · Confirmed decisions (operator sign-off complete 2026-05-06)
 
-All decisions below need operator sign-off before Codex
-audit. Markers flip from `[NEEDS OPERATOR SIGN-OFF]` to
-`[CONFIRMED YYYY-MM-DD]` on Victor's confirmation.
+All decisions below confirmed binding by Victor on 2026-05-06
+("avanzar" — every default PROPOSAL accepted as the binding
+contract; Codex audit pending out-of-band).
 
 ### A) Bus subscriber architecture — where push_emit lives
 
@@ -276,7 +277,7 @@ ALTERNATIVES considered:
     would conflate the two.
 ```
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-06]
 
 ### B) Category classifier
 
@@ -325,7 +326,7 @@ The classifier returns `None` for events outside the
 three categories. push_emit handles `None` by skipping;
 no rate-limit slot consumed; no log line beyond DEBUG.
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-06]
 
 ### C) VAPID JWT signing path + cryptography import scope
 
@@ -417,7 +418,7 @@ DER ↔ b64url helpers stay in stdlib (`base64.urlsafe_b64encode`,
 `tail -c 32` semantics in Python). The cryptography import
 is confined to ECDSA key gen + signing.
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-06]
 
 ### D) Three-layer rate limit (pin §11.6.14 binding)
 
@@ -477,7 +478,7 @@ combination. The combined-test surface verifies the
 ordering invariant — UI-write events do not consume
 dedupe slots even under burst conditions.
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-06]
 
 ### E) 410 / 404 prune semantics (pin §11.6.16 binding)
 
@@ -541,7 +542,7 @@ audit-event correspondence:
   no toast.
 ```
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-06]
 
 ### F) VAPID auto-generation on first start (pin §11.6.13 +
        forward-carry pin (b))
@@ -598,7 +599,7 @@ attention event, confirm the push arrives, click the
 notification.
 ```
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-06]
 
 ### G) Writer concurrency boundary (forward-carry pin (d))
 
@@ -625,7 +626,7 @@ Test surface for concurrency carries forward UI-12b's
 UI-12c adds NO new concurrency tests — the lock boundary is
 unchanged.
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-06]
 
 ### H) Push payload shape (UI-12 §3-H carry-forward)
 
@@ -657,7 +658,7 @@ encryption uses the same `cryptography` module that signs
 the JWT; encryption code lives in
 `src/karasu/push_emit/_signing.py` per pin §11.6.13.
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-06]
 
 ### I) Test surface (pin §11.6.14 + UI-12 §7 audit cadence)
 
@@ -751,7 +752,7 @@ registration.showNotification) → notification rendered →
 notificationclick → surface tab focuses.
 ```
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-06]
 
 ## 3.5 · Operator pin (binding when sign-off lands)
 
@@ -798,7 +799,7 @@ How this pin shapes UI-12c implementation:
   housekeeping is INFO-level structured logging only.
 ```
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-06]
 
 ## 4 · Tech stack (delta vs UI-0 / UI-12 / UI-12b)
 
@@ -1090,7 +1091,7 @@ server-side only; no Lighthouse delta expected.
    Forward-carry pin (d) deferred — writer concurrency
    stays in-process. Future chunk earns the
    filesystem-lockfile graduation.
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-06]
 
 2. cryptography version pin.
    PROPOSAL — `cryptography >= 42.0`. The 42.x line
@@ -1098,7 +1099,7 @@ server-side only; no Lighthouse delta expected.
    Python version + every supported OS. The lower bound
    is conservative; no upper bound (cryptography
    maintains backwards compatibility for ECDSA APIs).
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-06]
 
 3. JWT exp window.
    PROPOSAL — 12 hours. RFC 8292 caps at 24h; 12h
@@ -1112,7 +1113,7 @@ server-side only; no Lighthouse delta expected.
    leaves the local process except in the outbound
    POST. The 12h window is operator-felt (one
    karasu watch session typically lasts several hours).
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-06]
 
 4. VAPID `sub` claim default.
    PROPOSAL — `mailto:operator@localhost.invalid` if
@@ -1123,13 +1124,13 @@ server-side only; no Lighthouse delta expected.
    refuse to start until configured. More
    strictly-typed but breaks the "first start works
    out of the box" property.
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-06]
 
 5. Per-category debounce default.
    PROPOSAL — 5 seconds across all three categories
    (UI-12 §6 UI-12c specified 5s). CLI flag
    --push-debounce-ms <int> overrides.
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-06]
 
 6. Event-id dedupe ring size.
    PROPOSAL — last 64 events per subscription. Bounded
@@ -1139,13 +1140,13 @@ server-side only; no Lighthouse delta expected.
    the typical 5-second debounce window at peak rates
    measured on Phase 3 dogfood (issue #39 saw at most
    ~6 events in 5s under spam).
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-06]
 
 7. Manual VAPID seed doc deletion timing.
    PROPOSAL — the SAME PR that introduces auto-generation
    deletes the docs/local-dogfood.md "Manual VAPID
    seed" section. Forward-carry pin (b) binding.
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-06]
 
 8. Playwright integration test scope.
    PROPOSAL — limited to "synthetic push event →
@@ -1153,14 +1154,14 @@ server-side only; no Lighthouse delta expected.
    subscribes → real push → real notification) is the
    .webm's job; the Playwright test gates the SW
    push handler shape against drift.
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-06]
 
 9. Push store on a missing parent directory.
    PROPOSAL — the writer (push_store._atomic_write)
    already calls store_path.parent.mkdir(parents=True,
    exist_ok=True). UI-12c reuses; no new behavior.
    Reaffirm rather than re-decide.
-   [CARRIED FORWARD FROM UI-12b §3-E; REAFFIRM ON SIGN-OFF]
+   [CONFIRMED 2026-05-06 — carried forward from UI-12b §3-E]
 
 10. Operator email config key location.
     PROPOSAL — `push.contact_email` in karasu.yaml.
@@ -1168,7 +1169,7 @@ server-side only; no Lighthouse delta expected.
     namespace for future push-related config (rotation
     cadence, per-category overrides, etc. when those
     earn briefs).
-    [NEEDS OPERATOR SIGN-OFF]
+    [CONFIRMED 2026-05-06]
 ```
 
 ## 11 · Definition of "done" — UI-12c
@@ -1266,18 +1267,22 @@ once Codex's audit closes.
 ## 12 · Status
 
 ```text
-Brief status:        DRAFT (operator sign-off pending).
-Operator sign-off:   PENDING — §3 (A-I), §3.5, §10 (1-10)
-                     all marked [NEEDS OPERATOR SIGN-OFF]
-                     except §10.9 which is CARRIED FORWARD
-                     from UI-12b §3-E and needs only
-                     reaffirmation.
-Codex audit:         NOT YET REQUESTED. Audit prompt
-                     delivered to operator after operator
-                     confirmation (per
-                     feedback_audit_prompt_automatic.md —
-                     auto-deliver copy-paste prompt at
-                     chunk close).
+Brief status:        CONFIRMED — operator sign-off complete
+                     (Victor, 2026-05-06: "avanzar"). Codex
+                     audit pending out-of-band.
+Operator sign-off:   COMPLETE (2026-05-06). Every §3 (A-I) +
+                     §3.5 + §10 (1-10) PROPOSAL accepted as
+                     the binding contract per default. §10.9
+                     reaffirmed as carry-forward from UI-12b
+                     §3-E (push store missing parent dir
+                     handled by the existing writer's
+                     mkdir(parents=True, exist_ok=True)).
+Codex audit:         REQUESTED out-of-band. Audit prompt
+                     delivered to operator at sign-off close
+                     (per feedback_audit_prompt_automatic.md).
+                     Round 1 verdict ferried back via Victor;
+                     round-N follow-ups land in-branch per
+                     UI-10 / UI-11 / UI-12 / UI-12b lifecycle.
 Implementation:      BLOCKED on this brief's merge.
                      UI-12c code branch does NOT open until
                      this brief lands in main per UI-9

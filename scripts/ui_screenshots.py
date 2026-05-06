@@ -1363,6 +1363,128 @@ CAPTURES: dict[str, list[dict]] = {
             "post_eval_wait_ms": 200,
             "full_page": False,
         },
+        # UI-12b §7.1 — modal default state. Footer "off" with
+        # the modal opened on top: lede + 3 categories
+        # pre-checked + foot copy + Cancel | Enable
+        # notifications. push_seed=[] writes the store with
+        # VAPID + zero subscriptions (the writer's normal
+        # bootstrap state, where the operator has manually
+        # seeded VAPID per docs/local-dogfood.md but not yet
+        # subscribed any browser).
+        {
+            "name": "03-modal-default.png",
+            "url": "/",
+            "seed": False,
+            "wait_ms": 800,
+            "push_seed": [],
+            "eval_js": (
+                "window.browserPushSupport = function () { return 'supported'; };"
+                "(async () => {"
+                "  await window.loadPushState();"
+                "  await new Promise((r) => setTimeout(r, 100));"
+                "  if (typeof window.openPushModal === 'function') {"
+                "    window.openPushModal();"
+                "  }"
+                "})();"
+            ),
+            "post_eval_wait_ms": 600,
+            "full_page": True,
+        },
+        # UI-12b §7.1 — modal with one category unchecked.
+        # Same setup as 03 plus a click on the "errors"
+        # checkbox so the post-eval state shows two checked,
+        # one unchecked.
+        {
+            "name": "04-modal-one-unchecked.png",
+            "url": "/",
+            "seed": False,
+            "wait_ms": 800,
+            "push_seed": [],
+            "eval_js": (
+                "window.browserPushSupport = function () { return 'supported'; };"
+                "(async () => {"
+                "  await window.loadPushState();"
+                "  await new Promise((r) => setTimeout(r, 100));"
+                "  if (typeof window.openPushModal === 'function') {"
+                "    window.openPushModal();"
+                "    await new Promise((r) => setTimeout(r, 100));"
+                "    const errorsBox = document.querySelector("
+                "      'input[name=\"push-category\"][value=\"errors\"]'"
+                "    );"
+                "    if (errorsBox) errorsBox.checked = false;"
+                "  }"
+                "})();"
+            ),
+            "post_eval_wait_ms": 600,
+            "full_page": True,
+        },
+        # UI-12b §7.1 — modal post-subscribe. Push store seeded
+        # with one subscription + VAPID; the modal renders the
+        # state row ("Subscribed: 1 subscription"), the
+        # "Update categories" primary, and the "Unsubscribe
+        # this browser" secondary at the foot.
+        {
+            "name": "05-modal-post-subscribe.png",
+            "url": "/",
+            "seed": False,
+            "wait_ms": 800,
+            "push_seed": [
+                {
+                    "endpoint": (
+                        "https://example.test/screenshot-fake-endpoint"
+                    ),
+                    "endpoint_hash": (
+                        "0000000000000000000000000000000000000000"
+                        "000000000000000000000000"
+                    ),
+                    "keys": {
+                        "p256dh": "screenshot-fake-p256dh",
+                        "auth": "screenshot-fake-auth",
+                    },
+                    "categories": ["attention", "errors", "corrections"],
+                    "created_at": "2026-05-06T00:00:00Z",
+                }
+            ],
+            "eval_js": (
+                "window.browserPushSupport = function () { return 'supported'; };"
+                "(async () => {"
+                "  await window.loadPushState();"
+                "  await new Promise((r) => setTimeout(r, 100));"
+                "  if (typeof window.openPushModal === 'function') {"
+                "    window.openPushModal();"
+                "  }"
+                "})();"
+            ),
+            "post_eval_wait_ms": 600,
+            "full_page": True,
+        },
+        # UI-12b §7.1 — modal with reduced-motion media query
+        # forced. The modal still opens; the slide-in transition
+        # is clamped to instant via reset.css's chromatic
+        # whitelist (UI-2 contract). Captures the same modal
+        # default state as 03 but with prefers-reduced-motion:
+        # reduce so the screenshot proves the contract holds
+        # on the modal primitive.
+        {
+            "name": "06-modal-reduced-motion.png",
+            "url": "/",
+            "seed": False,
+            "wait_ms": 800,
+            "reduced_motion": True,
+            "push_seed": [],
+            "eval_js": (
+                "window.browserPushSupport = function () { return 'supported'; };"
+                "(async () => {"
+                "  await window.loadPushState();"
+                "  await new Promise((r) => setTimeout(r, 100));"
+                "  if (typeof window.openPushModal === 'function') {"
+                "    window.openPushModal();"
+                "  }"
+                "})();"
+            ),
+            "post_eval_wait_ms": 600,
+            "full_page": True,
+        },
     ],
 }
 

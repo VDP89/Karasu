@@ -32,9 +32,14 @@ autopush; every other surface is request/response.
 
 from __future__ import annotations
 
-# The public ``PushEmit`` / ``PushEmitConfig`` re-exports are
-# attached after the leaf modules land. Keeping the import here
-# would break ``from karasu.push_emit._classifier import ...``
-# during incremental commits.
+from karasu.push_emit._emitter import (
+    DEFAULT_CONTACT_EMAIL,
+    PushEmit,
+    PushEmitConfig,
+)
 
-__all__: list[str] = []
+__all__ = [
+    "DEFAULT_CONTACT_EMAIL",
+    "PushEmit",
+    "PushEmitConfig",
+]

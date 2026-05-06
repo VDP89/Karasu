@@ -1,4 +1,4 @@
-/* sw.js — Karasu UI service worker (UI-8).
+/* sw.js — Karasu UI service worker (UI-8 + UI-12b).
  *
  * Vanilla, dependency-free. Registered from index.html with a
  * feature-detection guard. Scoped to root via the
@@ -31,10 +31,24 @@
  *      that lets /api/* fall through to caches.match() is a
  *      P0 regression.
  *
- * The ordering is the contract.
+ * The ordering is the contract. tests/test_ui_sw.py pins it
+ * structurally (UI-12b pin §11.6.4).
+ *
+ * --- Push handlers (UI-12b additive) -------------------------
+ *
+ * UI-12b adds two SW event listeners independent of the fetch
+ * handler: ``push`` (renders an OS-level notification when
+ * UI-12c emits) and ``notificationclick`` (focuses an existing
+ * surface tab or opens a new one). Both register without
+ * touching the fetch handler ordering — the additive-only
+ * claim is proved by tests/test_ui_sw.py.
+ *
+ * UI-12b ships with no server-side emit; the push listener is
+ * registered for forward-compat. UI-12c earns the VAPID JWT
+ * dispatch path that actually delivers messages here.
  */
 
-const CACHE_NAME = 'karasu-ui-v8';
+const CACHE_NAME = 'karasu-ui-v12b';
 
 /* Static manifest precached on install. The list is the minimum
  * set the offline page + the application shell need to render
@@ -109,5 +123,96 @@ self.addEventListener('fetch', (event) => {
      *    construction. */
     event.respondWith(
         caches.match(event.request).then((hit) => hit || fetch(event.request))
+    );
+});
+
+/* --- UI-12b push handlers (additive) -------------------------
+ *
+ * The push listener fires when the operating system delivers a
+ * Web Push message to this worker. UI-12b ships only the
+ * receiver — UI-12c earns the server-side dispatch path that
+ * actually sends messages here, gated by the cryptography dep
+ * named under UI-12 §11.6.13. Until UI-12c lands, no message
+ * ever reaches this listener; registering it is forward-compat.
+ *
+ * Payload shape (the one UI-12c will produce):
+ *
+ *   { "title":    "<editorial single sentence>",
+ *     "category": "attention" | "errors" | "corrections",
+ *     "url":      "/",
+ *     "event_id": "<bus event id>" }
+ *
+ * Per UI-12 §3-H the body is intentionally empty so the
+ * notification reads as one editorial line; the title carries
+ * the meaning. A payload-less wakeup ping (push service kept-
+ * alive, etc.) falls back to a generic "Karasu" title rather
+ * than rendering a blank notification.
+ *
+ * tag = "karasu" (singular) so a fresh push REPLACES any
+ * pending notification rather than stacking — the operator
+ * gets the latest pulse, not a queue.
+ */
+self.addEventListener('push', (event) => {
+    let payload = {};
+    if (event.data) {
+        try {
+            payload = event.data.json();
+        } catch {
+            payload = {};
+        }
+    }
+    const title = (typeof payload.title === 'string' && payload.title)
+        ? payload.title
+        : 'Karasu';
+    const data = {
+        url: typeof payload.url === 'string' ? payload.url : '/',
+        category: typeof payload.category === 'string' ? payload.category : null,
+        event_id: typeof payload.event_id === 'string' ? payload.event_id : null,
+    };
+    const options = {
+        body: '',
+        icon: '/assets/icons/karasu-192.png',
+        badge: '/assets/icons/karasu-192.png',
+        tag: 'karasu',
+        data,
+        silent: false,
+        requireInteraction: false,
+    };
+    event.waitUntil(self.registration.showNotification(title, options));
+});
+
+/* The notificationclick listener routes the click to an
+ * existing surface tab when one is open (focus it), or opens a
+ * new one at the configured url. The Web Notifications spec
+ * requires the click handler to call event.notification.close()
+ * explicitly — without it the OS can leave the notification
+ * lingering after the user dismissed it.
+ */
+self.addEventListener('notificationclick', (event) => {
+    event.notification.close();
+    const data = event.notification.data || {};
+    const url = typeof data.url === 'string' ? data.url : '/';
+    event.waitUntil(
+        self.clients
+            .matchAll({ type: 'window', includeUncontrolled: true })
+            .then((clientList) => {
+                for (const client of clientList) {
+                    /* Match on pathname, not full URL — a surface
+                     * tab on http://localhost:8000/ should focus
+                     * for a notification whose data.url is "/". */
+                    try {
+                        const clientPath = new URL(client.url).pathname;
+                        if (clientPath === url && 'focus' in client) {
+                            return client.focus();
+                        }
+                    } catch {
+                        /* malformed client.url — try next client */
+                    }
+                }
+                if (self.clients.openWindow) {
+                    return self.clients.openWindow(url);
+                }
+                return undefined;
+            })
     );
 });

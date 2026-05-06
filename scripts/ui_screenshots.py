@@ -1268,30 +1268,39 @@ CAPTURES: dict[str, list[dict]] = {
     ],
 
     # UI-12a — push notification read display.
-    # Two PNGs land in this chunk:
-    #   "off"     — supported browser, empty store. The default
-    #               state on a fresh checkout. No eval_js
-    #               override needed; loadPushState reads
-    #               /api/push, sees subscription_count=0, and
-    #               renders ``Notifications: off`` with the
-    #               neutral --fg-2 colour.
+    # Two PNGs land in this chunk. Both override
+    # browserPushSupport() because headless Chromium reports
+    # Notification.permission === 'denied' by default (no user
+    # gesture, no grant_permissions wiring), which would land the
+    # "off" capture on the denied branch and erase the visual
+    # difference between the two PNGs. The override pins each
+    # capture to its intended branch regardless of the headless
+    # browser default; the production CSS — not the override —
+    # is what preserves the §11.6.11 PASSIVE READ-ONLY pin.
+    #   "off"     — supported browser, empty store. We override
+    #               browserPushSupport() to return 'supported' so
+    #               loadPushState() proceeds to fetch /api/push,
+    #               sees subscription_count=0, and renders
+    #               ``Notifications: off`` with the neutral --fg-2
+    #               colour.
     #   "denied"  — operator denied the OS-level Notification
-    #               permission. Cannot be reached via Playwright
-    #               permission API directly (Notification
-    #               permission is read-only); we override
-    #               browserPushSupport() on window so the
-    #               function returns 'denied' regardless of the
-    #               real browser state, then call loadPushState()
-    #               again so the footer affordance updates with
-    #               the --warn colour. The operator-feel pin
-    #               (§11.6.11 — passive read-only) is preserved
-    #               by the production CSS, not by the override.
+    #               permission. We override browserPushSupport()
+    #               to return 'denied'; loadPushState() short-
+    #               circuits before the fetch and renders
+    #               ``Notifications: denied`` with --warn.
     "UI-12-push": [
         {
             "name": "00-footer-push-off.png",
             "url": "/",
             "seed": False,
             "wait_ms": 800,
+            "eval_js": (
+                "window.browserPushSupport = function () {"
+                "  return 'supported';"
+                "};"
+                "window.loadPushState();"
+            ),
+            "post_eval_wait_ms": 200,
             "full_page": False,
         },
         {

@@ -57,8 +57,12 @@ UI surface progress (PWA roadmap — main HEAD `b07aae3`, 2026-05-06):
                                     (happy + error + malformed-
                                     body). ~400 LOC.
 - UI-12c (server-side emit)         queued; introduces `cryptography`
-                                    runtime dep as the §11.6.13 named
-                                    scoped exception to UI-0 §4.
+                                    runtime dep as the UI-12 §11.6.13
+                                    named scoped exception to UI-0 §4
+                                    (parent brief; not to be confused
+                                    with UI-12b §11.6.13 which is the
+                                    browser/store two-phase mutation
+                                    pin).
 
 ## System status
 
@@ -259,8 +263,10 @@ Entry point: UI-12b CODE chunk.
 
 After UI-12b code:
   - UI-12c — server-side emit (bus subscriber, VAPID JWT,
-    `cryptography` dep gated to this module per §11.6.13,
-    410/404 prune, 3-layer rate-limit). ~400 LOC. Closes
+    `cryptography` dep gated to this module per UI-12
+    §11.6.13 (parent brief; UI-12b §11.6.13 is the
+    two-phase mutation pin), 410/404 prune, 3-layer
+    rate-limit). ~400 LOC. Closes
     Phase 3 exit criteria — Telegram ceases to be the only
     push channel.
 
@@ -293,7 +299,9 @@ Operator-side TODOs (unchanged, non-blocking):
   other than passive read-only (pin §11.6.11).
 - Do NOT introduce `cryptography` until UI-12c. UI-12b
   is still pre-VAPID-emit; the dep exception lands with
-  the chunk that needs it (pin §11.6.13).
+  the chunk that needs it (parent UI-12 §11.6.13 — the
+  cryptography exception; UI-12b §11.6.13 is the unrelated
+  two-phase mutation pin).
 - Do NOT imply live adapter mutation in any UI-11 copy
   (pin §11.6.5 — INTENT-ONLY).
 - Do NOT add /agents page, header toolbar, or global trust

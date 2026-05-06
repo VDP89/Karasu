@@ -22,8 +22,9 @@
 > first proactive write surface deserves the same brief-before-code
 > discipline UI-10 / UI-11 / UI-12 ratified.
 >
-> **STATUS:** DRAFT — operator sign-off pending. Codex audit not
-> yet requested.
+> **STATUS:** CONFIRMED — operator sign-off complete (Victor,
+> 2026-05-06: "avanzar" — every default PROPOSAL accepted as the
+> binding contract). Codex audit pending out-of-band.
 
 ## 0 · Why this brief exists
 
@@ -181,11 +182,11 @@ Material defaults / Tailwind defaults / component-library chrome
 / install banners / update toasts / connection badges /
 first-visit permission prompts all forbidden.
 
-## 3 · Confirmed decisions (operator sign-off pending)
+## 3 · Confirmed decisions (operator sign-off complete 2026-05-06)
 
-All decisions below need operator sign-off before Codex audit.
-Markers flip from `[NEEDS OPERATOR SIGN-OFF]` to
-`[CONFIRMED YYYY-MM-DD]` on Victor's confirmation.
+All decisions below confirmed binding by Victor on 2026-05-06
+("avanzar" — every default PROPOSAL accepted as the binding
+contract; Codex audit pending out-of-band).
 
 ### A) Modal entry + copy
 
@@ -306,7 +307,7 @@ ALTERNATIVES considered:
   binding — footer is the affordance, modal is the gate; no
   side-channel verbs on the footer.
 
-`[NEEDS OPERATOR SIGN-OFF]`
+`[CONFIRMED 2026-05-06]`
 
 ### B) POST contracts
 
@@ -446,7 +447,7 @@ ALTERNATIVES considered:
   Rejected for testing simplicity — see §10.5. Both endpoints
   share one cap constant.
 
-`[NEEDS OPERATOR SIGN-OFF]`
+`[CONFIRMED 2026-05-06]`
 
 ### C) Bus event schema (additive to UI-12 §3-D)
 
@@ -537,7 +538,7 @@ ALTERNATIVES considered:
   additions + M removals + the new state. The new state is
   the contract; deltas are reconstructable from the bus.
 
-`[NEEDS OPERATOR SIGN-OFF]`
+`[CONFIRMED 2026-05-06]`
 
 ### D) Service worker delta + fetch-ordering shape lock
 
@@ -647,7 +648,7 @@ ALTERNATIVES considered:
   that mutates sw.js; the test gates the diff that introduces
   the risk.
 
-`[NEEDS OPERATOR SIGN-OFF]`
+`[CONFIRMED 2026-05-06]`
 
 ### E) Persistence — push subscription store WRITER
 
@@ -816,7 +817,7 @@ ALTERNATIVES considered:
   re-subscribes the affected browser" — the bus event is the
   audit record either way.
 
-`[NEEDS OPERATOR SIGN-OFF]`
+`[CONFIRMED 2026-05-06]`
 
 ### F) Default opt-in posture + HTTPS gap
 
@@ -926,7 +927,7 @@ ALTERNATIVES considered:
   unsupported" — adding a fifth state inflates the modal-
   unreachable copy without earning anything.
 
-`[NEEDS OPERATOR SIGN-OFF]`
+`[CONFIRMED 2026-05-06]`
 
 ## 3.5 · Operator pin (binding when sign-off lands)
 
@@ -999,7 +1000,7 @@ How this pin shapes UI-12b implementation if accepted:
   §11.6.12 of UI-12 (operator-feel .webm) carries forward.
 ```
 
-`[NEEDS OPERATOR SIGN-OFF]`
+`[CONFIRMED 2026-05-06]`
 
 ## 4 · Tech stack (delta vs UI-0 / UI-12 §4)
 
@@ -1369,7 +1370,7 @@ Same as UI-12 §8 + UI-12a additive contracts:
    forward into THIS brief verbatim. Reaffirm on UI-12b
    sign-off so the chunk-level brief lists the binding
    contract explicitly.
-   [CARRIED FORWARD FROM UI-12 §10.2; REAFFIRM ON SIGN-OFF]
+   [CONFIRMED 2026-05-06 — carried forward from UI-12 §10.2]
 
 2. Idempotent subscribe behavior.
    PROPOSAL — duplicate subscribe (same endpoint) is treated
@@ -1385,7 +1386,7 @@ Same as UI-12 §8 + UI-12a additive contracts:
    implies "confirm leaves the obvious effect" — overwriting
    categories is the natural outcome of a confirmed flow,
    and 409-then-unsubscribe is friction without a payoff.
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-06]
 
 3. Unsubscribe modal layout.
    PROPOSAL — same modal as subscribe, opened post-subscribe.
@@ -1399,7 +1400,7 @@ Same as UI-12 §8 + UI-12a additive contracts:
    (re-subscribe is one click away) and the operator-feel
    pin opposes friction layers without a destructive
    payoff.
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-06]
 
 4. Update-categories-only flow.
    PROPOSAL — when the modal reopens post-subscribe and the
@@ -1420,7 +1421,7 @@ Same as UI-12 §8 + UI-12a additive contracts:
    indistinguishable from "operator changed their mind on
    categories"; doubles the privacy contract surface for
    no operational gain.
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-06]
 
 5. Body cap parity (4 KiB on both POSTs).
    PROPOSAL — both subscribe and unsubscribe accept up to
@@ -1434,7 +1435,7 @@ Same as UI-12 §8 + UI-12a additive contracts:
    one shared 413 branch. The privacy boundary is not the
    body size; it's the never-log, never-project discipline
    (§3-B + §3-E).
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-06]
 
 6. Esc precedence with both modals concurrent.
    PROPOSAL — UI-12b modal cannot stack with another modal
@@ -1444,7 +1445,7 @@ Same as UI-12 §8 + UI-12a additive contracts:
    Same as UI-10 §10.6 + UI-11 §10.6 + UI-12 §10.7.
    Already CONFIRMED 2026-05-05 via UI-12 §10.7; carried
    forward verbatim.
-   [CARRIED FORWARD FROM UI-12 §10.7; REAFFIRM ON SIGN-OFF]
+   [CONFIRMED 2026-05-06 — carried forward from UI-12 §10.7]
 
 7. Native permission denial UX.
    PROPOSAL — if the operator clicks "Enable notifications"
@@ -1457,14 +1458,14 @@ Same as UI-12 §8 + UI-12a additive contracts:
         §3.5 binding — "cancel leaves no trace").
    Re-enabling requires OS-level permission flip; the modal
    is unreachable until then.
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-06]
 
 8. Manual VAPID seed instructions in docs/local-dogfood.md.
    PROPOSAL — UI-12b adds a section with the openssl command
    lines + the JSON snippet shape. UI-12c removes the
    section in the SAME PR that lands the cryptography dep
    (auto-generation supersedes manual seed).
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-06]
 
 9. TLS-for-dogfood doc section.
    PROPOSAL — UI-12b adds (if scope allows) a
@@ -1476,7 +1477,7 @@ Same as UI-12 §8 + UI-12a additive contracts:
    TLS gap is the most likely operator-felt friction in
    UI-12b dogfood; surfacing it in the same chunk that ships
    the modal closes the loop.
-   [NEEDS OPERATOR SIGN-OFF]
+   [CONFIRMED 2026-05-06]
 
 10. Footer DOM swap timing.
     PROPOSAL — the <button> vs <span> distinction is decided
@@ -1488,7 +1489,7 @@ Same as UI-12 §8 + UI-12a additive contracts:
     (e.g. operator subscribes, footer was a <button> for
     "off", stays a <button> for "on") do NOT swap the DOM
     element type; only the textContent + class swap.
-    [NEEDS OPERATOR SIGN-OFF]
+    [CONFIRMED 2026-05-06]
 ```
 
 ## 11 · Definition of "done" — UI-12b
@@ -1575,18 +1576,22 @@ Codex's audit closes.
 ## 12 · Status
 
 ```text
-Brief status:        DRAFT (operator sign-off pending).
-Operator sign-off:   PENDING — §3 (A-F), §3.5, §10 (1-10) all
-                     marked [NEEDS OPERATOR SIGN-OFF] except
-                     §10.1 + §10.6 which are CARRIED FORWARD
-                     from UI-12 sign-offs and need only
-                     reaffirmation.
-Codex audit:         NOT YET REQUESTED. Audit prompt
-                     delivered to operator after operator
-                     confirmation (per
-                     feedback_audit_prompt_automatic.md —
-                     auto-deliver copy-paste prompt at chunk
-                     close).
+Brief status:        CONFIRMED — operator sign-off complete
+                     (Victor, 2026-05-06: "avanzar"). Codex
+                     audit pending out-of-band.
+Operator sign-off:   COMPLETE (2026-05-06). Every §3 (A-F) +
+                     §3.5 + §10 (1-10) PROPOSAL accepted as
+                     the binding contract per default. The
+                     two §10 questions carried forward from
+                     UI-12 (§10.1 pre-checked categories,
+                     §10.6 Esc precedence) reaffirmed without
+                     deviation.
+Codex audit:         REQUESTED out-of-band. Audit prompt
+                     delivered to operator at sign-off close
+                     (per feedback_audit_prompt_automatic.md).
+                     Round 1 verdict ferried back via Victor;
+                     round-N follow-ups land in-branch per
+                     UI-10 / UI-11 / UI-12 lifecycle.
 Implementation:      BLOCKED on this brief's merge.
                      UI-12b code branch does NOT open until
                      this brief lands in main per UI-9
@@ -1600,7 +1605,7 @@ The brief follows the lifecycle `ui-10-design-brief.md` (PR
 
 ```text
 1. Implementer drafts the brief as a doc-only PR with
-   [NEEDS OPERATOR SIGN-OFF] markers.
+   [CONFIRMED 2026-05-06] markers.
 2. Operator reviews and confirms ("segun tus criterios" or
    per-marker). Markers flip to [CONFIRMED YYYY-MM-DD].
 3. Implementer entrega the audit prompt copy-paste to the

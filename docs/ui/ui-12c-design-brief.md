@@ -1143,7 +1143,12 @@ the JWT; encryption code lives in
 
 ### I) Test surface (pin §11.6.14 + UI-12 §7 audit cadence)
 
-PROPOSAL — three test files cover the UI-12c contract:
+PROPOSAL (corrected post Codex P1 round 3) — NINE new
+test files cover the UI-12c contract: classifier +
+rate_limit + dispatch + encryption + keys + import_scope
++ store cross-process + store lock-file + browser
+Playwright. Listed below in detail; the §6 roadmap split
+matches.
 
 ```text
 tests/test_push_emit_classifier.py
@@ -1552,9 +1557,15 @@ forward. UI-12c chunk-level specifics:
 ### 7.2 Test surface
 
 ```text
-- All 4 unit test files green.
-- Integration test (test_push_emit_dispatch.py) green
-  with the stdlib HTTPServer mock as the push service.
+- All 8 unit + integration test files green:
+    test_push_emit_classifier.py
+    test_push_emit_rate_limit.py
+    test_push_emit_dispatch.py
+    test_push_emit_encryption.py
+    test_push_emit_keys.py
+    test_push_emit_import_scope.py
+    test_push_store_cross_process.py
+    test_push_store_lock_file.py
 - Playwright test (test_ui_push_emit_browser.py) green
   OR skipped silently if Playwright is not installed.
 - Existing 139 UI tests STILL green (no regression on
@@ -1808,18 +1819,34 @@ server-side only; no Lighthouse delta expected.
 ## 11 · Definition of "done" — UI-12c
 
 ```text
-- One PR, ~700 LOC including tests.
+- One PR, ~2000 LOC total (code + tests + docs); see §6
+  roadmap for the detailed file split.
 - src/karasu/push_emit/ package with the file split
-  documented in §6.
+  documented in §6 (7 modules including
+  __init__.py / _classifier.py / _rate_limit.py /
+  _signing.py / _keys.py / _encryption.py / _dispatch.py).
 - cryptography >= 42.0 in pyproject.toml with the
   named-exception comment.
-- 4 new unit test files green; 1 Playwright test
-  green-or-skipped.
+- 8 new unit + integration test files green +
+  1 Playwright test green-or-skipped (Codex P1 round 3
+  — corrected from the round-1 "4 unit test files"
+  count):
+    test_push_emit_classifier.py
+    test_push_emit_rate_limit.py
+    test_push_emit_dispatch.py
+    test_push_emit_encryption.py
+    test_push_emit_keys.py
+    test_push_emit_import_scope.py
+    test_push_store_cross_process.py
+    test_push_store_lock_file.py
+    test_ui_push_emit_browser.py (Playwright, optional)
 - Existing 139 UI tests STILL green (no regression).
 - Import scope test
   (test_push_emit_import_scope.py) pins the
   cryptography exception to push_emit/_signing.py +
-  push_emit/_keys.py exclusively.
+  push_emit/_keys.py + push_emit/_encryption.py
+  exclusively (Codex P1 round 3 — was missing
+  _encryption.py).
 - 1-2 PNGs of OS notification tray + 1 .webm
   edge-to-edge under
   docs/ui/screenshots/UI-12c-emit/ +
@@ -1949,8 +1976,9 @@ once Codex's audit closes.
 ## 12 · Status
 
 ```text
-Brief status:        Round 1 CHANGES-REQUIRED → in-branch
-                     fixes applied; awaiting round 2.
+Brief status:        Round 2 CHANGES-REQUIRED → in-branch
+                     fixes applied; awaiting round 3. Loop
+                     budget: 2 of 5 consumed.
 Operator sign-off:   COMPLETE (2026-05-06). Every §3 (A-I) +
                      §3.5 + §10 (1-10) PROPOSAL accepted as
                      the binding contract per default. §10.9

@@ -1178,3 +1178,111 @@ Next step:
 - UI-12 (push notifications) earns its own brief before any code.
 - Issue #66 (P2 fetch_card retry) non-blocking.
 - Issue #76 (P2 THIRD_PARTY_NOTICES.md) non-blocking.
+
+---
+
+## 2026-05-06 — UI-12a closed (Claude Code desktop)
+
+Pickup from the desktop hand-off seeded by PR #97. The web session left
+the UI-12a code on a remote branch (`feat/ui-12a-push-read-display`,
+`a07c255`) with two known gaps: PNGs deferred (Playwright Chromium
+download blocked in the web sandbox) and a LOC overrun (~870 vs ~250)
+pending operator + Codex direction.
+
+PRs landed this session:
+
+- **PR #98 merged** (`f4edfbb`): UI-12a — push notification read display.
+  Squash of 4 commits:
+    a07c255 feat(ui): UI-12a push notification read display (PNGs deferred)
+    c7dead2 docs(ui): regenerated PNGs (off + denied) + headless override
+            symmetry fix
+    8b1f59c fix(ui): Codex round-1 follow-ups (P1 default + 2× P2)
+    f10ac55 fix(ui): Codex round-2 follow-up (P2 invalid UTF-8 store)
+- **PR #99**: docs/memory sync after UI-12a (this PR).
+
+Round-1 audit: CHANGES-REQUIRED (1 P1 + 2 P2). All closed in-branch:
+
+  - P1 — default push store path resolves against cwd (`Path("karasu-
+    push.json")`), leaks the future private store outside the gitignored
+    `.karasu/` directory. Fix: parser default → sentinel `None`;
+    `cmd_ui` resolves as `_bus_path(config).parent / "karasu-push.json"`;
+    explicit `--push-store PATH` still wins. 4 new CLI wiring tests
+    (`tests/test_main.py`).
+  - P2 — third PNG covers the `--accent` "on" branch (only `off`/`denied`
+    were present). Added `02-footer-push-on.png` driven by a
+    `push_seed=[<one throwaway sub>]` step in the screenshot capture
+    plan. `_start_server` configures `push_store_path=workdir/.karasu/
+    karasu-push.json` so the script cannot read whatever
+    `karasu-push.json` happens to be in cwd.
+  - P2 — `read_text` can raise `OSError` (the path is a directory,
+    permission denied, etc.) which would escape the `/api/push` handler
+    as a bare exception trace. Catch + re-raise as `PushStoreError` so
+    the handler returns the same generic
+    `{"error": "push store malformed"}` body. 2 new tests (unit + HTTP).
+
+Round-2 audit: APPROVED-with-observations. One P2 closed in-branch:
+
+  - P2 — `read_text(encoding="utf-8")` raises `UnicodeDecodeError` for
+    a present store containing non-UTF-8 bytes BEFORE `json.loads` ever
+    sees the input. `UnicodeDecodeError` is a `ValueError` subclass, NOT
+    an `OSError`, so the round-1 catch did not cover it. Fix: catch it
+    alongside `OSError` and re-raise as `PushStoreError`. 2 new tests
+    (unit + HTTP, both assert the body is the same generic error).
+
+Audit cadence:
+
+  Round 1 — out-of-band Codex via ChatGPT. Verdict CHANGES-REQUIRED.
+  Round 2 — out-of-band Codex via ChatGPT, after follow-ups pushed.
+            Verdict APPROVED-with-observations.
+  Round 3 not needed — single round-2 P2 applied as in-branch follow-up
+            per the UI-2..UI-9.1 + UI-10 + UI-11 pattern.
+  Loop budget: 2 of 5 rounds consumed.
+
+Bug caught + fixed during the session:
+
+  Headless Chromium 1208 reports `Notification.permission === 'denied'`
+  by default. The original screenshot capture for `00-footer-push-off`
+  relied on the real-browser `browserPushSupport()` to land on
+  'supported', but in headless it short-circuited on 'denied' and
+  produced a PNG identical to `01-footer-push-denied`. Fix: symmetric
+  `eval_js` override on the `00` capture (returns 'supported' instead
+  of 'denied'); production CSS — not the override — still owns the
+  §11.6.11 PASSIVE READ-ONLY pin. Documented in commit `c7dead2`.
+
+Decisions:
+
+- LOC overrun shipped as-is. The negative-shape privacy test
+  (`test_api_push_does_not_leak_raw_endpoint_or_keys`) earned its
+  weight under pin §0.5.6 audit-coherence carve-out: §11.6.5 + §11.6.16
+  require positive AND negative shape locks. Codex round 2 ratified
+  the call ("Do not trim the tests").
+- Three PNGs (off/denied/on) chosen over a fourth
+  "supported/unconfigured" capture because `off` already covers that
+  boundary; `on` is the unvisualised --accent branch.
+- Operator-side `karasu.yaml` refactor (push store under `event_bus:`
+  section instead of root) deferred — current `--push-store PATH`
+  override is the right shape per Codex round 1, default resolution
+  was the only bug.
+
+Impact:
+
+- UI-12a complete. The first piece of the third write surface (push)
+  shipped read-only, drawer-less, modal-less, with the privacy
+  contract pinned by negative-shape HTTP test before the WRITER side
+  lands in UI-12b.
+- main HEAD: `f4edfbb`. 0 PRs open. 0 issues open. 0 branches open.
+- 527 tests pass on Windows (2 preexisting Windows CRLF / POSIX-path
+  quirks, also fail on `main` pre-UI-12a; documented).
+- Issue #77 (UI-6 tracker) closed as housekeeping — UI-6 mergeado en
+  PR #78 since 2026-05-05.
+
+Next step:
+
+- UI-12b (opt-in surface, write paths) earns its own brief before
+  any code. UI-9 audit pin #1; mirror of UI-10 / UI-11 / UI-12 brief
+  lifecycle.
+- The brief must address: modal subscribe/unsubscribe UX, sw.js
+  push + notificationclick listeners (with shape-lock test against
+  the UI-8 fetch handler ordering), POST contracts, store WRITER
+  with mode 0600 + atomic write, human_decision schema with
+  endpoint_hash audit metadata, 4-5 PNGs + 1 .webm.

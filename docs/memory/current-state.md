@@ -7,7 +7,7 @@ Phase 1B: COMPLETED (no-adapter pass validated, F1–F5 closed)
 Phase 1C: COMPLETED (real Claude adapter loop validated, F6–F8 closed)
 Phase 2: COMPLETED — chunks 1+2+3 merged (#30 #31 #32 #33). Audit accepted with one round of changes (PR #33 contract alignment + redaction).
 Phase 3: COMPLETED + DOGFOOD-VALIDATED + AUDIT-ACCEPTED — chunks 3a + 3b + 3c merged (#34 #35 #36 #37). Live dogfood 2026-05-02 (issue #39) validated end-to-end: `/scar` → controller resubmit (94 ms) → pipeline applies scar → second dispatch with `priority=high` → response back to Telegram. Cap held at 3 under spam. Three operational findings filed: F9 (#40), F10 (#41), F11 (#42). Audit forward-look returned by ChatGPT and recorded in [`docs/memory/phase-3-dogfood-audit-2026-05-02.md`](phase-3-dogfood-audit-2026-05-02.md): 2 REQUERIDOS applied this PR (trust=2 docs warning + cap-local-per-origin issue), 1 NICE-TO-HAVE applied (sessions template), 2 NICE-TO-HAVE queued for Phase 3+ hardening (priority persist + startup warning).
-UI surface progress (PWA roadmap — main HEAD `1a88cb4`, 2026-05-05):
+UI surface progress (PWA roadmap — main HEAD `f4edfbb`, 2026-05-06):
 - UI-0  (design brief)              ✔ PR #62  merged (`92e2c91`).
 - UI-1  (rebase + projection)       ✔ PR #63  merged (`4819d7b`).
 - UI-2  (design system + tokens)    ✔ PR #69  merged (`6ec5203`).
@@ -30,8 +30,16 @@ UI surface progress (PWA roadmap — main HEAD `1a88cb4`, 2026-05-05):
                                     APPROVED-with-observations + operator
                                     sign-off complete; 16 §11.6 pins
                                     binding for UI-12a/b/c.
-- UI-12a (push read display)        ← NEXT.
-- UI-12b (opt-in surface)           queued behind UI-12a.
+- UI-12a (push read display)        ✔ PR #98 merged (`f4edfbb`).
+                                    APPROVED-with-observations across 2
+                                    audit rounds; round-1 P1 (default
+                                    push store next to bus) +
+                                    round-1+2 3× P2 all closed in-branch
+                                    before merge (PNG "on" coverage,
+                                    OSError → PushStoreError,
+                                    UnicodeDecodeError → PushStoreError).
+- UI-12b (opt-in surface)           ← NEXT. Earns own brief before
+                                    code (UI-9 audit pin #1).
 - UI-12c (server-side emit)         queued; introduces `cryptography`
                                     runtime dep as the §11.6.13 named
                                     scoped exception to UI-0 §4.
@@ -79,6 +87,10 @@ UI surface progress (PWA roadmap — main HEAD `1a88cb4`, 2026-05-05):
 - `_flight_route` projection ✔ (UI-6) — `src/karasu/ui/server.py::_flight_route` consults the LATEST event only and returns `(source, target)` ∈ `{user, karasu, claude, codex, github}` or `None` (parked). Mapping table: `file_change` watcher / git_hook → user → karasu; `file_change` with `controller_resubmit=true` → user → karasu (operator scar); `file_change` with `github_event` / `source=github_webhook` → github → karasu; `file_change` with router-assigned dispatch (`agent` set + `status` ∈ {pending, dispatched}) → karasu → claude/codex; `agent_response` (completed OR failed) → claude/codex → karasu; `human_decision` → user → karasu; `git_event` → user → karasu; unknown / unmapped → None. Stricter than `_crow_state` (no reverse walk) by design — operator's binding "no invented recovery flight" rule. Surfaced additively as `/api/health.flight = {source, target} | null`. Pinned by 22 unit tests + 2 HTTP-level tests in `tests/test_ui_server.py`.
 - `scripts/ui_screenshots.py` extended (UI-5) — per-state `STATE_CORPORA` so each PNG seeds the precedence-winning event for `_crow_state`; `--record-video` flag walks idle → processing → waiting → error → idle inside one Playwright context (1024×640 viewport, ~5 s total, ~112 KB output, no ffmpeg transcode needed); cross-drive `shutil.move` for Windows temp-dir → repo-dir handoff; `eval_js` step for the deliberate frozen-frame error PNG (`translateX(-2px)` pinned because the 240 ms one-shot beat is non-deterministic to capture mid-animation; motion truth lives in the `.webm`).
 - `scripts/ui_screenshots.py` extended (UI-6) — `FLIGHT_CORPORA` registry (six entries: flight-user-karasu, flight-karasu-claude, flight-claude-karasu, flight-github-karasu, flight-controller-resubmit, flight-parked) so each PNG seeds the latest-event tail that lands a specific `_flight_route` pair; `_resolve_seed_events` walks both STATE_CORPORA and FLIGHT_CORPORA so UI-5 and UI-6 plans coexist; `--record-video` for UI-6 walks the dispatch chain (file_change → karasu→claude → claude→karasu → github→karasu → controller-resubmit → parked) inside ONE Playwright context (1024×640 full-shell, ~6 s total, ~242 KB output).
+- UI push read display ✔ (UI-12a) — `src/karasu/ui/push_store.py` is a read-only projection of the push subscription store (`karasu-push.json`, default location resolved at startup as `_bus_path(config).parent / "karasu-push.json"` so the private store anchors to the gitignored bus directory; `karasu ui --push-store PATH` overrides). `PushStoreState` surfaces only `subscription_count` and `vapid_public_key`; raw endpoint URL / `p256dh` / `auth` / VAPID private key never leave the store (pin §11.6.5 + §11.6.16). Missing file → empty-state sentinel. Malformed-store branches all fold into the same structured 500 contract with the generic body `{"error": "push store malformed"}`: invalid JSON (`json.JSONDecodeError`), unreadable file (`OSError` — directory at the path, permission denied, etc.), and invalid UTF-8 bytes (`UnicodeDecodeError`). The UTF-8 catch is required because `read_text(encoding="utf-8")` raises BEFORE `json.loads` ever sees the input and `UnicodeDecodeError` is a `ValueError` subclass, not `OSError` (Codex P2 round 2). `PUSH_CATEGORIES = ("attention", "errors", "corrections")` is the closed enum per pin §11.6.10.
+- `GET /api/push` ✔ (UI-12a) — `{state: "supported", categories, subscription_count, vapid_public_key}`. The server is always "supported"; the client decides "unsupported" / "denied" via browser feature detection per UI-12 brief §10.9. HTTP shape lock + populated-store projection + the negative-shape privacy test (raw endpoint / p256dh / auth / VAPID private key MUST NOT appear in the response body) all in `tests/test_ui_server_http.py`. PushStoreError → 500 with the same generic body across the three malformed branches; no path leak.
+- UI footer push affordance ✔ (UI-12a) — fourth `.meta` slot in `static/index.html` (`Notifications: <state>`). Pre-opt-in weight identical to the build-version line; only the state word receives chromatic accent (`--accent` for "on", `--warn` for "denied" / "unsupported"). No click handler — passive read-only per pin §11.6.11. `browserPushSupport()` does feature detection (`serviceWorker` / `PushManager` / `Notification`) plus `Notification.permission === 'denied'` short-circuit before fetching `/api/push`. `loadPushState()` runs once on init; no polling (push state changes only on subscribe / unsubscribe, both UI-12b territory).
+- `scripts/ui_screenshots.py` extended (UI-12a) — UI-12-push capture plan: `00-footer-push-off.png` ("off" in `--fg-2`), `01-footer-push-denied.png` ("denied" in `--warn`), `02-footer-push-on.png` ("on" in `--accent`, seeded with one throwaway subscription). All three captures override `browserPushSupport()` via `eval_js` because Chromium headless 1208 reports `Notification.permission === 'denied'` by default; production CSS — not the override — owns the §11.6.11 PASSIVE READ-ONLY pin. `_seed_workdir` gains a `push_subscriptions` kwarg that writes/clears a synthetic store inside the tempdir; `_start_server` configures `push_store_path=workdir/.karasu/karasu-push.json` so the script cannot read whatever `karasu-push.json` happens to be in cwd.
 
 ## Verified behavior (Phase 1C closed)
 
@@ -134,42 +146,60 @@ Cap enforcement: 6 `/scar` rapid-fire → exactly 3 resubmits, 3 cap warnings, 0
 ## Next step (entry point)
 
 ```text
-main HEAD: 1a88cb4 (fetch_card retry HTTP statuses, 2026-05-05).
-0 PRs open. 0 branches open (working chunks all merged).
+main HEAD: f4edfbb (UI-12a push notification read display,
+2026-05-06). 0 PRs open. 0 branches open (working chunks
+all merged).
 
-UI-12 brief APPROVED-with-observations + operator sign-off
-complete (PR #93). Sixteen §11.6 implementation pins binding
-for UI-12a/b/c. The non-blocking issue queue from prior
-sessions is now empty:
-  - Issue #66 closed by PR #95 (fetch_card opt-in retry on
-    502/503/504; APPROVED-with-observations, 2 P2 closed —
-    one resolved with new tests, one counter-argued).
-  - Issue #76 closed by PR #94 (THIRD_PARTY_NOTICES.md for
-    OpenMoji + Inter Display + JetBrains Mono).
+UI-12a CLOSED. Read paths shipped:
+  - GET /api/push (state, categories, subscription_count,
+    vapid_public_key) with HTTP shape lock + privacy
+    negative-shape test in same PR.
+  - Footer affordance: passive read-only, four states
+    (on/off/denied/unsupported), no click handler.
+  - Default --push-store anchors to _bus_path.parent so
+    the future private store stays under the gitignored
+    bus directory.
+  - Three PNGs cover the three production states.
+  - Suite 527 passing (2 preexisting Windows quirks).
+Audit cycles: 2 rounds with Codex (out-of-band); round 1
+CHANGES-REQUIRED with 1 P1 + 2 P2 closed in-branch; round 2
+APPROVED-with-observations with 1 P2 (UnicodeDecodeError)
+closed in-branch before merge. Loop budget: 2/5 consumed.
 
-Entry point: UI-12a — push notification read display.
-  - GET /api/push -> {state, categories, subscription_count,
-    vapid_public_key?}
-  - HTTP shape lock for GET in same PR.
-  - Footer affordance shows current state read from the
-    endpoint. No modal. sw.js NOT touched in this chunk.
-  - Push subscription store path resolved (default
-    `karasu-push.json` next to events.jsonl + --push-store
-    flag); empty store on first start; VAPID keys NOT
-    generated until UI-12c (the chunk that earns the dep
-    exception).
-  - 1 PNG (footer "off"). 1 PNG (footer "denied").
-  - ~250 LOC.
+Entry point: UI-12b — opt-in surface (write paths).
+  Per UI-12 brief §6 + UI-9 audit pin #1: the chunk
+  introduces the first proactive write path on the surface
+  (POST /api/push/subscribe + POST /api/push/unsubscribe).
+  Earns its OWN brief before code lands.
 
-After UI-12a:
-  - UI-12b — opt-in surface (POST subscribe / unsubscribe,
-    modal, sw.js push handler stub, fetch-ordering shape-
-    lock test, 4 Playwright tests, 4-5 PNGs + 1 .webm).
-    ~400 LOC.
+  The brief must close:
+    - Modal copy + Esc/Cancel UX (§11.6 modal mandatory).
+    - sw.js push + notificationclick listeners scope. The
+      UI-8 fetch-handler ordering must NOT regress —
+      shape-lock test required (§11.6.12).
+    - Subscribe POST body: full PushSubscription dict
+      including raw endpoint. Material is request-local
+      secret (§11.6.16); store WRITER lands in this chunk.
+    - Unsubscribe POST body: bare endpoint string only.
+    - human_decision schema for subscribe / unsubscribe with
+      endpoint_hash audit metadata only (§11.6.6 + §11.6.8).
+    - Categories selection on subscribe (default all three
+      pre-checked per brief §10.2).
+    - PNG / .webm coverage for the modal + footer
+      transitions.
+
+  Brief lifecycle (proven UI-10 / UI-11 / UI-12): doc-only
+  PR with [NEEDS OPERATOR SIGN-OFF] markers, operator
+  confirmation flips them to [CONFIRMED], Codex audit,
+  follow-ups in-branch, merge. Brief PR merges BEFORE any
+  UI-12b code branch opens.
+
+After UI-12b:
   - UI-12c — server-side emit (bus subscriber, VAPID JWT,
-    `cryptography` dep gated to this module, 410/404 prune,
-    3-layer rate-limit). ~400 LOC. Closes Phase 3 exit
-    criteria — Telegram ceases to be the only push channel.
+    `cryptography` dep gated to this module per §11.6.13,
+    410/404 prune, 3-layer rate-limit). ~400 LOC. Closes
+    Phase 3 exit criteria — Telegram ceases to be the only
+    push channel.
 
 Operator-side TODOs (unchanged, non-blocking):
 - Rename repo Karasu- → Karasu (GitHub Settings).
@@ -180,6 +210,27 @@ Operator-side TODOs (unchanged, non-blocking):
 ## Do NOT do yet
 
 ```text
+- Do NOT open a UI-12b code branch until the UI-12b brief
+  is written, operator-confirmed, and Codex-audited
+  (UI-9 audit pin #1; mirror of the UI-10 / UI-11 / UI-12
+  brief-before-code lifecycle).
+- Do NOT request push permission on first visit
+  (UI-12 brief pin §11.6.2).
+- Do NOT add a /push page, header toolbar, or global push
+  settings surface — footer affordance only
+  (pin §11.6.3).
+- Do NOT write the raw PushSubscription endpoint or keys
+  to the bus. Only `endpoint_hash` may appear, and only as
+  audit metadata on `human_decision` events (pins
+  §11.6.5 + §11.6.6).
+- Do NOT log / project / emit / screenshot / echo raw push
+  endpoints — they are request-local secret material
+  (pin §11.6.16).
+- Do NOT degrade unsupported-push environments to anything
+  other than passive read-only (pin §11.6.11).
+- Do NOT introduce `cryptography` until UI-12c. UI-12b
+  is still pre-VAPID-emit; the dep exception lands with
+  the chunk that needs it (pin §11.6.13).
 - Do NOT imply live adapter mutation in any UI-11 copy
   (pin §11.6.5 — INTENT-ONLY).
 - Do NOT add /agents page, header toolbar, or global trust

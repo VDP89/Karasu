@@ -1148,6 +1148,39 @@ def test_api_push_top_level_array_in_store_surfaces_500(
     assert status == 500
 
 
+def test_api_push_unreadable_store_surfaces_500(
+    ui_http: tuple[str, int]
+) -> None:
+    """Filesystem error reading the store (permission denied,
+    the path is a directory, the device disappeared) folds
+    into the same structured 500 contract as malformed JSON.
+    Without the OSError → PushStoreError catch the handler
+    would let the bare exception trace escape, leaking the
+    absolute store path and bypassing the generic
+    ``{"error": "push store malformed"}`` body. Codex P2 on
+    PR #98 round 1.
+
+    Simulated via a directory at the store path so
+    ``read_text`` raises ``IsADirectoryError`` (POSIX) or
+    ``PermissionError`` (Windows). Both are ``OSError``
+    subclasses."""
+    host, port = ui_http
+    store_path = ui_server.PUSH_STORE_PATH
+    if store_path.exists() and store_path.is_file():
+        store_path.unlink()
+    store_path.mkdir(parents=True, exist_ok=True)
+    try:
+        status, body, _ = _get(host, port, "/api/push")
+        assert status == 500
+        # Same generic body as malformed JSON: no path leak,
+        # no exception trace.
+        assert json.loads(body) == {"error": "push store malformed"}
+    finally:
+        # Restore so subsequent tests in the module can re-use
+        # the fixture's tmp_path / store_path file slot.
+        store_path.rmdir()
+
+
 def test_api_push_subscriptions_not_a_list_degrades_to_zero(
     ui_http: tuple[str, int]
 ) -> None:

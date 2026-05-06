@@ -187,6 +187,29 @@ def test_top_level_scalar_raises_push_store_error(
         read_push_store(path)
 
 
+def test_unreadable_store_raises_push_store_error(
+    tmp_path: Path,
+) -> None:
+    """A store that exists but cannot be read (permission
+    denied, the path is a directory, the device disappeared,
+    etc.) must surface as ``PushStoreError`` so the
+    ``/api/push`` handler folds it into the same structured
+    500 contract as malformed JSON. Without the OSError catch
+    the handler returns the bare exception trace, which leaks
+    the absolute store path back to the wire and bypasses the
+    generic ``{"error": "push store malformed"}`` body. Codex
+    P2 on PR #98 round 1.
+
+    Simulated via a directory at the store path: ``read_text``
+    on a directory raises ``IsADirectoryError`` on POSIX or
+    ``PermissionError`` on Windows; both are ``OSError``
+    subclasses so the same code path catches them."""
+    path = tmp_path / "karasu-push.json"
+    path.mkdir()
+    with pytest.raises(PushStoreError, match="could not be read"):
+        read_push_store(path)
+
+
 # ---------------------------------------------------------------------------
 # project_push_state_payload — privacy contract pin
 # ---------------------------------------------------------------------------

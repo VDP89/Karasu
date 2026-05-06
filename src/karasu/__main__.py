@@ -709,13 +709,22 @@ def cmd_ui(args: argparse.Namespace) -> int:
     from karasu.ui.server import run_ui_server
 
     config = _load_config(args.config)
+    bus_path = _bus_path(config)
+    push_store_path = args.push_store
+    if push_store_path is None:
+        # Codex P1 (PR #98 round-1 audit): default must resolve
+        # next to the bus anchor — typically ``.karasu/`` which
+        # is already gitignored — so the future private store
+        # (UI-12b writers, UI-12c VAPID material) stays beside
+        # ``events.jsonl`` instead of leaking into the repo root.
+        push_store_path = bus_path.parent / "karasu-push.json"
     run_ui_server(
         host=args.host,
         port=args.port,
-        event_log=_bus_path(config),
+        event_log=bus_path,
         scars_path=_scars_path(config),
         config_path=args.config,
-        push_store_path=args.push_store,
+        push_store_path=push_store_path,
     )
     return 0
 
@@ -783,14 +792,17 @@ def build_parser() -> argparse.ArgumentParser:
     ui.add_argument(
         "--push-store",
         type=Path,
-        default=Path("karasu-push.json"),
+        default=None,
         metavar="PATH",
         help=(
             "path to the push subscription store (UI-12 brief "
-            "§3-F PRIVATE STORE; default: karasu-push.json next "
-            "to events.jsonl). UI-12a is read-only against this "
-            "path; UI-12b earns the writers, UI-12c earns VAPID "
-            "key generation"
+            "§3-F PRIVATE STORE). When omitted, defaults to "
+            "``karasu-push.json`` next to the configured bus "
+            "(typically ``.karasu/karasu-push.json``) so the "
+            "private store stays under the gitignored bus "
+            "anchor. UI-12a is read-only against this path; "
+            "UI-12b earns the writers, UI-12c earns VAPID key "
+            "generation."
         ),
     )
     ui.set_defaults(func=cmd_ui)

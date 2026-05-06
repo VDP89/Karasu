@@ -85,6 +85,15 @@ def read_push_store(path: Path) -> PushStoreState:
     set; silently coercing garbage would mask a real
     corruption.
 
+    Filesystem errors (the file exists but cannot be read —
+    permission denied, the path is a directory, the device
+    disappeared) also raise ``PushStoreError`` so the
+    ``/api/push`` handler folds them into the same structured
+    500 contract instead of letting the bare ``OSError`` reach
+    the wire. UI-12b will create the writer side as a 0600
+    file; this guard keeps the read path symmetric on the day
+    file mode trips for any reason. Codex P2 on PR #98 round 1.
+
     Sub-objects with the wrong shape (``vapid`` missing
     ``public``, ``subscriptions`` not a list) degrade to the
     empty-state defaults for that field rather than raising,
@@ -94,7 +103,13 @@ def read_push_store(path: Path) -> PushStoreState:
     if not path.exists():
         return _EMPTY_STATE
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise PushStoreError(
+            f"push store at {path} could not be read: {exc}"
+        ) from exc
+    try:
+        raw = json.loads(text)
     except json.JSONDecodeError as exc:
         raise PushStoreError(
             f"push store at {path} is not valid JSON: {exc}"

@@ -1266,6 +1266,104 @@ CAPTURES: dict[str, list[dict]] = {
             "full_page": True,
         },
     ],
+
+    # UI-12a — push notification read display.
+    # Three PNGs land in this chunk: ``off`` (supported but
+    # unconfigured), ``denied`` (browser-side permission
+    # refusal), and ``on`` (supported + at least one
+    # subscription in the store). All three override
+    # browserPushSupport() because headless Chromium reports
+    # Notification.permission === 'denied' by default (no user
+    # gesture, no grant_permissions wiring); without the
+    # override the ``off`` and ``on`` captures would
+    # short-circuit on the denied branch and erase the visual
+    # contrast. The override pins each capture to its intended
+    # branch regardless of the headless browser default; the
+    # production CSS — not the override — is what preserves
+    # the §11.6.11 PASSIVE READ-ONLY pin.
+    #   "off"     — supported browser, empty store. Override
+    #               browserPushSupport() to return 'supported'
+    #               so loadPushState() proceeds to fetch
+    #               /api/push, sees subscription_count=0, and
+    #               renders ``Notifications: off`` in --fg-2.
+    #   "denied"  — operator denied the OS-level Notification
+    #               permission. Override returns 'denied';
+    #               loadPushState() short-circuits before the
+    #               fetch and renders ``Notifications: denied``
+    #               in --warn.
+    #   "on"      — supported browser, populated store. Same
+    #               override as ``off`` plus a ``push_seed``
+    #               that writes a single throwaway subscription
+    #               to the tempdir's push store BEFORE the
+    #               capture. /api/push then reports
+    #               subscription_count=1 and the JS lands on
+    #               the ``is-on`` branch (--accent). The fake
+    #               endpoint never leaves the tempdir; the
+    #               negative-shape HTTP test in
+    #               test_ui_server_http.py guarantees raw
+    #               endpoint material does not reach the wire
+    #               either way (Codex P2 on PR #98 round 1).
+    "UI-12-push": [
+        {
+            "name": "00-footer-push-off.png",
+            "url": "/",
+            "seed": False,
+            "wait_ms": 800,
+            "eval_js": (
+                "window.browserPushSupport = function () {"
+                "  return 'supported';"
+                "};"
+                "window.loadPushState();"
+            ),
+            "post_eval_wait_ms": 200,
+            "full_page": False,
+        },
+        {
+            "name": "01-footer-push-denied.png",
+            "url": "/",
+            "seed": False,
+            "wait_ms": 800,
+            "eval_js": (
+                "window.browserPushSupport = function () {"
+                "  return 'denied';"
+                "};"
+                "window.loadPushState();"
+            ),
+            "post_eval_wait_ms": 200,
+            "full_page": False,
+        },
+        {
+            "name": "02-footer-push-on.png",
+            "url": "/",
+            "seed": False,
+            "wait_ms": 800,
+            "push_seed": [
+                {
+                    "endpoint": (
+                        "https://example.test/screenshot-fake-endpoint"
+                    ),
+                    "endpoint_hash": (
+                        "0000000000000000000000000000000000000000"
+                        "000000000000000000000000"
+                    ),
+                    "keys": {
+                        "p256dh": "screenshot-fake-p256dh",
+                        "auth": "screenshot-fake-auth",
+                    },
+                    "categories": ["attention", "errors", "corrections"],
+                    "created_at": "2026-05-06T00:00:00Z",
+                }
+            ],
+            "eval_js": (
+                "window.browserPushSupport = function () {"
+                "  return 'supported';"
+                "};"
+                "window.loadPushState();"
+            ),
+            "post_eval_wait_ms": 200,
+            "full_page": False,
+        },
+    ],
 }
 
 # Recording plan per slug. Each entry is a single video capture:
@@ -1503,6 +1601,11 @@ def _start_server(workdir: Path, port: int) -> http.server.ThreadingHTTPServer:
         event_log=workdir / ".karasu" / "events.jsonl",
         scars_path=workdir / ".karasu" / "scars",
         config_path=workdir / "karasu.yaml",
+        # UI-12a — pin the push store to a path INSIDE the
+        # tempdir so the screenshot run cannot read whatever
+        # ``karasu-push.json`` happens to be in the operator's
+        # cwd. Codex P2 on PR #98 round 1.
+        push_store_path=workdir / ".karasu" / "karasu-push.json",
     )
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", port), ui_server.UIHandler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -1516,6 +1619,7 @@ def _seed_workdir(
     events: list[dict] | None = None,
     scars: list[dict] | None = None,
     config: dict | None = None,
+    push_subscriptions: list[dict] | None = None,
 ) -> None:
     """Reset the synthetic bus + scar rules before each capture.
 
@@ -1559,6 +1663,30 @@ def _seed_workdir(
             config_path.unlink()
     else:
         config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    # UI-12a — push store. Pinned inside the tempdir's
+    # ``.karasu/`` so the captures cannot depend on a real
+    # local ``karasu-push.json``. ``None`` clears the file so
+    # the surface reads as the empty-state branch; a list
+    # writes a synthetic store with one fake VAPID public key
+    # plus the supplied subscriptions. The fake key + endpoints
+    # are throwaway by design — they exist only inside the
+    # tempdir and never leave it.
+    push_store_path = workdir / ".karasu" / "karasu-push.json"
+    if push_subscriptions is None:
+        if push_store_path.exists():
+            push_store_path.unlink()
+    else:
+        store = {
+            "vapid": {
+                "public": "screenshot-fake-vapid-public-do-not-use",
+                "private": "screenshot-fake-vapid-private-do-not-use",
+            },
+            "subscriptions": push_subscriptions,
+        }
+        push_store_path.write_text(
+            json.dumps(store), encoding="utf-8"
+        )
 
 
 def _resolve_seed_events(plan: dict) -> list[dict] | None:
@@ -1694,6 +1822,7 @@ def _capture(slug: str, port: int, out_dir: Path, workdir: Path) -> None:
                     events=seed_events,
                     scars=plan.get("seed_scars"),
                     config=plan.get("seed_config"),
+                    push_subscriptions=plan.get("push_seed"),
                 )
                 page.goto(f"http://127.0.0.1:{port}{plan['url']}")
                 page.wait_for_load_state("networkidle")

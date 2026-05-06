@@ -90,6 +90,14 @@ SCARS_PATH = Path(".karasu/scars/")
 # ``cmd_watch`` uses. Tests override it via ``configure(...)``.
 CONFIG_PATH = Path("karasu.yaml")
 
+# UI-12a — push subscription store path (UI-12 brief §3-F /
+# §11.6 PRIVATE STORE). Default lives next to the bus log; the
+# ``--push-store`` flag on ``karasu ui`` overrides per process.
+# UI-12a is read-only against this path; UI-12b earns the
+# subscribe / unsubscribe writers, UI-12c earns VAPID
+# generation behind the ``cryptography`` exception (§11.6.13).
+PUSH_STORE_PATH = Path("karasu-push.json")
+
 # UI-10 — bound on the POST body for /api/scars/{id}/revoke.
 # Modal textarea caps the operator's reason on the client; the
 # server is the second line of defence. 4 KiB matches the
@@ -522,6 +530,32 @@ def _persist_agent_trust(name: str, trust_level: int) -> None:
     tmp.replace(CONFIG_PATH)
 
 
+def _list_push_state() -> dict[str, Any]:
+    """Project the push store at :data:`PUSH_STORE_PATH` for
+    ``GET /api/push``.
+
+    Reads the store file via :func:`push_store.read_push_store`
+    and projects the result through
+    :func:`push_store.project_push_state_payload`. Both helpers
+    enforce the privacy contract (§11.6.5 + §11.6.16) — only
+    the subscription count and the public VAPID key surface;
+    raw endpoints and keys never leave the store.
+
+    A missing store returns the empty-state payload so the
+    surface works on a fresh checkout. A malformed store raises
+    ``PushStoreError`` and surfaces as a 500 rather than
+    silently coercing garbage; the operator's recourse is to
+    delete the file and let UI-12b re-bootstrap.
+    """
+    from karasu.ui.push_store import (
+        project_push_state_payload,
+        read_push_store,
+    )
+
+    state = read_push_store(PUSH_STORE_PATH)
+    return project_push_state_payload(state)
+
+
 def _emit_human_decision(action: str, data: dict[str, Any]) -> None:
     """Append a ``human_decision`` event to the configured bus.
 
@@ -653,6 +687,34 @@ class UIHandler(BaseHTTPRequestHandler):
         # confirmation modal.
         if path == "/api/scars":
             self._send_json({"scars": _list_active_scars()})
+            return
+
+        # UI-12a — push notification surface state. Read-only
+        # projection of the push subscription store. The shape
+        # is pinned by the HTTP shape lock in
+        # tests/test_ui_server_http.py. Server-side ``state`` is
+        # always ``"supported"``; the client reflects
+        # browser-feature-detected ``"unsupported"`` /
+        # ``"denied"`` per UI-12 brief §10.9 against this
+        # baseline. Pin §11.6.5 + §11.6.16: raw endpoint URLs
+        # and keys NEVER appear here — only the count and the
+        # public VAPID key (when present). A malformed store
+        # surfaces as 500 rather than silently coercing to an
+        # empty count — the operator's recourse is to delete
+        # the file and let UI-12b re-bootstrap.
+        if path == "/api/push":
+            from karasu.ui.push_store import PushStoreError
+
+            try:
+                payload = _list_push_state()
+            except PushStoreError:
+                self._send(
+                    500,
+                    b'{"error": "push store malformed"}',
+                    "application/json",
+                )
+                return
+            self._send_json(payload)
             return
 
         if path in ("/", "/index.html"):
@@ -965,6 +1027,7 @@ def configure(
     event_log: Path,
     scars_path: Path | None = None,
     config_path: Path | None = None,
+    push_store_path: Path | None = None,
 ) -> None:
     """Override the paths the UI server reads from / writes to.
 
@@ -977,15 +1040,18 @@ def configure(
 
     UI-10 added the optional ``scars_path`` parameter. UI-11a
     added ``config_path`` so ``GET /api/agents`` reads the same
-    ``karasu.yaml`` path the CLI was given. Omitting either leaves
-    the pre-existing default.
+    ``karasu.yaml`` path the CLI was given. UI-12a adds
+    ``push_store_path`` for ``GET /api/push``. Omitting any of
+    them leaves the pre-existing default.
     """
-    global EVENT_LOG, SCARS_PATH, CONFIG_PATH
+    global EVENT_LOG, SCARS_PATH, CONFIG_PATH, PUSH_STORE_PATH
     EVENT_LOG = event_log
     if scars_path is not None:
         SCARS_PATH = scars_path
     if config_path is not None:
         CONFIG_PATH = config_path
+    if push_store_path is not None:
+        PUSH_STORE_PATH = push_store_path
 
 
 def run_ui_server(
@@ -994,6 +1060,7 @@ def run_ui_server(
     event_log: Path | None = None,
     scars_path: Path | None = None,
     config_path: Path | None = None,
+    push_store_path: Path | None = None,
 ) -> None:
     """Start the UI HTTP server. Blocks until interrupted.
 
@@ -1001,14 +1068,22 @@ def run_ui_server(
     bus path; ``scars_path`` overrides the default
     ``.karasu/scars/`` rules directory (UI-10); ``config_path``
     points the UI-11a agent/trust projection at the same
-    ``karasu.yaml`` the CLI loaded. Callers that omit kwargs keep
+    ``karasu.yaml`` the CLI loaded; ``push_store_path``
+    overrides the default ``karasu-push.json`` location for the
+    UI-12a read-only push surface. Callers that omit kwargs keep
     the pre-existing defaults.
     """
-    if event_log is not None or scars_path is not None or config_path is not None:
+    if (
+        event_log is not None
+        or scars_path is not None
+        or config_path is not None
+        or push_store_path is not None
+    ):
         configure(
             event_log=event_log if event_log is not None else EVENT_LOG,
             scars_path=scars_path,
             config_path=config_path,
+            push_store_path=push_store_path,
         )
     server = ThreadingHTTPServer((host, port), UIHandler)
     print(f"karasu ui → http://{host}:{port}")

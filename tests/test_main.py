@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from karasu.__main__ import (
@@ -7,6 +9,8 @@ from karasu.__main__ import (
     _agent_config,
     _normalize_handles,
     _telegram_chat_id,
+    build_parser,
+    cmd_ui,
 )
 
 
@@ -215,3 +219,130 @@ def test_telegram_chat_id_rejects_non_integer(monkeypatch: pytest.MonkeyPatch) -
 def test_telegram_chat_id_strips_whitespace(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KARASU_TELEGRAM_CHAT_ID", "  77  ")
     assert _telegram_chat_id({}) == 77
+
+
+# ---------------------------------------------------------------------------
+# cmd_ui — push store default resolution (Codex P1 on PR #98 round 1)
+# ---------------------------------------------------------------------------
+#
+# UI-12 brief §3-F + §10.3 ratify ``karasu-push.json`` next to
+# ``events.jsonl``. Parser default was a literal ``Path("karasu-
+# push.json")`` which resolves against cwd, leaking the future
+# private store outside the gitignored bus directory. The fix:
+# parser default is the sentinel ``None``; ``cmd_ui`` resolves
+# the default as ``_bus_path(config).parent / "karasu-push.json"``
+# so the store anchors to the bus regardless of cwd.
+
+
+def _capture_run_ui_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, Path | None]:
+    """Stub ``run_ui_server`` and return the kwargs dict that
+    will be populated when ``cmd_ui`` calls it. ``cmd_ui``
+    imports ``run_ui_server`` lazily from
+    ``karasu.ui.server`` so monkeypatching the module
+    attribute before the call lands the stub on the lookup."""
+    captured: dict[str, Path | None] = {}
+
+    def fake_run_ui_server(**kwargs: object) -> None:
+        for key, value in kwargs.items():
+            captured[key] = value  # type: ignore[assignment]
+
+    from karasu.ui import server as ui_server_module
+
+    monkeypatch.setattr(
+        ui_server_module, "run_ui_server", fake_run_ui_server
+    )
+    return captured
+
+
+def test_cli_ui_push_store_parser_default_is_sentinel_none() -> None:
+    """The argparse default must be ``None`` (sentinel) so
+    ``cmd_ui`` can distinguish "operator did not pass the
+    flag" from "operator explicitly chose this path". A literal
+    Path default would erase that distinction and re-introduce
+    the cwd-relative bug."""
+    parser = build_parser()
+    args = parser.parse_args(["ui"])
+    assert args.push_store is None
+
+
+def test_cli_ui_push_store_default_uses_default_bus_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without ``--push-store`` and without an
+    ``event_bus.path`` in karasu.yaml, the store resolves to
+    ``.karasu/karasu-push.json`` (parent of DEFAULT_BUS =
+    ``.karasu/events.jsonl``). The store ends up under the
+    gitignored ``.karasu/`` directory exactly as the brief
+    ratifies."""
+    captured = _capture_run_ui_server(monkeypatch)
+
+    missing_config = tmp_path / "does-not-exist.yaml"
+    parser = build_parser()
+    args = parser.parse_args(
+        ["--config", str(missing_config), "ui"]
+    )
+    cmd_ui(args)
+
+    assert captured["push_store_path"] == Path(
+        ".karasu/karasu-push.json"
+    )
+
+
+def test_cli_ui_push_store_default_resolves_next_to_custom_bus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When ``event_bus.path`` is configured, the default
+    push store anchors to that bus's parent dir, not the cwd
+    or DEFAULT_BUS. This is the specific case Codex P1 called
+    out: an operator running ``karasu watch`` against a
+    non-default bus path must NOT have ``karasu ui`` write
+    a sibling push store to the repo root."""
+    captured = _capture_run_ui_server(monkeypatch)
+
+    custom_bus_dir = tmp_path / "custom-anchor"
+    config_path = tmp_path / "karasu.yaml"
+    config_path.write_text(
+        "event_bus:\n"
+        f"  path: {custom_bus_dir / 'events.jsonl'}\n",
+        encoding="utf-8",
+    )
+    parser = build_parser()
+    args = parser.parse_args(
+        ["--config", str(config_path), "ui"]
+    )
+    cmd_ui(args)
+
+    assert (
+        captured["push_store_path"]
+        == custom_bus_dir / "karasu-push.json"
+    )
+
+
+def test_cli_ui_push_store_explicit_overrides_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit ``--push-store PATH`` flag wins over the
+    default-next-to-bus resolution. The flag is the documented
+    operator override per the help text; the default
+    resolution must not silently swallow it."""
+    captured = _capture_run_ui_server(monkeypatch)
+
+    explicit = tmp_path / "operator-chose-this.json"
+    config_path = tmp_path / "karasu.yaml"
+    config_path.write_text(
+        "event_bus:\n  path: /some/other/anchor/events.jsonl\n",
+        encoding="utf-8",
+    )
+    parser = build_parser()
+    args = parser.parse_args([
+        "--config",
+        str(config_path),
+        "ui",
+        "--push-store",
+        str(explicit),
+    ])
+    cmd_ui(args)
+
+    assert captured["push_store_path"] == explicit

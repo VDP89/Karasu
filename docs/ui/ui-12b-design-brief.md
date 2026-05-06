@@ -22,12 +22,14 @@
 > first proactive write surface deserves the same brief-before-code
 > discipline UI-10 / UI-11 / UI-12 ratified.
 >
-> **STATUS:** CHANGES-REQUIRED → in-branch fixes applied,
-> awaiting round 2. Operator sign-off complete (Victor,
+> **STATUS:** Round 2 CHANGES-REQUIRED → fixes applied,
+> awaiting round 3. Operator sign-off complete (Victor,
 > 2026-05-06: "avanzar" — every default PROPOSAL accepted as
-> the binding contract). Codex audit round 1 CHANGES-REQUIRED
-> (1 P0 + 5 P1 + 1 P2, all addressed in-branch). Round 2
-> pending out-of-band.
+> the binding contract). Codex audit round 1
+> CHANGES-REQUIRED (1 P0 + 5 P1 + 1 P2, all addressed
+> in-branch). Codex audit round 2 CHANGES-REQUIRED (3 P1 +
+> 1 P2, all addressed in-branch). Round 3 pending
+> out-of-band. Loop budget: 2 of 5 consumed.
 
 ## 0 · Why this brief exists
 
@@ -340,6 +342,19 @@ produce subscribe bodies ~600 bytes).
 Validation (all 422 unless noted):
 
 ```text
+- Body NOT valid JSON → 400. Generic body
+  ({"error": "invalid request"}); MUST NOT echo the raw
+  request bytes, MUST NOT surface json.JSONDecodeError text,
+  MUST NOT include line/column offsets that could leak
+  fragments. NO bus event, NO store mutation.
+  (Codex round 2 P1 pin: malformed JSON is a handler branch
+  distinct from field-level validation, and the response
+  body MUST be generic on this branch too.)
+- Top-level JSON value NOT an object (e.g. array / string /
+  number) → 422. Generic body
+  ({"error": "request body must be an object"}); same
+  no-echo discipline as above. NO bus event, NO store
+  mutation.
 - Missing `subscription` / `subscription.endpoint` /
   `subscription.keys.p256dh` / `subscription.keys.auth` /
   `categories` → 422.
@@ -392,6 +407,13 @@ both endpoints share one cap constant).
 Validation:
 
 ```text
+- Body NOT valid JSON → 400. Generic body
+  ({"error": "invalid request"}); same no-echo discipline
+  as subscribe (Codex round 2 P1 pin). NO bus event, NO
+  store mutation.
+- Top-level JSON value NOT an object → 422. Generic body
+  ({"error": "request body must be an object"}). NO bus
+  event, NO store mutation.
 - Missing `endpoint` → 422.
 - `endpoint` not matching the HTTPS regex above → 422.
 - `endpoint` not in the store → 404. The 404 body is generic
@@ -492,19 +514,28 @@ can retry without the leaked subscription.
      subscription = await registration.pushManager.getSubscription()
    - If null (browser already unsubscribed out-of-band, e.g.
      OS-level revocation): the modal-foot "Unsubscribe this
-     browser" verb is NOT rendered. The server-side store
-     entry is orphaned; the operator can remove it via a
-     POST /api/push/unsubscribe with the endpoint observed
-     from /api/push.subscriptions (UI-13+ — out of UI-12b
-     scope). For UI-12b, an orphaned entry is noise UI-12c
-     emit will eventually prune (410 Gone from push
-     service) once UI-12c lands.
+     browser" verb is NOT rendered (the modal post-subscribe
+     layout omits it). For UI-12b an orphaned store entry
+     stays in karasu-push.json until UI-12c emit prunes it
+     on a 410 Gone from the push service. UI-12b does NOT
+     surface raw endpoint material from any /api/* projection
+     (the /api/push read shape is frozen at
+     {state, categories, subscription_count, vapid_public_key};
+     a future maintenance brief — UI-13+ — earns its own
+     contract for orphan cleanup).
    - If non-null: continue.
 2. await fetch('/api/push/unsubscribe', {endpoint, ...}).
-   - On 204: server side removed. Continue to step 3.
-   - On 404 (endpoint not in store — store was already
-     pruned): treat as success and continue to step 3.
-     Both sides converge to "unsubscribed".
+   - On 204: server-side store mutated, push_unsubscribe
+     event emitted on the bus. Continue to step 3 with
+     audit_emitted=true.
+   - On 404 (endpoint already absent from store — orphan
+     left by a prior partial flow, or already pruned by a
+     parallel writer): server did NOT mutate the store and
+     did NOT emit a bus event (per §7.3 server contract).
+     Treat as browser-cleanup success and continue to
+     step 3 with audit_emitted=false. Both sides converge
+     to "unsubscribed" but the bus carries no new
+     human_decision because no server mutation occurred.
    - On 422 / 413 / network failure: surface error in modal
      foot, do NOT call subscription.unsubscribe() — the
      browser stays subscribed so a retry can complete the
@@ -515,24 +546,37 @@ can retry without the leaked subscription.
      holds the subscription. Operator must retry from the
      modal (which will see getSubscription() return non-null
      and offer the unsubscribe verb again; step 2 will
-     return 404 the second time and the flow converges).
-   - On success: close modal, footer flips to "off",
-     human_decision (push_unsubscribe) lands by the next
-     /api/events tick.
+     return 404 the second time — audit_emitted=false on
+     the retry — and the flow converges).
+   - On success: close modal, footer flips to "off". If
+     audit_emitted=true, the push_unsubscribe event lands
+     by the next /api/events tick. If audit_emitted=false
+     (404 path), the bus carries NO new event — the
+     server's silence on 404 is the audit truth (no
+     mutation, no event), and the surface refresh just
+     reflects the browser's new state.
 
-Order matters: server-removal-first, then browser-unsubscribe.
+Order matters: server-removal-first (so the server-side
+audit trail is authoritative), then browser-unsubscribe.
 If the order were reversed (browser first), a network
 failure on step 2 would leave the store with a dead
 endpoint that UI-12c would dispatch against (push service
 returns 410, UI-12c prunes — eventually) but the operator
 would believe they had unsubscribed cleanly.
+
+Audit-event correspondence: exactly one push_unsubscribe
+event lands on the bus per server-side store mutation. The
+404 convergence path emits zero events; the 204 path emits
+exactly one. This composes cleanly with §7.3's server
+contract ("Endpoint not in store → 404; NO bus event;
+NO store mutation").
 ```
 
 ##### Test coverage (Playwright + HTTP)
 
 ```text
 The Playwright cancel + confirm + Esc + backdrop +
-native-deny suite (§3-A) gains TWO new tests:
+native-deny suite (§3-A) gains FOUR new tests:
 
   test_subscribe_post_failure_rolls_back_browser
     Mock POST /api/push/subscribe to return 503.
@@ -554,10 +598,49 @@ native-deny suite (§3-A) gains TWO new tests:
         AFTER the 204 lands.
       - Bus carries exactly one push_unsubscribe event.
       - Store has the entry removed.
+      - Footer flips to "off".
+
+  test_unsubscribe_404_converges_with_no_bus_event
+    Seed: synthetic subscription in store, then DELETE the
+    store entry server-side WITHOUT browser-side awareness
+    (simulates a parallel pruner). Operator hits unsubscribe.
+    Mock POST /api/push/unsubscribe to return 404.
+    Assert:
+      - subscription.unsubscribe was called exactly once
+        AFTER the 404 lands (Codex round 2 P1 pin: 404 is
+        treated as browser-cleanup success).
+      - Bus has ZERO new push_unsubscribe events (the
+        server emitted nothing on 404 per §7.3).
+      - Store delta is zero (already empty).
+      - Footer flips to "off".
+
+  test_unsubscribe_browser_failure_after_204_can_retry_via_404
+    (Codex round 2 P2 pin.)
+    Drive the full happy-path UI through step 2 (POST 204).
+    Force subscription.unsubscribe() to reject on the first
+    attempt.
+    Assert (first attempt):
+      - Modal foot displays an editorial error.
+      - Store has the entry removed (the 204 already
+        mutated it).
+      - Browser still holds the subscription.
+      - Bus carries exactly one push_unsubscribe (from
+        the 204).
+    Operator retries via the modal; step 2 now returns 404
+    because the store was emptied by the first attempt's
+    204; subscription.unsubscribe() succeeds.
+    Assert (second attempt):
+      - subscription.unsubscribe was called and resolved.
+      - Bus carries NO new push_unsubscribe (the 404 path
+        emits no audit event).
+      - Total bus push_unsubscribe count for the flow is
+        exactly one (from the first 204), not two.
+      - Footer is "off"; getSubscription() returns null.
 
 The HTTP shape lock in §7.3 already covers the server side
 of these flows; the Playwright tests pin the BROWSER side
-of the contract.
+of the contract — including the 404 convergence path and
+the post-204 browser-rejection retry path.
 ```
 
 #### Privacy reaffirmations (binding)
@@ -1523,9 +1606,44 @@ Error-path sentinel coverage (Codex P1 round 1, 2026-05-06):
     - Store has zero delta (read store hash before + after,
       assert equal).
     - Captured logs contain neither sentinel substring.
-  The error-body assertions close the gap that "validation
-  rejection paths" could otherwise echo input back to the
-  client. Pin §11.6 candidate (round 1 P1).
+
+Malformed-body sentinel coverage (Codex P1 round 2, 2026-05-06):
+  JSON-parse-failure and non-object-body branches sit BEFORE
+  field-level validation; an implementation that surfaces
+  json.JSONDecodeError text or echoes raw bytes can leak
+  sentinel material from a malformed payload. The test MUST
+  additionally trigger:
+    - POST /api/push/subscribe with a request body that is
+      NOT valid JSON, sentinel substring embedded in the
+      raw bytes (e.g. b'{"endpoint": "https://...DO-NOT-LEAK..."'
+      with the trailing brace truncated) → 400.
+    - POST /api/push/subscribe with a top-level JSON array
+      whose only element is a sentinel-bearing object → 422.
+    - POST /api/push/subscribe with a top-level JSON string
+      that contains the sentinel substring → 422.
+    - POST /api/push/unsubscribe with a non-JSON body
+      carrying the sentinel substring → 400.
+    - POST /api/push/unsubscribe with a top-level JSON
+      number (e.g. `42`) → 422.
+  For each malformed-body branch, assert:
+    - HTTP response body matches one of the two generic
+      shapes ({"error": "invalid request"} or
+      {"error": "request body must be an object"}).
+    - Sentinel substring absent from response body.
+    - No json.JSONDecodeError text in response body.
+    - No line / column offsets in response body that could
+      leak fragment positions.
+    - Bus has zero new events; store has zero delta.
+    - Captured logs contain no sentinel substring AND no
+      json.JSONDecodeError repr (the parser exception is
+      caught + logged at WARNING with a generic
+      "malformed body" message; the underlying exception
+      message is NOT logged).
+
+  The malformed-body assertions close the gap that JSON
+  parser errors could otherwise leak request fragments via
+  exception messages or echoed bodies. Pin §11.6.5 extended
+  in round 2.
 ```
 
 ### 7.5 SW fetch ordering shape-lock test (§3-D)
@@ -1865,10 +1983,24 @@ All bind UI-12b implementation. Verbatim:
     subscription.unsubscribe() rollback BEFORE user-visible
     feedback; no human_decision emits on rollback paths.
     Unsubscribe: server-removal-first (POST), then
-    subscription.unsubscribe(); 404 on the POST is treated
-    as success (both sides converge to "unsubscribed").
-    Playwright tests cover BOTH the subscribe rollback path
-    AND the post-204 browser-unsubscribe path.
+    subscription.unsubscribe(). The 404 path is treated as
+    browser-cleanup success (both sides converge to
+    "unsubscribed") AND emits ZERO bus events (the server
+    did not mutate, so the bus carries no new
+    push_unsubscribe — composes with §7.3 server contract).
+    Audit-event correspondence: exactly one push_unsubscribe
+    on the bus per server-side store mutation; the 204 path
+    emits one, the 404 convergence path emits zero. The
+    Playwright suite pins:
+      - subscribe rollback (POST failure → browser
+        unsubscribe → no bus event)
+      - post-204 unsubscribe (POST 204 → browser unsubscribe
+        → exactly one bus event)
+      - 404 convergence (POST 404 → browser unsubscribe →
+        zero bus events)
+      - post-204 browser-rejection retry (first attempt 204
+        emits one event, browser-unsubscribe rejects;
+        second attempt 404 emits zero; total bus count = 1)
 14. The frontend MUST short-circuit BEFORE
     Notification.requestPermission when /api/push.vapid_public_key
     is null. The modal opens (so the operator finds out
@@ -1895,15 +2027,23 @@ All bind UI-12b implementation. Verbatim:
 Pins 1-10 + 12 parallel UI-10 §11.6 / UI-11 §11.6 / UI-12
 §11.6 contracts (drawer / modal / scope / privacy / schema /
 operator-feel). Pin 11 freezes the UI-12a read shape. Pins
-13-16 are the four new bindings Codex set on round 1
+13-16 are the four bindings Codex set on round 1
 specifically for UI-12b (P0 two-phase mutation, P1 VAPID-null
 UI behavior, P1 writer lock, P2 endpoint sourcing
 discipline). Pin 9 was rewritten in round 1 to remove the
 internal contradiction with §3-B (empty categories allowed
 as zero-noise subscription). Pin 5 was extended in round 1
-to cover error-body sentinel assertions. Pin 3 was clarified
-in round 1 to remove the "fired-and-rejected
-PushManager.subscribe" misstatement.
+(error-body sentinel assertions) and again in round 2
+(malformed-JSON / non-object-body sentinel assertions). Pin
+3 was clarified in round 1 to remove the
+"fired-and-rejected PushManager.subscribe" misstatement.
+Pin 13 was extended in round 2 to incorporate the 404
+no-event clarification (server emits zero events on the
+404 path; browser still converges via subscription.unsubscribe()).
+Round 2 also removed a §3-B reference to a future
+`/api/push.subscriptions` raw-endpoint projection that
+would have violated pin §11.6.11 (frozen UI-12a read
+shape) + pin §11.6.16 (raw endpoint never on /api/*).
 
 ## 12 · Status
 
@@ -1948,9 +2088,33 @@ Codex audit:         Round 1: CHANGES-REQUIRED (1 P0 + 5 P1
                             .getSubscription() (never DOM /
                             localStorage / cached values).
                      Pins 13-16 added to §11.6; pin 5 + pin 9
-                     extended; pin 3 clarified. Loop budget:
-                     1 of 5 consumed.
-                     Round 2 pending out-of-band; round-2
+                     extended; pin 3 clarified.
+
+                     Round 2: CHANGES-REQUIRED (3 P1 + 1 P2).
+                     All four findings addressed in-branch:
+                       P1  §3-B unsubscribe 404 audit-event
+                            ambiguity fixed (404 path emits
+                            zero bus events; audit_emitted
+                            flag tracks state). Pin 13
+                            extended.
+                       P1  §3-B `/api/push.subscriptions`
+                            raw-endpoint projection
+                            reference removed (would have
+                            violated pin §11.6.11 +
+                            §11.6.16). Orphan handling
+                            deferred to UI-12c 410 prune.
+                       P1  §3-B + §7.4 malformed JSON +
+                            non-object body validation rows
+                            added (400 / 422 with generic
+                            bodies; no JSONDecodeError text;
+                            no offset leakage). Pin 5
+                            extended again.
+                       P2  Third + fourth Playwright tests
+                            added (404 convergence,
+                            post-204 browser-rejection retry).
+
+                     Loop budget: 2 of 5 consumed.
+                     Round 3 pending out-of-band; round-3
                      verdict ferried back via Victor;
                      additional follow-ups land in-branch.
 Implementation:      BLOCKED on this brief's merge.

@@ -1181,6 +1181,30 @@ def test_api_push_unreadable_store_surfaces_500(
         store_path.rmdir()
 
 
+def test_api_push_invalid_utf8_store_surfaces_500(
+    ui_http: tuple[str, int]
+) -> None:
+    """A store with non-UTF-8 bytes raises
+    ``UnicodeDecodeError`` from ``read_text`` BEFORE the JSON
+    parser sees it. That is a ``ValueError`` subclass, not an
+    ``OSError``, so without a dedicated catch it would escape
+    the structured 500 path and reach the wire as a bare
+    exception trace (leaking the absolute store path). The
+    UnicodeDecodeError → PushStoreError fold makes the body
+    identical to malformed-JSON / unreadable-file paths.
+    Codex P2 on PR #98 round 2.
+
+    Simulated by writing the forbidden ``\\xff`` lead byte
+    to the store. The HTTP body must be the generic error,
+    same as the other error branches."""
+    host, port = ui_http
+    store_path = ui_server.PUSH_STORE_PATH
+    store_path.write_bytes(b"\xff\xfe\xfd not valid utf-8 here")
+    status, body, _ = _get(host, port, "/api/push")
+    assert status == 500
+    assert json.loads(body) == {"error": "push store malformed"}
+
+
 def test_api_push_subscriptions_not_a_list_degrades_to_zero(
     ui_http: tuple[str, int]
 ) -> None:

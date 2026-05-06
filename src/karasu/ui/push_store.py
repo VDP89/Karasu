@@ -94,6 +94,16 @@ def read_push_store(path: Path) -> PushStoreState:
     file; this guard keeps the read path symmetric on the day
     file mode trips for any reason. Codex P2 on PR #98 round 1.
 
+    Invalid UTF-8 bytes in a present store (operator
+    hand-edited with the wrong codepage, partial write, etc.)
+    raise ``UnicodeDecodeError`` from ``read_text`` BEFORE
+    ``json.loads`` ever sees the input. That is a ``ValueError``
+    subclass, not an ``OSError``, so it would escape the
+    OSError catch and reach the wire as a bare trace. We catch
+    it alongside the read step and surface it as a malformed
+    store so the operator gets the same generic 500 body.
+    Codex P2 on PR #98 round 2.
+
     Sub-objects with the wrong shape (``vapid`` missing
     ``public``, ``subscriptions`` not a list) degrade to the
     empty-state defaults for that field rather than raising,
@@ -107,6 +117,10 @@ def read_push_store(path: Path) -> PushStoreState:
     except OSError as exc:
         raise PushStoreError(
             f"push store at {path} could not be read: {exc}"
+        ) from exc
+    except UnicodeDecodeError as exc:
+        raise PushStoreError(
+            f"push store at {path} is not valid UTF-8: {exc}"
         ) from exc
     try:
         raw = json.loads(text)

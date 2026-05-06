@@ -210,6 +210,27 @@ def test_unreadable_store_raises_push_store_error(
         read_push_store(path)
 
 
+def test_invalid_utf8_store_raises_push_store_error(
+    tmp_path: Path,
+) -> None:
+    """A store containing bytes that are not valid UTF-8
+    (hand-edited with the wrong codepage, partial write that
+    truncated mid-multi-byte-sequence, etc.) raises
+    ``UnicodeDecodeError`` from ``read_text`` BEFORE
+    ``json.loads`` ever sees the input. ``UnicodeDecodeError``
+    is a ``ValueError`` subclass, NOT an ``OSError`` — without
+    a dedicated catch it escapes the structured 500 path and
+    reaches the wire as a bare exception trace, leaking the
+    absolute store path. Codex P2 on PR #98 round 2.
+
+    Simulated by writing bytes that are invalid as UTF-8: the
+    ``\\xff`` lead byte is forbidden under UTF-8 anywhere."""
+    path = tmp_path / "karasu-push.json"
+    path.write_bytes(b"\xff\xfe\xfd not valid utf-8 here")
+    with pytest.raises(PushStoreError, match="not valid UTF-8"):
+        read_push_store(path)
+
+
 # ---------------------------------------------------------------------------
 # project_push_state_payload — privacy contract pin
 # ---------------------------------------------------------------------------

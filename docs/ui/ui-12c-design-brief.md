@@ -27,14 +27,16 @@
 > criteria — once UI-12c lands, Telegram ceases to be the
 > only push channel.
 >
-> **STATUS:** Round 2 CHANGES-REQUIRED → fixes applied,
-> awaiting round 3. Operator sign-off complete (Victor,
-> 2026-05-06: "avanzar" — every default PROPOSAL accepted
-> as the binding contract). Codex audit round 1
+> **STATUS:** APPROVED-with-observations — mergeable.
+> Operator sign-off complete (Victor, 2026-05-06:
+> "avanzar"). Codex audit closed at round 4 of 5: round 1
 > CHANGES-REQUIRED (2 P0 + 4 P1 + 1 P2, all addressed
-> in-branch). Codex audit round 2 CHANGES-REQUIRED (4 P1
-> + 2 P2, all addressed in-branch). Round 3 pending
-> out-of-band. Loop budget: 2 of 5 consumed.
+> in-branch); round 2 CHANGES-REQUIRED (4 P1 + 2 P2, all
+> addressed in-branch); round 3 CHANGES-REQUIRED (1 P1 +
+> 1 P2, all addressed in-branch); round 4
+> APPROVED-with-observations (3 P2 wording cleanups,
+> applied). Twenty §11.6 anticipated pins ratified
+> binding for UI-12c implementation. Loop budget: 4/5.
 
 ## 0 · Why this brief exists
 
@@ -1143,12 +1145,31 @@ the JWT; encryption code lives in
 
 ### I) Test surface (pin §11.6.14 + UI-12 §7 audit cadence)
 
-PROPOSAL (corrected post Codex P1 round 3) — NINE new
-test files cover the UI-12c contract: classifier +
-rate_limit + dispatch + encryption + keys + import_scope
-+ store cross-process + store lock-file + browser
-Playwright. Listed below in detail; the §6 roadmap split
-matches.
+PROPOSAL (corrected post Codex P1 round 3 + P2 round 4)
+— NINE new test files cover the UI-12c contract. The
+§6 roadmap lists every file with LOC estimates; this
+section + §3-C + §3-G detail their scope:
+
+```text
+test_push_emit_classifier.py     (§3-I below)
+test_push_emit_rate_limit.py     (§3-I below)
+test_push_emit_dispatch.py       (§3-I below)
+test_push_emit_encryption.py     (§3-C — RFC 8291
+                                   round-trip + header
+                                   shape + uniqueness +
+                                   privacy negative-shape)
+test_push_emit_keys.py           (§3-I below)
+test_push_emit_import_scope.py   (§3-I below — three-file
+                                   scope; §3-C top split)
+test_push_store_cross_process.py (§3-G — multiprocessing-
+                                   based no-lost-update
+                                   test)
+test_push_store_lock_file.py     (§3-G — acquire/release
+                                   region discipline +
+                                   Windows byte-0 spy)
+test_ui_push_emit_browser.py     (§3-I below — Playwright,
+                                   optional)
+```
 
 ```text
 tests/test_push_emit_classifier.py
@@ -1423,9 +1444,10 @@ design system (UI-12 §5.6 binding).
 ## 6 · Roadmap (single chunk)
 
 ```text
-UI-12c — single chunk. ~700 LOC including tests + docs
-(updated post Codex P1 round 2 — encryption module +
-cross-process lock tests + corrected controller path).
+UI-12c — single chunk. ~2000 LOC total including tests +
+docs (updated post Codex P1 round 2 + round 3 — encryption
+module + cross-process lock tests + 9-file test surface +
+corrected controller path).
 
   Code:
     src/karasu/push_emit/__init__.py          ~80 LOC
@@ -1526,9 +1548,14 @@ cross-process lock tests + corrected controller path).
                                                named-exception
                                                comment
 
-Target ~400 LOC excluding tests; ~700 LOC including tests.
-Slightly above UI-12b's 400 LOC because the test surface is
-larger (4 unit test files + 1 integration + 1 Playwright).
+Target ~700 LOC code (push_emit/ package + push_store
+extensions + controller hook); ~1300 LOC tests across
+9 new files; ~2000 LOC total including pyproject.toml +
+docs/local-dogfood.md edits. Above UI-12b's 400 LOC
+because the test surface is much larger (8 unit +
+integration test files + 1 Playwright; plus the
+encryption + cross-process + lock-file files Codex
+flagged in rounds 1-3).
 ```
 
 UI-12c is the FINAL chunk in the UI-12 family. After
@@ -1976,9 +2003,9 @@ once Codex's audit closes.
 ## 12 · Status
 
 ```text
-Brief status:        Round 2 CHANGES-REQUIRED → in-branch
-                     fixes applied; awaiting round 3. Loop
-                     budget: 2 of 5 consumed.
+Brief status:        APPROVED-with-observations + operator
+                     sign-off complete. Mergeable. Loop
+                     budget: 4 of 5 consumed.
 Operator sign-off:   COMPLETE (2026-05-06). Every §3 (A-I) +
                      §3.5 + §10 (1-10) PROPOSAL accepted as
                      the binding contract per default. §10.9
@@ -2057,10 +2084,35 @@ Codex audit:         Round 1: CHANGES-REQUIRED (2 P0 + 4 P1
                             tail untouched + non-zero exit
                             code".
 
-                     Loop budget: 2 of 5 consumed.
-                     Round 3 pending out-of-band; round-3
-                     verdict ferried back via Victor;
-                     additional follow-ups land in-branch.
+                     Round 3: CHANGES-REQUIRED (1 P1 + 1 P2).
+                     Both addressed in-branch:
+                       P1  §3-I + §7.2 + §11 test summaries
+                            corrected (3 → 9 test files;
+                            import scope cites three crypto
+                            modules; LOC ~700 → ~2000).
+                       P2  §12 status block top line bumped
+                            from round-1 to round-2 phasing.
+
+                     Round 4: APPROVED-with-observations
+                     (3 P2 wording cleanups). All three
+                     applied in-branch:
+                       P2  Header STATUS bumped to
+                            APPROVED-with-observations +
+                            mergeable; §12 status block
+                            top line aligned.
+                       P2  §3-I "listed below in detail"
+                            now points to §3-C + §3-G for
+                            the encryption + cross-process
+                            + lock-file tests it does not
+                            re-detail locally.
+                       P2  §6 LOC target ~700 → ~2000
+                            total (700 code + 1300 tests +
+                            docs); commentary updated.
+
+                     Loop budget: 4 of 5 consumed.
+                     Codex audit CLOSED. Twenty §11.6
+                     anticipated pins ratified binding for
+                     UI-12c implementation.
 Implementation:      BLOCKED on this brief's merge.
                      UI-12c code branch does NOT open until
                      this brief lands in main per UI-9

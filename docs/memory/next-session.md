@@ -13,7 +13,8 @@ are now binding implementation contracts in `main`.
 
 ## Context recap (UI-12b code session 2026-05-06)
 
-1. **PR #102**: UI-12b code chunk. 9 logical commits:
+1. **PR #102**: UI-12b code chunk. 9 initial logical
+   commits + 1 round-1 follow-up = 10 commits total:
    1. `029c411` test(ui-12b): SW fetch-ordering shape lock —
       pre-dates sw.js diff (pin §11.6.4)
    2. `a55156d` feat(ui-12b): SW push + notificationclick +
@@ -210,10 +211,13 @@ before any code lands.
 
 ## Accumulated state
 
-- 118 binding pins inherited (52 base + 6 UI-10 §0.5 +
-  12 UI-11 §11.6 + 16 UI-12 §11.6 + 16 UI-12b §11.6 + the
-  16 implementation pins UI-12b's round 2 audit ratified +
-  4 forward-carry pins from PR #102 round 2).
+- 106 binding pins inherited
+  (52 base + 6 UI-10 §0.5 + 12 UI-11 §11.6 + 16 UI-12 §11.6
+  + 16 UI-12b §11.6 + 4 UI-12b round-2 forward-carry pins).
+  PR #101 already counted the 16 UI-12b §11.6 pins in its
+  102 total; PR #102 round 2 added only the 4 forward-carry
+  pins (no separately-ratified implementation pins beyond
+  the 16 §11.6 already in scope).
 - Test suite on main: 139 passing on Windows for UI tests
   alone; full suite ~593 passing + 3 skipped (POSIX-only)
   + 2 known Windows CRLF/POSIX-path quirks documented.

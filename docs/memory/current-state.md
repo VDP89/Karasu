@@ -191,109 +191,54 @@ Cap enforcement: 6 `/scar` rapid-fire → exactly 3 resubmits, 3 cap warnings, 0
 ## Next step (entry point)
 
 ```text
-main HEAD: b07aae3 (UI-12b design brief — push opt-in
-surface (write paths), 2026-05-06). 0 PRs open. 0 branches
-open (working chunks all merged).
+main HEAD: 8434391 (UI-12b code chunk merged, 2026-05-06).
+0 PRs open. 0 branches open (working chunks all merged).
 
-UI-12b BRIEF CLOSED. Doc-only seal of:
-  - §3-A Modal entry + copy (footer-click → modal; pre/post-
-    subscribe layouts; categories pre-checked; unsupported/
-    denied branch handler-less + unreachable).
-  - §3-B POST contracts (subscribe + unsubscribe; both 204;
-    full validation matrix including 400 malformed JSON +
-    422 non-object body; 4 KiB body cap; idempotent
-    subscribe = UPDATE; browser ⇄ store two-phase mutation
-    contract with subscribe rollback via
-    subscription.unsubscribe() and unsubscribe server-
-    removal-first; 404 path emits zero bus events
-    (audit_emitted flag tracks state)).
-  - §3-C Bus event schema (push_subscribe + push_unsubscribe
-    payloads; source="ui"; endpoint_hash sha256-hex audit-
-    only).
-  - §3-D Service worker delta + 3-branch fetch-ordering
-    shape-lock test (test commit pre-dates sw.js diff).
-  - §3-E push_store WRITER (atomic tmp+rename + mode 0600
-    enforced via O_EXCL + module-level threading.Lock
-    across full read-modify-write transaction + loud-
-    stderr warning on looser observed mode + VAPID gating
-    via 503 + manual openssl seed in docs/local-dogfood.md
-    deferred to UI-12c).
-  - §3-F Default opt-in posture + HTTPS gap (localhost-
-    default; LAN dogfood via mkcert+caddy recipe;
-    unsupported branch passive read-only).
+UI-12b CODE CLOSED. PR #102 squash-merged after Codex
+round 2 APPROVED clean (round 1 CHANGES-REQ 3 P1 → all
+closed in-branch). Loop budget 1/5. 139 UI tests passing
+on Windows. The 16 §11.6 pins from the UI-12b brief
+(b07aae3) are now binding implementation contracts in
+main.
 
-§11.6 — 16 binding pins for UI-12b code:
-  1.  Modal entry footer-only.
-  2.  Cancel paths MUST NOT mutate bus or store; 5 cancel
-      paths pinned (modal Cancel, Esc, backdrop, native
-      deny, POST-failure rollback).
-  3.  Native permission prompt fires only after modal
-      confirm; PushManager.subscribe NEVER called when
-      Notification.requestPermission resolves "denied".
-  4.  SW fetch-ordering shape-lock test pre-dates sw.js
-      diff in PR commit ordering.
-  5.  Privacy negative-shape test covers happy path +
-      every error branch (400 / 422 / 404 / 413 / 503) +
-      malformed JSON / non-object body + JSONDecodeError /
-      UnicodeDecodeError repr; sentinel-substring
-      assertions on every response body, every captured
-      log, every store delta, every bus event count.
-  6.  Idempotent subscribe emits push_subscribe each time.
-  7.  0600 mode warning surfaces on POSIX; writer never
-      silently re-modes existing file.
-  8.  Manual VAPID seed instructions removed from
-      docs/local-dogfood.md when UI-12c lands.
-  9.  Categories validation rejects duplicates +
-      out-of-enum at 422; empty array allowed as zero-
-      noise subscription.
-  10. .webm reads as deliberate operator intent.
-  11. /api/push read shape from UI-12a frozen.
-  12. push_store reader from UI-12a frozen.
-  13. Browser ⇄ store two-phase mutation transactional;
-      subscribe non-204 → subscription.unsubscribe()
-      rollback + no human_decision; unsubscribe POST
-      first then subscription.unsubscribe(); 204 emits
-      one event, 404 convergence emits zero. 4 Playwright
-      flows pinned.
-  14. Frontend short-circuits BEFORE
-      Notification.requestPermission when
-      vapid_public_key is null; modal opens with primary
-      disabled; server 503 stays defensive.
-  15. push_store WRITER holds module-level threading.Lock
-      across full read-modify-write transaction.
-  16. Update-categories endpoint sourced from
-      registration.pushManager.getSubscription() ONLY;
-      never DOM/localStorage/cached values.
+Entry point: UI-12c BRIEF (doc-only PR).
+  Per UI-9 audit pin #1 + the UI-10/UI-11/UI-12/UI-12b
+  precedent: UI-12c introduces the cryptography runtime
+  dep + new write paths (VAPID generation + push delivery
+  via VAPID-JWT-signed POSTs to the push service), so it
+  earns its own brief BEFORE any UI-12c code branch
+  opens.
 
-Audit cycles: 3 rounds Codex out-of-band. Round 1
-CHANGES-REQ (1 P0 + 5 P1 + 1 P2). Round 2 CHANGES-REQ
-(3 P1 + 1 P2). Round 3 APPROVED-with-obs (1 P2).
-Loop budget: 3/5 consumed.
+  The UI-12c brief must close:
+    - Bus subscriber + category classifier (attention /
+      errors / corrections per UI-12 §3-G).
+    - VAPID JWT signing path (cryptography import scope
+      pinned to push_emit.py + push_emit_keys.py per UI-12
+      §11.6.13).
+    - Three-layer rate limit (event-id dedupe +
+      per-category 5 s debounce + UI-write suppression
+      filter applied BEFORE event-id dedupe per pin §11.6.9).
+    - 410 / 404 prune semantics (push service rejection
+      → remove subscription from store; pruning is
+      housekeeping, no human_decision emitted).
+    - VAPID auto-generation on first server start when
+      karasu-push.json has no "vapid" section. SAME PR
+      DELETES the docs/local-dogfood.md "UI-12b — Manual
+      VAPID seed" section (forward-carry pin (b) from
+      PR #102 round 2).
+    - Writer concurrency boundary re-audit: if push_emit
+      runs in a process separate from karasu ui (e.g.
+      under karasu watch), graduate _STORE_LOCK to a
+      filesystem lockfile (forward-carry pin (d) from
+      PR #102 round 2).
 
-Entry point: UI-12b CODE chunk.
-  ~400 LOC: POST handlers (subscribe + unsubscribe with
-  malformed-body 400 + non-object 422) + push_store
-  writer (append + remove + atomic tmp+rename + module-
-  level threading.Lock + 0600 mode warning) + VAPID
-  gating (503 + manual openssl seed) + .modal-push-*
-  materialisation in modal.css + static/js/push.js
-  (footer click + modal + two-phase rollback) + sw.js
-  push + notificationclick + CACHE_NAME karasu-ui-v8 →
-  karasu-ui-v12b + tests/test_ui_sw.py shape-lock test
-  (commit pre-dates sw.js diff per pin 4) + HTTP shape
-  locks both POSTs + privacy negative-shape (happy +
-  error + malformed) + 4 Playwright tests + 4-5 PNGs +
-  1 .webm + docs/event-schema.md additive section +
-  docs/local-dogfood.md manual VAPID seed.
+  See docs/memory/next-session.md for the full UI-12c
+  deliverables list + brief lifecycle steps.
 
-After UI-12b code:
-  - UI-12c — server-side emit (bus subscriber, VAPID JWT,
-    `cryptography` dep gated to this module per UI-12
-    §11.6.13 (parent brief; UI-12b §11.6.13 is the
-    two-phase mutation pin), 410/404 prune, 3-layer
-    rate-limit). ~400 LOC. Closes
-    Phase 3 exit criteria — Telegram ceases to be the only
-    push channel.
+After UI-12c:
+  - UI-12c code chunk → ~400 LOC + the cryptography dep.
+    Closes Phase 3 exit criteria — Telegram ceases to be
+    the only push channel.
 
 Operator-side TODOs (unchanged, non-blocking):
 - Rename repo Karasu- → Karasu (GitHub Settings).
@@ -304,10 +249,10 @@ Operator-side TODOs (unchanged, non-blocking):
 ## Do NOT do yet
 
 ```text
-- Do NOT open a UI-12b code branch until the UI-12b brief
+- Do NOT open a UI-12c code branch until the UI-12c brief
   is written, operator-confirmed, and Codex-audited
   (UI-9 audit pin #1; mirror of the UI-10 / UI-11 / UI-12
-  brief-before-code lifecycle).
+  / UI-12b brief-before-code lifecycle).
 - Do NOT request push permission on first visit
   (UI-12 brief pin §11.6.2).
 - Do NOT add a /push page, header toolbar, or global push

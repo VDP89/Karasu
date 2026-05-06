@@ -194,10 +194,9 @@ before any code lands.
 ```text
 1. Implementer drafts ui-12c-design-brief.md as a doc-only
    PR with [NEEDS OPERATOR SIGN-OFF] markers. Inherits
-   118 binding pins (52 base + 6 UI-10 §0.5 + 12 UI-11
-   §11.6 + 16 UI-12 §11.6 + 16 UI-12b §11.6 + 16
-   anticipated UI-12b implementation pins folded in by
-   round 2 audit + the 4 forward-carry pins above).
+   106 binding pins (52 base + 6 UI-10 §0.5 + 12 UI-11
+   §11.6 + 16 UI-12 §11.6 + 16 UI-12b §11.6 + 4
+   forward-carry pins above).
 2. Operator reviews + confirms ("avanzar" or per-marker).
 3. Implementer entrega the audit prompt copy-paste to the
    operator immediately.

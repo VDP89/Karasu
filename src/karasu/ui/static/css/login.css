@@ -1,0 +1,62 @@
+/* UI-13 login surface placeholder. Chunk 5 will replace with
+   the visual primitive per brief §3-E (centered hero crow,
+   editorial line, 320px form column, design-system tokens
+   only). For now this file exists so /assets/css/login.css
+   is anonymous-served as a real file rather than 404. */
+
+.login {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  gap: var(--space-3, 16px);
+  padding: var(--space-4, 24px);
+}
+
+.login-crow {
+  width: 96px;
+  height: 96px;
+}
+
+.login-title {
+  font-size: var(--fs-32, 32px);
+  margin: 0;
+}
+
+.login-lede {
+  color: var(--fg-2, #6c727a);
+  margin: 0;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  width: 320px;
+  max-width: 100%;
+  gap: var(--space-2, 8px);
+}
+
+.login-form input {
+  padding: var(--space-2, 8px);
+  border: 1px solid var(--fg-3, #2a2f36);
+  border-radius: var(--radius-1, 4px);
+  background: var(--bg-1, #16191f);
+  color: var(--fg-1, #d6d8db);
+  font: inherit;
+}
+
+.login-submit {
+  padding: var(--space-2, 8px);
+  border: none;
+  border-radius: var(--radius-1, 4px);
+  background: var(--accent, #c9a96a);
+  color: var(--bg-0, #0d0f12);
+  font: inherit;
+  cursor: pointer;
+}
+
+.login-error {
+  color: var(--warn, #d36464);
+  margin: 0;
+}

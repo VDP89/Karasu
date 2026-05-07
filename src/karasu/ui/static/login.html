@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Karasu — Sign in</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0d0f12">
+  <link rel="manifest" href="/assets/manifest.json">
+  <link rel="icon" type="image/png" href="/assets/icons/karasu-192.png">
+  <link rel="stylesheet" href="/assets/css/tokens.css">
+  <link rel="stylesheet" href="/assets/css/reset.css">
+  <link rel="stylesheet" href="/assets/css/base.css">
+  <link rel="stylesheet" href="/assets/css/login.css">
+</head>
+<body>
+  <main class="login" data-login>
+    <img class="login-crow" src="/assets/crow/crow.svg" alt="" width="96" height="96">
+    <h1 class="login-title">Karasu</h1>
+    <p class="login-lede">Sign in to continue.</p>
+    <form id="login-form" class="login-form" method="post" action="/auth/login" novalidate>
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" autocomplete="username" required>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit" class="login-submit">Sign in</button>
+      <p id="login-error" class="login-error" hidden>Could not sign in.</p>
+    </form>
+  </main>
+  <script>
+    // Placeholder transport — chunk 5 ships the polished login.js
+    // with proper error rendering, focus management, and CSRF
+    // bootstrap. For now: convert the form to JSON, post, and
+    // reload on success.
+    (function () {
+      var form = document.getElementById("login-form");
+      var slot = document.getElementById("login-error");
+      if (!form) return;
+      form.addEventListener("submit", function (event) {
+        event.preventDefault();
+        slot.hidden = true;
+        var fd = new FormData(form);
+        fetch("/auth/login", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: fd.get("username") || "",
+            password: fd.get("password") || ""
+          })
+        }).then(function (r) {
+          if (r.ok) {
+            window.location.assign("/");
+          } else {
+            slot.hidden = false;
+          }
+        }).catch(function () {
+          slot.hidden = false;
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

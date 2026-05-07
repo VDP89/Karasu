@@ -6,7 +6,8 @@ Phase 1A: COMPLETED
 Phase 1B: COMPLETED (no-adapter pass validated, F1–F5 closed)
 Phase 1C: COMPLETED (real Claude adapter loop validated, F6–F8 closed)
 Phase 2: COMPLETED — chunks 1+2+3 merged (#30 #31 #32 #33). Audit accepted with one round of changes (PR #33 contract alignment + redaction).
-Phase 3: COMPLETED + DOGFOOD-VALIDATED + AUDIT-ACCEPTED — chunks 3a + 3b + 3c merged (#34 #35 #36 #37). Live dogfood 2026-05-02 (issue #39) validated end-to-end: `/scar` → controller resubmit (94 ms) → pipeline applies scar → second dispatch with `priority=high` → response back to Telegram. Cap held at 3 under spam. Three operational findings filed: F9 (#40), F10 (#41), F11 (#42). Audit forward-look returned by ChatGPT and recorded in [`docs/memory/phase-3-dogfood-audit-2026-05-02.md`](phase-3-dogfood-audit-2026-05-02.md): 2 REQUERIDOS applied this PR (trust=2 docs warning + cap-local-per-origin issue), 1 NICE-TO-HAVE applied (sessions template), 2 NICE-TO-HAVE queued for Phase 3+ hardening (priority persist + startup warning).
+Phase 3: COMPLETED + DOGFOOD-VALIDATED + AUDIT-ACCEPTED + EXIT-CRITERIA-CLOSED — chunks 3a + 3b + 3c merged (#34 #35 #36 #37). Live dogfood 2026-05-02 (issue #39) validated end-to-end: `/scar` → controller resubmit (94 ms) → pipeline applies scar → second dispatch with `priority=high` → response back to Telegram. Cap held at 3 under spam. Three operational findings filed: F9 (#40), F10 (#41), F11 (#42). Audit forward-look returned by ChatGPT and recorded in [`docs/memory/phase-3-dogfood-audit-2026-05-02.md`](phase-3-dogfood-audit-2026-05-02.md): 2 REQUERIDOS applied this PR (trust=2 docs warning + cap-local-per-origin issue), 1 NICE-TO-HAVE applied (sessions template), 2 NICE-TO-HAVE queued for Phase 3+ hardening (priority persist + startup warning). Exit criteria CLOSED 2026-05-07 by UI-12c (PR #105) — Telegram is no longer the only push channel; the PWA push delivery surface (footer affordance + modal + VAPID-signed RFC 8291 aes128gcm POSTs to FCM/APNs/Mozilla autopush) is the operator-facing notification path.
+Phase 4: UNSCOPED. Macro brief pending (see "Next step" entry point below). Anticipated scope: deployed surfaces (TLS, multi-operator auth), multi-host writer concurrency, A2A peer push fan-out, post-UI-12c push enhancements.
 UI surface progress (PWA roadmap — main HEAD `8434391`, 2026-05-06):
 - UI-0  (design brief)              ✔ PR #62  merged (`92e2c91`).
 - UI-1  (rebase + projection)       ✔ PR #63  merged (`4819d7b`).
@@ -61,28 +62,41 @@ UI surface progress (PWA roadmap — main HEAD `8434391`, 2026-05-06):
                                     budget: 1/5. Final test surface:
                                     139 passed, 3 skipped (POSIX-only
                                     mode bits).
-- UI-12c (server-side emit)         ← NEXT. queued; introduces
-                                    `cryptography` runtime dep as the
-                                    UI-12 §11.6.13 named scoped
-                                    exception to UI-0 §4 (parent
-                                    brief; not to be confused with
-                                    UI-12b §11.6.13 which is the
-                                    browser/store two-phase mutation
-                                    pin). Forward-carry pins set by
-                                    Codex on UI-12b round 2:
-                                    (a) do not change UI-12b POST
-                                        response shapes or /api/push
-                                        read shape while adding emit;
-                                    (b) remove manual VAPID seed
-                                        docs in the SAME PR that
-                                        introduces auto-generation;
-                                    (c) preserve raw endpoint privacy
-                                        across push delivery, 410/404
-                                        prune, logs, bus events;
-                                    (d) re-audit the writer
-                                        concurrency boundary if
-                                        UI-12c introduces a second
-                                        writer process.
+- UI-12c brief (server-side emit)   ✔ PR #104 merged (`0c2291d`,
+                                    doc-only). APPROVED-with-
+                                    observations across 4 audit
+                                    rounds: round 1 CHANGES-REQ
+                                    (2 P0 + 4 P1 + 1 P2) → all 7
+                                    closed in-branch; round 2
+                                    CHANGES-REQ (4 P1 + 2 P2) →
+                                    all 6 closed; round 3
+                                    CHANGES-REQ (1 P1 + 1 P2) →
+                                    both closed; round 4
+                                    APPROVED-with-obs (3 P2
+                                    wording). 20 §11.6 pins
+                                    binding for UI-12c code.
+                                    Loop budget: 4/5.
+- UI-12c (server-side emit)         ✔ PR #105 merged (`e5c89a7`,
+                                    2026-05-07). APPROVED across
+                                    2 audit rounds: round 1
+                                    CHANGES-REQ (2 P1 + visuals
+                                    binding) → all 3 closed
+                                    in-branch (audience_for
+                                    generic message + dispatch
+                                    ValueError catch +
+                                    rate_limit type-only log;
+                                    cmd_watch preflight fatal on
+                                    malformed store; 3 PNGs +
+                                    .webm OPTION B mock); round
+                                    2 APPROVED clean. Loop
+                                    budget: 2/5. Final test
+                                    surface: 731 passed, 5
+                                    skipped, 2 pre-existing
+                                    Windows quirks (CRLF + cwd
+                                    path; documented).
+                                    UI-12c CLOSES Phase 3 exit
+                                    criteria — Telegram is no
+                                    longer the only push channel.
 
 ## System status
 
@@ -136,6 +150,11 @@ UI surface progress (PWA roadmap — main HEAD `8434391`, 2026-05-06):
 - UI-12b push opt-in modal + frontend ✔ — `src/karasu/ui/static/js/push.js` (~480 LOC) loaded BEFORE the inline `<script>` in index.html so top-level `function` declarations attach to the global object (UI-0 §4 — no toolchain). `wirePushFooter()` attaches click + keydown handlers when state is "off"/"on"; clears them when "denied"/"unsupported" (pin §11.6.11). `openPushModal()` pre-subscribe vs post-subscribe layout switch; pin §11.6.14 disables primary + flips foot copy when vapid_public_key is null. `confirmPushSubscribe()` full §3-B subscribe flow with rollback (Notification.requestPermission only from this primary click per pin §11.6.2 → PushManager.subscribe → POST → on non-204, `subscription.unsubscribe()` rollback + no human_decision per pin §11.6.13). Update path (when already subscribed) reads endpoint from `registration.pushManager.getSubscription()` only — never DOM/localStorage/cached (pin §11.6.16). `confirmPushUnsubscribe()` server-removal-first: POST → 204 OR 404 → browser unsubscribe(). 404 path is server silence (pin §11.6.13). `recordPushPayload()` read-side hook the inline `loadPushState` calls. Modal HTML in static/index.html: title "Notifications" + lede + 3 categories pre-checked + foot copy + Cancel | Enable notifications + hidden Unsubscribe button. modal.css `.modal-push-*` micro-elements scoped under .modal per pin §0.5.8.
 - sw.js push + notificationclick listeners ✔ (UI-12b) — additive listeners independent of the fetch handler. Push listener reads `event.data.json()` if present (falls back to "Karasu" title for payload-less wakeup pings), renders `registration.showNotification` per §3-H copy contract: body intentionally empty, icon = canonical crow 192px, tag = "karasu" (singular — fresh push REPLACES pending notifications rather than stacking). NotificationClick listener closes the notification then focuses an existing surface tab matching the configured url pathname OR opens a new one. CACHE_NAME bumps `karasu-ui-v8 → karasu-ui-v12b`. The fetch handler ordering is UNCHANGED; pin §11.6.4 binding shape-lock test in `tests/test_ui_sw.py` (commit pre-dates sw.js diff in PR commit ordering) proves additive-only by construction. UI-12b ships ONLY the receiver; UI-12c earns the server-side dispatch path with the cryptography dep gated by UI-12 §11.6.13.
 - UI-12b test surface ✔ — 139 tests across 4 files: `tests/test_ui_sw.py` (7 fetch ordering structural pins), `tests/test_ui_push_store.py` (38 reader + writer tests; 16-thread lost-update test + privacy negative-shape via caplog), `tests/test_ui_server_http.py` (90+ HTTP shape locks including 35 push tests + 13 state-delta + invalid-UTF-8 privacy assertions), `tests/test_ui_push_modal.py` (4 Playwright two-phase mutation flows including the post-204 retry contract per pin §11.6.13). 7 PNGs + 1 .webm (462 KB) under `docs/ui/screenshots/UI-12-push/` + `docs/ui/recordings/UI-12-push.webm`. docs/event-schema.md + docs/local-dogfood.md updated with push_subscribe/unsubscribe shapes + manual VAPID seed walkthrough (removed when UI-12c lands).
+- UI-12c push_emit pipeline ✔ (UI-12c) — `src/karasu/push_emit/` package (7 modules) registered as a `TriggerSource` on `karasu watch` via `controller.add_source(PushEmit(...))`. Per-event flow: `_classifier.classify(event)` (closed enum {attention, errors, corrections}; pin §11.6.9 source="ui" filter inside the classifier) → `_emitter._on_bus_event` walks every active subscription whose `categories` includes the result and calls `_rate_limit.on_event(event, endpoint_hash, category)` once per (subscription, category) tuple → `_rate_limit` applies three layers (Layer 1 UI-write suppress > Layer 2 trailing debounce 5 s with monotonic generation tokens + lock-released-before-dispatch + race protection > Layer 3 event-id dedupe ring 64 per endpoint, in-memory restart-cleared) → `_dispatch.PushDispatcher.dispatch` looks up subscription, signs VAPID JWT (RFC 8292 ES256, raw r||s 64-byte not DER, audience-bound, cached per origin with 5 min refresh margin), encrypts payload (RFC 8291 aes128gcm with three named HKDF intermediates PRK_key/IKM/PRK_aes per brief §3-C), POSTs through stdlib `urllib.request` with headers `Authorization: vapid t=<JWT>, k=<pub_b64u>` + `Content-Encoding: aes128gcm` + `Content-Length` + `TTL=60` + `Topic=<category>`. Response handling: 2xx success + clear backoff; 410/404 prune via `push_store.remove_subscription` (pin §11.6.13 ZERO bus events); 429 honors Retry-After or 60 s default per-endpoint backoff (no prune); 5xx + other 4xx WARNING log + no prune; transport exceptions (URLError, TimeoutError, ConnectionError, OSError, ValueError) log `endpoint_hash + type(exc).__name__` ONLY — never str/repr/exc_info/__cause__/__context__ per pin §11.6.16 + Codex round 1 P1. `cryptography>=42.0` is the named scoped exception per UI-12 §11.6.13 binding; the runtime import is CONFINED to three files (`_signing.py` / `_keys.py` / `_encryption.py`) and pinned by `tests/test_push_emit_import_scope.py` (lint-style walk over `src/karasu/`).
+- VAPID auto-bootstrap ✔ (UI-12c) — `_keys.bootstrap_if_missing(store_path)` generates a fresh ECDSA P-256 keypair on first `karasu watch` start when the store has no `vapid` section (idempotent on subsequent starts; partial/empty/wrong-type vapid sections REGENERATE both keys per "complete or considered corrupt"). Public is the 65-byte uncompressed point as 87-char b64u-no-pad (note: brief §3-F descriptive "86 chars" is a typo; math is `ceil(65*4/3) = 87`); private is the 32-byte raw scalar as 43-char b64u-no-pad. Pin §11.6.16 binding: success log line is the flat string `"generated VAPID keypair"` — no lengths, no fragments, no fingerprints. `cmd_watch` PREFLIGHTS `bootstrap_if_missing` BEFORE `controller.run_forever()` (Codex round 1 P1): `PushStoreError` from a malformed store produces a generic stderr message ("push subscription store is malformed; refusing to start") + return code 2 + bus tail untouched + controller never spins up. `LoopController.start()` swallows `source.start()` exceptions; the preflight is the fatal gate.
+- push_store cross-process file lock ✔ (UI-12c §3-G + forward-carry pin (d)) — `src/karasu/ui/push_store.py` extends UI-12b's writer with `_with_store_lock(store_path)` context manager that LAYERS the in-process `threading.Lock` (UI-12b §11.6.15) with a cross-process flock against `<store_path>.lock`. POSIX uses `fcntl.flock(LOCK_EX)` (region-agnostic, whole-inode); Windows uses `msvcrt.locking(LK_LOCK, 1)` against byte 0 with mandatory `seek(0)` BEFORE both acquire AND release (Codex P1 round 2 brief audit binding — `msvcrt.locking` is region-based from the current pointer; without the seek, the append-mode handle's EOF pointer would target a different region than expected and let two processes hold "different" locks against the same file). `_flock_exclusive` / `_flock_release` are named helpers so tests can mock them without touching `fcntl` / `msvcrt` directly. `seed_vapid(store_path, *, public, private)` writes the VAPID section under the layered lock. `append_subscription` / `remove_subscription` upgraded to use `_with_store_lock`. The `.lock` file is left on disk — kernels release the lock on file-handle close (POSIX flock auto-release; Windows `LK_UNLCK`). No automatic cleanup; brief §3-G "stale-lock recovery: NONE in UI-12c". Pinned by `tests/test_push_store_lock_file.py` (Windows byte-0 spy + POSIX LOCK_EX equivalent + `seed_vapid` round-trip) and `tests/test_push_store_cross_process.py` (multiprocessing-based no-lost-update test: 2 processes × 8 subscriptions on Windows, 4×16 stress on POSIX).
+- `karasu watch --push-debounce-ms <int>` ✔ (UI-12c) — Layer-2 trailing debounce window in milliseconds. Brief §10.5 default 5000 ms. `cmd_watch` reads the flag and passes it to `PushEmitConfig.debounce_seconds`. Per-category override via env var deferred to a future chunk if dogfood demands it.
+- UI-12c test surface ✔ — 132 tests across 10 files: `tests/test_push_emit_classifier.py` (20), `tests/test_push_emit_keys.py` (16), `tests/test_push_emit_signing.py` (13), `tests/test_push_emit_encryption.py` (15 — round-trip via fixture UA keypair + body framing shape + per-call uniqueness + privacy negative-shape), `tests/test_push_emit_rate_limit.py` (18 — three-layer composition + race protection via FakeTimer + `test_dispatch_does_not_hold_lock_during_http` slow-mock invariant + `test_dispatcher_exception_logs_only_type_not_message` Codex round 1 P1 regression), `tests/test_push_emit_dispatch.py` (20 — happy 201 + 410/404 prune + 5xx no-prune + 429 backoff + transport URLError sentinel privacy + `test_invalid_endpoint_in_store_logs_only_hash_and_type` Codex round 1 P1 regression + JWT cache + §3-H decrypt round-trip), `tests/test_push_emit_emitter.py` (11 — VAPID bootstrap + multi-device fan-out + restart guard + lifecycle), `tests/test_push_emit_import_scope.py` (3), `tests/test_push_store_cross_process.py` (3 — multiprocessing 2×8 + 4×16 stress + sequential smoke), `tests/test_push_store_lock_file.py` (10 + 1 POSIX-only). Plus 2 cmd_watch tests in `tests/test_main.py` (`test_cmd_watch_exits_non_zero_on_malformed_push_store` + `test_cmd_watch_succeeds_on_clean_store`). 3 PNGs + 1 .webm (193 KB) under `docs/ui/screenshots/UI-12c-emit/` + `docs/ui/recordings/UI-12c-emit.webm` — Codex P2 round 1 OPTION B (deterministic browser-side notification mock, viewport 480×220 PNGs and 1024×640 full-shell .webm). docs/local-dogfood.md "Manual VAPID seed" DELETED + replaced with "UI-12c — Push delivery walkthrough" (forward-carry pin (b) honored). docs/memory/decision-log.md NEW entry "UI-12c — `cryptography` runtime dep as named scoped exception" documenting precedent scope + structural lock + discarded alternatives.
 
 ## Verified behavior (Phase 1C closed)
 
@@ -176,7 +195,8 @@ UI surface progress (PWA roadmap — main HEAD `8434391`, 2026-05-06):
 
 - Cost / latency under continuous editing not measured (single-edit dogfood only)
 - No upper bound on adapter concurrency yet (Phase 1 keeps dispatch synchronous)
-- Telegram remains temporary until the PWA notification path lands
+- ~~Telegram remains temporary until the PWA notification path lands~~ — RESOLVED by UI-12c (PR #105). PWA push delivery is the operator-facing notification surface; Telegram remains as a parallel sink that the operator can keep enabled or disable independently.
+- Phase 4 (deployed surfaces, multi-host writer concurrency, A2A peer push fan-out, multi-operator authorization) is unscoped beyond the references dispersed across UI-10..UI-12c briefs; entry point lives in `next-session.md`.
 
 ## Phase 3 dogfood metrics (issue #39)
 
@@ -191,54 +211,86 @@ Cap enforcement: 6 `/scar` rapid-fire → exactly 3 resubmits, 3 cap warnings, 0
 ## Next step (entry point)
 
 ```text
-main HEAD: 8434391 (UI-12b code chunk merged, 2026-05-06).
+main HEAD: e5c89a7 (UI-12c code chunk merged, 2026-05-07).
 0 PRs open. 0 branches open (working chunks all merged).
 
-UI-12b CODE CLOSED. PR #102 squash-merged after Codex
-round 2 APPROVED clean (round 1 CHANGES-REQ 3 P1 → all
-closed in-branch). Loop budget 1/5. 139 UI tests passing
-on Windows. The 16 §11.6 pins from the UI-12b brief
-(b07aae3) are now binding implementation contracts in
-main.
+UI-12c CODE CLOSED. PR #105 squash-merged after Codex
+round 2 APPROVED clean (round 1 CHANGES-REQ 2 P1 + 1 P1
+visuals binding → all 3 closed in-branch). Loop budget
+2/5. 731 tests passed + 5 skipped + 2 pre-existing Windows
+quirks (CRLF + cwd path; documented; NOT regressions). The
+20 §11.6 pins from the UI-12c brief (`0c2291d`, PR #104)
+are now binding implementation contracts in main.
 
-Entry point: UI-12c BRIEF (doc-only PR).
-  Per UI-9 audit pin #1 + the UI-10/UI-11/UI-12/UI-12b
-  precedent: UI-12c introduces the cryptography runtime
-  dep + new write paths (VAPID generation + push delivery
-  via VAPID-JWT-signed POSTs to the push service), so it
-  earns its own brief BEFORE any UI-12c code branch
-  opens.
+Phase 3 exit criteria CLOSED. Telegram is no longer the
+only push channel; the prototype surface is complete.
 
-  The UI-12c brief must close:
-    - Bus subscriber + category classifier (attention /
-      errors / corrections per UI-12 §3-G).
-    - VAPID JWT signing path (cryptography import scope
-      pinned to push_emit.py + push_emit_keys.py per UI-12
-      §11.6.13).
-    - Three-layer rate limit (event-id dedupe +
-      per-category 5 s debounce + UI-write suppression
-      filter applied BEFORE event-id dedupe per pin §11.6.9).
-    - 410 / 404 prune semantics (push service rejection
-      → remove subscription from store; pruning is
-      housekeeping, no human_decision emitted).
-    - VAPID auto-generation on first server start when
-      karasu-push.json has no "vapid" section. SAME PR
-      DELETES the docs/local-dogfood.md "UI-12b — Manual
-      VAPID seed" section (forward-carry pin (b) from
-      PR #102 round 2).
-    - Writer concurrency boundary re-audit: if push_emit
-      runs in a process separate from karasu ui (e.g.
-      under karasu watch), graduate _STORE_LOCK to a
-      filesystem lockfile (forward-carry pin (d) from
-      PR #102 round 2).
+Entry point: PHASE 4 (deployed surfaces).
 
-  See docs/memory/next-session.md for the full UI-12c
-  deliverables list + brief lifecycle steps.
+  Phase 4 is unscoped at the brief level. The Phase 1-3
+  road was sealed in docs/roadmap.md; Phase 4 lifts the
+  surface from local-only / single-operator to deployed
+  / multi-operator. References are dispersed across the
+  UI-10..UI-12c briefs (every "UI-13+" mention) and need
+  to be consolidated into a Phase 4 macro brief BEFORE any
+  Phase 4 chunk opens. The macro brief earns the
+  brief-before-code lifecycle (UI-9 audit pin #1).
 
-After UI-12c:
-  - UI-12c code chunk → ~400 LOC + the cryptography dep.
-    Closes Phase 3 exit criteria — Telegram ceases to be
-    the only push channel.
+  Anticipated Phase 4 scope (non-binding, source citations):
+
+    1. Deployed surface — TLS termination, certificate
+       provisioning, public hostname.
+       (docs/local-dogfood.md "UI-13+ deployed surfaces
+       earn their own brief covering certificate
+       provisioning + auth + multi-operator push fan-out".)
+
+    2. Multi-operator authorization — login, session
+       management, audit log filtering by operator.
+       (ui-10-design-brief.md §6 "UI-13+: Multi-operator
+       surfaces (deployed Karasu, login, authorization
+       tiers, audit log filtering). Earns its own brief.";
+       ui-11-design-brief.md §9 "Multi-operator
+       collaboration / per-user trust. UI-13+".)
+
+    3. Multi-host writer concurrency — the UI-12c §3-G
+       file lock is single-filesystem only; deployed
+       surfaces with shared storage (NFS / multi-instance
+       deployment) need their own concurrency contract.
+       (ui-12c-design-brief.md §9 "Multi-host / multi-
+       machine writer concurrency. UI-12c ships a cross-
+       process file lock that serialises writes WITHIN A
+       SINGLE FILESYSTEM. Multi-host (NFS / shared storage
+       / Phase 4 multi-instance deployment) is deferred
+       — fcntl.flock semantics over network filesystems
+       are not portable, and Phase 4 will earn its own
+       concurrency contract.")
+
+    4. A2A peer push fan-out — Karasu instance pushing to
+       another Karasu instance.
+       (ui-12c-design-brief.md §9 "A2A peer push fan-out
+       (Karasu instance pushing to another Karasu
+       instance). UI-13+.")
+
+    5. Push enhancements (post-UI-12c) — per-event push
+       opt-in beyond the closed enum, scheduled / quiet-
+       hours / DND beyond OS-level, push body content
+       beyond editorial title, VAPID auto-rotation.
+       (ui-12c-design-brief.md §9; ui-12-design-brief.md
+       §10.4 "Auto-rotation is a UI-13+ concern.")
+
+    6. Per-category push debounce override via env var.
+       (Brief §10.5 "Per-category override via env var
+       deferred to a future chunk if dogfood demands it.")
+
+  Recommended next move (operator decides):
+    a. Open a Phase 4 macro brief (doc-only PR) that
+       consolidates the references above into a roadmap +
+       picks the FIRST chunk. Mirrors the UI-0 macro brief
+       that opened the UI-1..UI-12c family.
+    b. OR pick one specific chunk (e.g. "UI-13: deployed
+       surface TLS + auth scaffolding") and earn its own
+       chunk-level brief immediately, leaving the macro
+       brief for later.
 
 Operator-side TODOs (unchanged, non-blocking):
 - Rename repo Karasu- → Karasu (GitHub Settings).
@@ -249,10 +301,11 @@ Operator-side TODOs (unchanged, non-blocking):
 ## Do NOT do yet
 
 ```text
-- Do NOT open a UI-12c code branch until the UI-12c brief
-  is written, operator-confirmed, and Codex-audited
-  (UI-9 audit pin #1; mirror of the UI-10 / UI-11 / UI-12
-  / UI-12b brief-before-code lifecycle).
+- Do NOT open a Phase 4 code chunk until either the Phase
+  4 macro brief OR the chosen first-chunk brief is written,
+  operator-confirmed, and Codex-audited (UI-9 audit pin #1
+  brief-before-code lifecycle; carries through every UI-N
+  precedent UI-10..UI-12c).
 - Do NOT request push permission on first visit
   (UI-12 brief pin §11.6.2).
 - Do NOT add a /push page, header toolbar, or global push
@@ -264,14 +317,34 @@ Operator-side TODOs (unchanged, non-blocking):
   §11.6.5 + §11.6.6).
 - Do NOT log / project / emit / screenshot / echo raw push
   endpoints — they are request-local secret material
-  (pin §11.6.16).
+  (pin §11.6.16). Transport-exception logs MUST carry only
+  endpoint_hash + type(exc).__name__; never str/repr/
+  exc_info/__cause__/__context__ (Codex round 1 P1 binding
+  on UI-12c code).
 - Do NOT degrade unsupported-push environments to anything
   other than passive read-only (pin §11.6.11).
-- Do NOT introduce `cryptography` until UI-12c. UI-12b
-  is still pre-VAPID-emit; the dep exception lands with
-  the chunk that needs it (parent UI-12 §11.6.13 — the
-  cryptography exception; UI-12b §11.6.13 is the unrelated
-  two-phase mutation pin).
+- Do NOT widen the cryptography import scope beyond the
+  three approved files (`src/karasu/push_emit/_signing.py`,
+  `_keys.py`, `_encryption.py`). Pinned by
+  `tests/test_push_emit_import_scope.py`. Future runtime
+  deps re-open the UI-0 §4 conversation per chunk; the
+  exception does NOT generalise (UI-12 §11.6.13 +
+  docs/memory/decision-log.md "UI-12c — `cryptography`
+  runtime dep as named scoped exception").
+- Do NOT auto-rotate VAPID keys. Rotation invalidates every
+  existing browser subscription; it is operator-driven
+  (delete `karasu-push.json` + restart). Auto-rotation is
+  Phase 4+ and earns its own brief (UI-12 §10.4).
+- Do NOT replace the cross-process file lock with a
+  multi-host primitive. UI-12c §3-G is single-filesystem
+  only; Phase 4 multi-host concurrency earns its own
+  brief (current-state.md "Next step").
+- Do NOT introduce `cryptography` outside push_emit. The
+  exception is scoped to that package per UI-12 §11.6.13;
+  any new module needing it re-opens the UI-0 §4
+  conversation. (Note: UI-12b §11.6.13 is the unrelated
+  two-phase mutation pin — different §11.6.13 numbering
+  per brief.)
 - Do NOT imply live adapter mutation in any UI-11 copy
   (pin §11.6.5 — INTENT-ONLY).
 - Do NOT add /agents page, header toolbar, or global trust

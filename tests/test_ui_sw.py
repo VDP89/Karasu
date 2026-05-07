@@ -484,6 +484,36 @@ def test_index_html_wraps_fetch_for_auth_revocation() -> None:
     )
 
 
+def test_index_html_attaches_csrf_header_on_mutating_api_calls() -> None:
+    """UI-13 §3-F + pin §11.6.14 binding: every existing
+    UI-10 / UI-11b / UI-12b mutating call must attach the
+    ``X-Karasu-CSRF`` header read from the ``karasu_csrf``
+    cookie. The chunk-8 implementation centralises this in
+    the same window.fetch wrapper that handles auth:revoked
+    so individual call sites stay untouched and future
+    mutating endpoints inherit the contract."""
+    html = INDEX_HTML_PATH.read_text(encoding="utf-8")
+
+    # The wrapper reads karasu_csrf cookie at request time.
+    assert "karasu_csrf=" in html, (
+        "index.html must read the karasu_csrf cookie "
+        "(NOT HttpOnly per §3-F so the JS layer can read it)"
+    )
+    # The wrapper sets the X-Karasu-CSRF header.
+    assert "X-Karasu-CSRF" in html, (
+        "index.html must set the X-Karasu-CSRF header"
+    )
+    # The wrapper restricts attachment to mutating methods.
+    for method in ("POST", "PUT", "DELETE", "PATCH"):
+        assert f"'{method}'" in html, (
+            f"mutating method {method} must be in the attach allowlist"
+        )
+    # Attachment is /api/*-scoped — the same gate that the
+    # auth:revoked branch uses, so login.html and other
+    # non-/api fetches are unaffected.
+    assert "/api/" in html
+
+
 def test_login_html_emits_auth_granted_on_success() -> None:
     """login.html success path must postMessage auth:granted to
     the SW so the post-auth cache fills before navigation lands

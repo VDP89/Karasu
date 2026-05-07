@@ -593,8 +593,59 @@ const REFRESH_MS = 3000;
         try { window.location.assign('/'); } catch { /* no-op */ }
     }
 
+    /* UI-13 §3-F frontend CSRF header attach. Reads
+     * karasu_csrf cookie (NOT HttpOnly per §3-F so the JS
+     * layer is allowed to read it) and injects the
+     * X-Karasu-CSRF header on every /api/* mutating request.
+     * The signed double-submit token verifies on the server
+     * side via verify_csrf; without the header, the auth
+     * middleware returns 403. Pin §11.6.14: every existing
+     * UI-10 / UI-11b / UI-12b mutating call site MUST attach
+     * the header. Centralising in the fetch wrapper means
+     * call sites stay untouched + future mutating endpoints
+     * inherit the contract by default. */
+    const MUTATING_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
+
+    function readCsrfCookie() {
+        const cookies = document.cookie ? document.cookie.split(';') : [];
+        for (let i = 0; i < cookies.length; i++) {
+            const piece = cookies[i].trim();
+            if (piece.startsWith('karasu_csrf=')) {
+                return piece.slice('karasu_csrf='.length);
+            }
+        }
+        return null;
+    }
+
+    function methodOf(input, init) {
+        if (init && typeof init.method === 'string') {
+            return init.method.toUpperCase();
+        }
+        if (typeof input !== 'string' && input && typeof input.method === 'string') {
+            return input.method.toUpperCase();
+        }
+        return 'GET';
+    }
+
+    function withCsrfHeader(init, method) {
+        if (!MUTATING_METHODS.has(method)) return init;
+        const csrf = readCsrfCookie();
+        if (!csrf) return init;          /* no cookie yet → server 403s; don't fabricate */
+        const next = init ? Object.assign({}, init) : {};
+        const headers = new Headers(next.headers || {});
+        if (!headers.has('X-Karasu-CSRF')) {
+            headers.set('X-Karasu-CSRF', csrf);
+        }
+        next.headers = headers;
+        return next;
+    }
+
     window.fetch = function (input, init) {
-        const promise = origFetch(input, init);
+        let effectiveInit = init;
+        if (isApiPath(input)) {
+            effectiveInit = withCsrfHeader(init, methodOf(input, init));
+        }
+        const promise = origFetch(input, effectiveInit);
         if (!isApiPath(input)) return promise;
         return promise.then((response) => {
             if (response.status === 401 || isRedirectToRoot(response)) {

@@ -18,11 +18,14 @@
 > sealed editorial frame. This brief plays the same role for
 > the UI-13..UI-15+ family.
 >
-> **STATUS:** OPERATOR SIGN-OFF COMPLETE (Victor, 2026-05-07:
-> "avanzar nomas"). Every §3 (A-F) + §3.5 + §10 marker
-> flipped to [CONFIRMED 2026-05-07].
-> Codex audit: pending. Audit prompt delivered to operator
-> for ferrying out-of-band.
+> **STATUS:** APPROVED-with-observations — mergeable.
+> Operator sign-off complete (Victor, 2026-05-07:
+> "avanzar nomas"; every §3 (A-F) + §3.5 + §10 marker
+> flipped to [CONFIRMED 2026-05-07]). Codex audit closed
+> at round 2 of 5: round 1 CHANGES-REQUIRED (4 P1 + 2 P2,
+> no P0 — all six closed in-branch); round 2
+> APPROVED-with-observations (2 P2 wording cleanups
+> applied in-branch). Loop budget: 2/5.
 
 ## 0 · Why this brief exists
 
@@ -314,10 +317,15 @@ UI-13 — Remote operator surface (FIRST CHUNK)
       compatible with caddy / nginx termination).
     * Single-operator credentials + session.
     * CSRF guard on all non-idempotent /api/* routes.
-    * /api/* gated behind authenticated session;
-      static assets remain anonymous (or behind the same
-      gate — chunk brief decides per item 2 of §3-C).
-    * Secret handling per item 6 of §3-C.
+    * Auth gating per §3-C item 1 (transport-agnostic:
+      every route or transport that reads / mutates
+      operator state requires session). Only inert login
+      assets + manifest may remain anonymous; UI-13
+      decides exact reachability per §3-C item 2,
+      including SW scope discipline.
+    * Secret handling per §3-C item 10 (full inventory:
+      VAPID + auth + session + TLS + future tokens, all
+      mode-0600).
     * Login screen UX (single primitive added to the
       design system; no other visual delta).
     * Logout flow.
@@ -421,7 +429,7 @@ status block (mirror of UI-12c § status pattern).
 
 [CONFIRMED 2026-05-07]
 
-## 3.5 · Operator pin (binding when sign-off lands)
+## 3.5 · Operator pin (binding)
 
 PROPOSAL:
 
@@ -790,8 +798,9 @@ verbatim binding once Codex's audit closes.
 ## 12 · Status
 
 ```text
-Brief status:        OPERATOR SIGN-OFF COMPLETE. Codex audit
-                     pending.
+Brief status:        APPROVED-with-observations + operator
+                     sign-off complete. Mergeable. Loop
+                     budget: 2 of 5 consumed.
 Operator sign-off:   COMPLETE (Victor, 2026-05-07: "avanzar
                      nomas"). Every §3 (A-F) + §3.5 + §10
                      marker flipped to [CONFIRMED 2026-05-07].
@@ -849,9 +858,30 @@ Codex audit:         Round 1 CHANGES-REQUIRED (4 P1 + 2 P2,
                           UI-0 §4.
                      §11.6 anticipated pins re-numbered
                      and expanded from 15 to 19 to absorb
-                     the new bindings. Round 2 audit prompt
-                     delivered to operator.
-                     Loop budget: 1/5 consumed.
+                     the new bindings.
+
+                     Round 2: APPROVED-with-observations
+                     (2 P2 wording cleanups). Both
+                     applied in-branch:
+                       P2 §6 UI-13 roadmap bullet — last
+                          broad "static assets remain
+                          anonymous" echo removed; rewritten
+                          as "only inert login assets +
+                          manifest may remain anonymous;
+                          UI-13 decides exact reachability
+                          per §3-C item 2, including SW
+                          scope discipline". Secret
+                          handling reference updated from
+                          item 6 to item 10 (post-renumber).
+                       P2 §3.5 header "Operator pin
+                          (binding when sign-off lands)" →
+                          "Operator pin (binding)" since
+                          sign-off has landed.
+
+                     Loop budget: 2/5 consumed. Codex audit
+                     CLOSED. 19 §11.6 anticipated pins
+                     ratified binding for the UI-13..UI-15+
+                     family.
 Implementation:      BLOCKED on this brief's merge.
                      UI-13 chunk brief does NOT open until
                      this macro brief lands in main.

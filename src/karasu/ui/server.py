@@ -727,16 +727,34 @@ class UIHandler(BaseHTTPRequestHandler):
     def _ip_for_rate_limit(self) -> str:
         """Resolve a concrete IP key for the rate-limit slot.
 
-        UNTRUSTED_FORWARDED → fall back to peer_addr (the
-        attacker can't bypass into a fresh slot via spoofed
-        headers per §3-G round 3 P1).
-        ``None`` (all-trusted chain) → also peer_addr (fail-
-        closed: fresh slot keyed by the peer)."""
+        Codex P0 round 1 audit binding 2026-05-08: when
+        derive_client_ip returns UNTRUSTED_FORWARDED or None,
+        the slot key MUST NOT be a loopback IP — otherwise
+        ``LoginRateLimit.check`` short-circuits via
+        ``is_loopback_ip`` and the public-guessing bypass
+        that round 3 P1 closed at the primitive level
+        re-opens at the server layer.
+
+        Resolution per §3-G post-derivation rules:
+          * IP string from derive_client_ip → use verbatim.
+          * UNTRUSTED_FORWARDED → synthetic key
+            ``"!untrusted:<peer_addr>"``. Bucket is still
+            per-peer (so a flood from one untrusted peer is
+            bounded), but the prefix guarantees the string
+            never matches ``is_loopback_ip``'s 127.0.0.0/8 +
+            ::1 set, so the bypass cannot fire.
+          * None (all-trusted chain — impossible for
+            external traffic) → synthetic key
+            ``"!unknown:<peer_addr>"``. Same fail-closed
+            shape: fresh slot keyed by peer, never loopback.
+        """
         peer_addr = self.client_address[0]
         derived = self._derive_client_ip()
         if isinstance(derived, str):
             return derived
-        return peer_addr
+        if derived is UNTRUSTED_FORWARDED:
+            return f"!untrusted:{peer_addr}"
+        return f"!unknown:{peer_addr}"
 
     def _session_payload(self) -> dict[str, Any] | None:
         """Verify the session cookie and return the payload, or
@@ -1592,25 +1610,25 @@ class UIHandler(BaseHTTPRequestHandler):
             )
             return
 
-        body = self._read_login_body()
-        if body is _LOGIN_BODY_TOO_LARGE:
+        result = self._read_login_body()
+        if result is _LOGIN_BODY_TOO_LARGE:
             self._send(413, b"payload too large", "text/plain")
             return
-        if body is _LOGIN_MALFORMED_JSON:
+        if result is _LOGIN_MALFORMED_JSON:
             self._send(
                 400,
                 b'{"error":"invalid request"}',
                 "application/json",
             )
             return
-        if body is _LOGIN_BODY_NOT_OBJECT:
+        if result is _LOGIN_BODY_NOT_OBJECT:
             self._send(
                 422,
                 b'{"error":"request body must be an object"}',
                 "application/json",
             )
             return
-        if body is _LOGIN_INVALID_FIELDS:
+        if result is _LOGIN_INVALID_FIELDS:
             self._send(
                 422,
                 b'{"error":"invalid credentials shape"}',
@@ -1618,7 +1636,8 @@ class UIHandler(BaseHTTPRequestHandler):
             )
             return
 
-        assert isinstance(body, dict)
+        assert isinstance(result, tuple)
+        body, is_form = result
         username = body["username"]
         password = body["password"]
 
@@ -1635,34 +1654,33 @@ class UIHandler(BaseHTTPRequestHandler):
             return
 
         creds = _AUTH_CREDS_CACHE
+        auth_ok = False
         if username != creds.username:
             # Timing parity: pay a scrypt cost on the no-username
             # branch so wrong-username and wrong-password requests
             # take comparable time (§3-G + pin §11.6.7).
             dummy_password_verify()
-            if rl is not None:
-                rl.record_failure(
-                    client_ip=client_ip, username_attempted=username
-                )
-            _auth_log.warning("login failed (ip=%s)", client_ip)
-            self._send(
-                401,
-                b'{"error":"could not sign in"}',
-                "application/json",
-            )
-            return
+        elif verify_password(creds.password_hash, password):
+            auth_ok = True
 
-        if not verify_password(creds.password_hash, password):
+        if not auth_ok:
             if rl is not None:
                 rl.record_failure(
                     client_ip=client_ip, username_attempted=username
                 )
             _auth_log.warning("login failed (ip=%s)", client_ip)
-            self._send(
-                401,
-                b'{"error":"could not sign in"}',
-                "application/json",
-            )
+            # Brief §3-E lines 644-648 + Codex P1 round 1
+            # binding: form mode re-renders login.html with
+            # the error slot visible; JSON mode returns the
+            # generic 401 body the JS fetch path consumes.
+            if is_form:
+                self._send_login_rerender()
+            else:
+                self._send(
+                    401,
+                    b'{"error":"could not sign in"}',
+                    "application/json",
+                )
             return
 
         # Success path.
@@ -1679,12 +1697,24 @@ class UIHandler(BaseHTTPRequestHandler):
             gen=creds.credentials_generation,
         )
         cookies = self._build_session_cookies(session_token, csrf_token)
-        self._send(
-            200,
-            b'{"ok":true}',
-            "application/json",
-            extra_headers=cookies,
-        )
+        if is_form:
+            # Brief §3-E: form success → 302 + cookies +
+            # Location: /. The browser follows; the GET to /
+            # then sees a valid session and serves the PWA
+            # shell (index.html).
+            self._send(
+                302,
+                b"",
+                "text/plain",
+                extra_headers=(("Location", "/"),) + cookies,
+            )
+        else:
+            self._send(
+                200,
+                b'{"ok":true}',
+                "application/json",
+                extra_headers=cookies,
+            )
 
     def _handle_logout_get(self) -> None:
         """GET /auth/logout — anonymous + idempotent (§3-D).
@@ -1742,8 +1772,31 @@ class UIHandler(BaseHTTPRequestHandler):
             extra_headers=cookies,
         )
 
-    def _read_login_body(self) -> "dict[str, Any] | object":
-        """Parse + validate the login JSON body."""
+    def _read_login_body(
+        self,
+    ) -> "tuple[dict[str, str], bool] | object":
+        """Parse + validate the login body.
+
+        Codex P1 round 1 audit binding 2026-05-08 + brief §3-E
+        lines 644-648: the form MUST work with JS disabled.
+        Two transport shapes are accepted, picked by request
+        Content-Type:
+
+          * ``application/x-www-form-urlencoded`` — form
+            submission; success returns 302 + Set-Cookie +
+            Location:/ ; auth failure returns 200 + login.html
+            re-rendered with the error slot visible.
+          * ``application/json`` (default fallback) — fetch()
+            transport from the JS layer; success returns 200
+            ``{"ok": true}`` + Set-Cookie ; auth failure
+            returns 401 + generic JSON.
+
+        Returns ``(parsed_dict, is_form_submission)`` on
+        success or one of the LOGIN sentinels.
+        """
+        content_type = self.headers.get("Content-Type", "").lower()
+        is_form = content_type.startswith("application/x-www-form-urlencoded")
+
         try:
             declared = int(self.headers.get("Content-Length", "0"))
         except ValueError:
@@ -1755,6 +1808,25 @@ class UIHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(declared)
         if not body:
             return _LOGIN_MALFORMED_JSON
+
+        if is_form:
+            try:
+                parsed = parse_qs(
+                    body.decode("utf-8"), keep_blank_values=True
+                )
+            except (UnicodeDecodeError, ValueError):
+                return _LOGIN_MALFORMED_JSON
+            u_list = parsed.get("username") or []
+            p_list = parsed.get("password") or []
+            if not u_list or not p_list:
+                return _LOGIN_INVALID_FIELDS
+            username = u_list[0]
+            password = p_list[0]
+            if not username or not password:
+                return _LOGIN_INVALID_FIELDS
+            return ({"username": username, "password": password}, True)
+
+        # JSON path (default).
         try:
             payload = json.loads(body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -1767,15 +1839,30 @@ class UIHandler(BaseHTTPRequestHandler):
             return _LOGIN_INVALID_FIELDS
         if not isinstance(password, str) or not password:
             return _LOGIN_INVALID_FIELDS
-        return {"username": username, "password": password}
+        return ({"username": username, "password": password}, False)
+
+    def _send_login_rerender(self) -> None:
+        """Form-mode auth-failure path per brief §3-E:
+        200 + login.html re-render with the error slot
+        populated. Done via byte-replace on the static file
+        so the placeholder login.html and the chunk-5 polish
+        both work without a templating engine."""
+        html = (STATIC_DIR / "login.html").read_bytes()
+        html = html.replace(
+            b'class="login-error" hidden',
+            b'class="login-error"',
+        )
+        self._send(200, html, "text/html; charset=utf-8")
 
     def _build_session_cookies(
         self, session_token: str, csrf_token: str
     ) -> tuple[tuple[str, str], ...]:
         """Compose Set-Cookie headers for a fresh login.
 
-        Brief §3-C session cookie attributes:
-          HttpOnly + SameSite=Lax + Path=/
+        Brief §3-C session cookie attributes (lines 402-407
+        + 1520-1522 verbatim binding; Codex P1 round 1 audit
+        2026-05-08 caught the prior SameSite=Lax drift):
+          HttpOnly + SameSite=Strict + Path=/
           Max-Age = DEFAULT_SESSION_TTL_SECONDS (14d)
           Secure when AUTH_DEPLOYED (HTTPS posture)
 
@@ -1792,7 +1879,7 @@ class UIHandler(BaseHTTPRequestHandler):
         session = (
             f"{SESSION_COOKIE_NAME}={session_token}; "
             f"Max-Age={max_age}; Path=/; HttpOnly; "
-            f"SameSite=Lax{secure}"
+            f"SameSite=Strict{secure}"
         )
         csrf = (
             f"{CSRF_COOKIE_NAME}={csrf_token}; "
@@ -1808,7 +1895,7 @@ class UIHandler(BaseHTTPRequestHandler):
         secure = "; Secure" if AUTH_DEPLOYED else ""
         session = (
             f"{SESSION_COOKIE_NAME}=; Max-Age=0; Path=/; "
-            f"HttpOnly; SameSite=Lax{secure}"
+            f"HttpOnly; SameSite=Strict{secure}"
         )
         csrf = (
             f"{CSRF_COOKIE_NAME}=; Max-Age=0; Path=/; "

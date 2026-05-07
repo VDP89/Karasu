@@ -189,11 +189,15 @@ def test_load_malformed_password_hash_raises(tmp_path: Path) -> None:
 
 
 def test_load_short_signing_secret_raises(tmp_path: Path) -> None:
+    """Uses a valid scrypt hash so the shape validator
+    (Codex P1 round 1 audit binding 2026-05-08) lets the
+    test reach the session_signing_secret check it pins."""
     path = tmp_path / "auth.json"
+    valid_hash = hash_password("dummy")
     payload = json.dumps(
         {
             "username": "v",
-            "password_hash": "scrypt$short",
+            "password_hash": valid_hash,
             "session_signing_secret": "AAAA",  # 3 bytes
             "credentials_generation": 0,
         }
@@ -206,11 +210,14 @@ def test_load_short_signing_secret_raises(tmp_path: Path) -> None:
 
 
 def test_load_negative_generation_raises(tmp_path: Path) -> None:
+    """Uses a valid scrypt hash so the shape validator lets
+    the test reach the credentials_generation check it pins."""
     path = tmp_path / "auth.json"
+    valid_hash = hash_password("dummy")
     payload = json.dumps(
         {
             "username": "v",
-            "password_hash": "scrypt$ok",
+            "password_hash": valid_hash,
             "session_signing_secret": "A" * 44,
             "credentials_generation": -1,
         }

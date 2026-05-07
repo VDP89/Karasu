@@ -174,6 +174,13 @@ def load_credentials(path: Path) -> AuthCredentials:
         _SCRYPT_PREFIX
     ):
         raise AuthCredentialsError("password_hash malformed")
+    # Codex P1 round 1 audit binding 2026-05-08: validate the
+    # canonical scrypt shape at startup so a corrupted /
+    # operator-edited file with N=2^30 cannot DoS the
+    # listener through a single login attempt. Brief §3-B
+    # fail-closed: refuse to bind if the hash drifts from the
+    # pinned (N=16384, r=8, p=1, 16-byte salt, 32-byte key).
+    _validate_password_hash_shape(password_hash)
 
     secret_b64 = raw.get("session_signing_secret")
     if not isinstance(secret_b64, str) or not secret_b64:
@@ -198,11 +205,21 @@ def load_credentials(path: Path) -> AuthCredentials:
 
 
 def _enforce_mode_0600(path: Path) -> None:
-    """POSIX: refuse mode looser than 0600. Windows: stderr
-    warning only (advisory-mode) but startup still proceeds —
-    the deployed-posture refusal lives at the auth-disabled
-    LOOPBACK-BIND check in cmd_ui (§3-B)."""
+    """POSIX: refuse mode looser than 0600. Windows:
+    advisory loud-stderr warning per UI-12b push_store
+    shape (Codex P2 round 1 audit binding 2026-05-08).
+    Startup still proceeds because Windows file-mode
+    semantics do not map cleanly to POSIX 0600; the
+    operator is responsible for NTFS ACLs restricting the
+    auth file to the karasu service account.
+    """
     if sys.platform.startswith("win"):  # pragma: no cover - Windows
+        sys.stderr.write(
+            "WARNING karasu.ui.auth: Windows posture detected; "
+            "file mode enforcement is advisory only. Verify "
+            "NTFS ACLs restrict the credentials file to the "
+            "karasu service account. See docs/deploy-runbook.md.\n"
+        )
         return
     try:
         observed = stat.S_IMODE(path.stat().st_mode)
@@ -210,6 +227,46 @@ def _enforce_mode_0600(path: Path) -> None:
         raise AuthCredentialsError("credentials file mode unreadable") from exc
     if observed & ~0o600:
         raise AuthCredentialsError("credentials file mode looser than 0600")
+
+
+def _validate_password_hash_shape(stored: str) -> None:
+    """Codex P1 round 1 audit binding 2026-05-08: parse the
+    canonical scrypt format and validate every pinned
+    parameter at startup.
+
+    Format: ``scrypt$N=<n>$r=<r>$p=<p>$<salt_b64u>$<hash_b64u>``
+
+    Raises ``AuthCredentialsError`` on:
+      * wrong number of ``$``-separated parts
+      * unparseable N / r / p ints
+      * (N, r, p) drift from the pinned (16384, 8, 1)
+      * salt b64u decode failure or wrong length (≠ 16)
+      * hash b64u decode failure or wrong length (≠ 32)
+
+    Error messages are GENERIC per pin §3-B (no field name,
+    no hex bytes, no path fragments)."""
+    body = stored[len(_SCRYPT_PREFIX):]
+    parts = body.split("$")
+    if len(parts) != 5:
+        raise AuthCredentialsError("password_hash parts count")
+    n_part, r_part, p_part, salt_b64, hash_b64 = parts
+    try:
+        n = int(n_part.split("=", 1)[1])
+        r = int(r_part.split("=", 1)[1])
+        p = int(p_part.split("=", 1)[1])
+    except (IndexError, ValueError) as exc:
+        raise AuthCredentialsError("password_hash parameters") from exc
+    if (n, r, p) != (SCRYPT_N, SCRYPT_R, SCRYPT_P):
+        raise AuthCredentialsError("password_hash parameters drift")
+    try:
+        salt = _b64u_decode(salt_b64)
+        derived = _b64u_decode(hash_b64)
+    except Exception as exc:  # noqa: BLE001
+        raise AuthCredentialsError("password_hash b64u decode") from exc
+    if len(salt) != SCRYPT_SALT_LEN:
+        raise AuthCredentialsError("password_hash salt length")
+    if len(derived) != SCRYPT_KEY_LEN:
+        raise AuthCredentialsError("password_hash key length")
 
 
 def hash_password(password: str) -> str:

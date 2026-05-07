@@ -22,9 +22,10 @@
 > §11.6 pins specific to the remote-frontier code chunk.
 >
 > **STATUS:** Operator sign-off pending. Codex audit
-> round 1 closed (CHANGES-REQUIRED, 6 P1 + 1 P2, no
-> P0; all seven addressed in-branch). Round 2 audit
-> prompt delivered to operator. Loop budget: 1/5.
+> rounds 1 + 2 closed (round 1 CHANGES-REQUIRED 6 P1 +
+> 1 P2 → all seven in-branch; round 2 CHANGES-REQUIRED
+> 3 P1 + 1 P2 → all four in-branch). Round 3 audit
+> prompt delivered to operator. Loop budget: 2/5.
 
 ## 0 · Why this brief exists
 
@@ -321,6 +322,48 @@ binding, 2026-05-07):
   production" warning at startup. NEVER set in any
   documented deploy-runbook.md path.
 
+  LOOPBACK-BIND CONTRACT (Codex round 2 P1 binding
+  2026-05-07): `--no-auth` is ONLY valid when the
+  effective bind host is loopback. The startup
+  refuses to bind the listener (exit 2 + generic
+  stderr "error: --no-auth requires --host on a
+  loopback address (127.0.0.1, ::1, or localhost);
+  refusing to start") if any of:
+
+    * --host is a non-loopback address (e.g.
+      0.0.0.0, ::, or any public-routable IP).
+    * --host resolves to a non-loopback address
+      (e.g. a hostname pointing at a public IP).
+    * No --host supplied AND the configured default
+      from karasu.yaml is non-loopback.
+    * `auth.trusted_proxies` in karasu.yaml is set
+      to a non-default value (signals deployed
+      posture; --no-auth is incompatible with
+      "deploy" intent).
+
+  Loopback resolution is socket-level: the bind
+  host is resolved via socket.getaddrinfo and every
+  resulting address must be in 127.0.0.0/8 / ::1.
+  Mixed-resolution hosts (something that resolves
+  to both loopback and non-loopback) → refuse.
+
+  Tests pinned: `--no-auth --host 127.0.0.1` →
+  starts (with the AUTH DISABLED banner);
+  `--no-auth --host ::1` → starts;
+  `--no-auth --host localhost` → starts (resolves
+  loopback);
+  `--no-auth --host 0.0.0.0` → exit 2;
+  `--no-auth --host ::` → exit 2;
+  `--no-auth --host <public-ip>` → exit 2;
+  `--no-auth` with a karasu.yaml setting
+  `auth.trusted_proxies: ["10.0.0.5"]` → exit 2.
+
+  This pin closes the most common operator-mistake
+  vector ("I'll just turn auth off briefly to
+  debug — let me also bind 0.0.0.0 so my phone
+  can hit it") by refusing the combination at
+  startup.
+
   Mirrors the UI-12c §3-F bootstrap-fatal pattern
   (PushStoreError → cmd_watch returns 2 with generic
   stderr) — auth is the same shape: malformed-store
@@ -474,23 +517,52 @@ EVERY OTHER PATH:
     (§3-F) → 403 + generic body
                    {"error":"forbidden"}.
 
-LOGOUT split (Codex round 1 P1 binding 2026-05-07):
-  GET  /auth/logout — idempotent, anonymous, clears
-                      session + csrf cookies via
-                      Set-Cookie Max-Age=0 + redirects
-                      to /. Safe for browser back-button
-                      navigation, link-clicks, and
-                      no-session calls.
-  POST /auth/logout — auth-required + CSRF-required. For
-                      explicit JS-driven logout from the
-                      PWA shell. The frontend's logout
-                      affordance uses POST so the
-                      operator's intent is unambiguous;
-                      GET stays as the recovery /
-                      idempotent shape.
-  Both clear the cookies; only the POST shape requires
-  a valid session + CSRF (so a stray GET on a stale tab
-  cannot be forced by a malicious link in another tab).
+LOGOUT split (Codex round 1 P1 + round 2 P2 binding
+2026-05-07):
+  GET  /auth/logout — anonymous + IDEMPOTENT recovery
+                      shape. Same-origin Referer/Origin
+                      check enforced in deployed posture
+                      (Codex round 2 P2 binding):
+                        * Referer or Origin MUST match
+                          the configured public origin.
+                        * Both absent OR mismatched in
+                          deployed posture → 403 +
+                          generic body. The GET does
+                          NOT clear cookies on a 403
+                          (the cross-origin attempt
+                          must not log Victor out).
+                        * Localhost dev posture
+                          accepts absent-Origin /
+                          absent-Referer as the
+                          documented dev fallback.
+                      When the same-origin check
+                      passes: clear session + csrf
+                      cookies via Set-Cookie
+                      Max-Age=0 + redirect to /.
+                      Safe for browser back-button
+                      navigation, same-origin
+                      link-clicks, and no-session
+                      calls; protected against
+                      cross-site forced-logout
+                      navigation (image tags,
+                      <link rel="prefetch">, third-
+                      party redirects).
+  POST /auth/logout — auth-required + CSRF-required.
+                      For explicit JS-driven logout
+                      from the PWA shell. The
+                      frontend's logout affordance
+                      uses POST so the operator's
+                      intent is unambiguous; GET
+                      stays as the recovery /
+                      idempotent shape but is
+                      cross-site-forgery-protected
+                      via Referer.
+  Both clear the cookies on success; only the POST
+  shape requires a valid session + CSRF token.
+  Cross-site forced-logout is blocked at both
+  shapes: GET via Referer/Origin check, POST via
+  the SameSite=Strict csrf cookie + signed-token
+  header.
 
 This perimeter implements Phase 4 macro §3-C item 1
 (transport-agnostic) + item 2 (anonymous reachability
@@ -691,46 +763,97 @@ Rate-limit / backoff (binding):
   In-memory only; restart-cleared by design (mirror
   of UI-12c pin §11.6.5 dedupe ring).
 
-Trusted-client-IP derivation (Codex round 1 P1
-binding 2026-05-07):
+Trusted-client-IP derivation (Codex round 1 P1 +
+round 2 P1 binding 2026-05-07):
 
   The reverse-proxy production posture (caddy/nginx
   on 127.0.0.1) means the TCP peer address is ALWAYS
   127.0.0.1 in deployed mode. A naive "peer ==
   127.0.0.1 → bypass rate-limit" rule would let
-  EVERY public login attempt skip protection. The
-  rate-limit MUST derive the client IP correctly:
+  EVERY public login attempt skip protection.
 
-    1. If the TCP peer is 127.0.0.1 / ::1 AND
-       the request carries no Forwarded /
-       X-Forwarded-For header → DIRECT LOCALHOST.
-       Bypass rate-limit (true dev iteration).
-    2. If the TCP peer is in the trusted-proxy
-       allowlist (default: 127.0.0.1 / ::1; chunk
-       brief allows widening for split-host caddy
-       layouts), the client IP is derived from
-       the LEFTMOST entry of the Forwarded header's
-       `for=` directive (RFC 7239) OR
-       X-Forwarded-For. The DERIVED IP is the
-       rate-limit key. Bypass applies ONLY if the
-       derived IP itself is also localhost
-       (127.0.0.1 / ::1) — i.e. the operator is
-       running both caddy and a browser on the
-       same dev box.
-    3. If the TCP peer is anything else (direct
-       remote connection, no proxy) → use the
-       peer address as the client IP. No bypass.
+  CRITICAL: a left-to-right parse of
+  Forwarded/X-Forwarded-For is also unsafe (Codex
+  round 2 P1 binding 2026-05-07). The common
+  nginx idiom `$proxy_add_x_forwarded_for` APPENDS
+  the immediate peer to a CLIENT-SUPPLIED chain. An
+  attacker who sends
+    X-Forwarded-For: 127.0.0.1
+  through caddy/nginx ends up with the chain
+    "127.0.0.1, <real attacker IP>"
+  reaching karasu — and a leftmost-wins parser
+  would treat the attacker as localhost and grant
+  the bypass.
+
+  Defence in depth:
+
+    Layer A — the proxy MUST overwrite (NOT
+    append) inbound forwarding headers. The
+    docs/deploy-runbook.md caddy + nginx snippets
+    pin the EXACT directives:
+      caddy:  header_up X-Forwarded-For {client_ip}
+              (caddy's default behaviour overwrites)
+      nginx:  proxy_set_header X-Forwarded-For
+              $remote_addr;
+              proxy_set_header Forwarded
+              "for=$remote_addr;proto=$scheme";
+              (NOT $proxy_add_x_forwarded_for)
+    Operators following the runbook get an
+    overwriting proxy by construction.
+
+    Layer B — the app parses the chain
+    RIGHT-TO-LEFT and picks the first IP that is
+    NOT in trusted_proxies. This is the standard
+    "trusted-hop walk" used by Werkzeug /
+    ProxyFix / Django:
+
+      def derive_client_ip(peer_addr, chain,
+                            trusted_proxies):
+          if peer_addr not in trusted_proxies:
+              return peer_addr   # direct connect
+          for ip in reversed(chain):
+              if ip in trusted_proxies:
+                  continue        # one of our hops
+              return ip            # first non-trusted
+          return None              # all trusted →
+                                  # unknown client
+
+    Right-to-left + trusted-hop walk means a
+    spoofed leftmost entry is ignored: the
+    attacker's spoof sits left of the immediate
+    hop nginx appended, so it is skipped past
+    when we walk right-to-left and we still
+    return the real attacker IP that nginx
+    recorded.
+
+    BOTH layers are required. Layer A alone
+    breaks under operator misconfig (using
+    $proxy_add_x_forwarded_for); Layer B alone
+    survives misconfig. Layer B is the binding
+    defence; Layer A is the documented best
+    practice.
+
+  Resolved bypass logic (post-derivation):
+
+    1. If derive_client_ip returns 127.0.0.1 /
+       ::1 → bypass rate-limit.
+    2. Otherwise → use the derived IP as the
+       rate-limit key; no bypass.
+    3. derive_client_ip returns None (all chain
+       entries trusted; impossible for real
+       traffic) → fail-closed: no bypass, fresh
+       rate-limit slot.
     4. Malformed Forwarded / X-Forwarded-For (no
-       parseable IP) → fail-closed: treat as a
-       remote client with NO bypass + a fresh
-       rate-limit slot (the conservative posture).
+       parseable IPs) → fail-closed: no bypass,
+       fresh rate-limit slot.
 
   Trusted-proxy list lives in karasu.yaml under
     auth.trusted_proxies: ["127.0.0.1", "::1"]
   Default is the localhost pair. Operators with a
   remote caddy host add the proxy IP explicitly;
   the chunk brief documents the threat model
-  (proxy-host compromise = full bypass).
+  (proxy-host compromise = full bypass; runbook
+  reminds the operator).
 
   Test surface (binding):
     * Direct 127.0.0.1 with no Forwarded → bypass.
@@ -741,6 +864,18 @@ binding 2026-05-07):
     * Remote peer with no proxy in the trusted
       list → peer address keys; NO bypass.
     * Malformed Forwarded → no bypass; fresh slot.
+    * SPOOFED CHAIN under append-mode proxy:
+      peer 127.0.0.1, X-Forwarded-For
+      "127.0.0.1, 198.51.100.5" → right-to-left
+      walk skips the trusted 127.0.0.1, returns
+      198.51.100.5 as client; NO bypass. The
+      attacker's spoofed leftmost entry is
+      ignored. (Codex round 2 P1 regression test.)
+    * Multi-hop trusted chain: peer 127.0.0.1,
+      X-Forwarded-For "203.0.113.7, 127.0.0.2"
+      where both 127.0.0.1 and 127.0.0.2 are in
+      trusted_proxies → walk returns 203.0.113.7;
+      NO bypass.
 
 Log line shape on failed login (binding):
   WARNING karasu.ui.auth: login failed (ip=<ip>)
@@ -768,25 +903,39 @@ PROPOSAL — pre-auth SW serves ONLY the login surface +
 manifest + inert assets:
 
 ```text
-Pre-auth SW scope (binding):
-  GET /sw.js                       (registered with
+Pre-auth SW scope (binding; paths aligned to existing
+/assets/* namespace per Codex round 2 P1 binding
+2026-05-07; mirrors §3-D anonymous whitelist EXACTLY):
+
+  GET /assets/sw.js                (registered with
                                     scope: '/')
-  Cached assets pre-auth:
-    /                              (login.html)
-    /static/css/login.css
-    /static/css/tokens.css
-    /static/css/reset.css
-    /static/css/base.css
-    /assets/crow/crow.svg
+  Cached assets pre-auth (EXACT set):
+    /                              (login render)
+    /assets/css/login.css          (NEW UI-13 file)
+    /assets/css/tokens.css         (existing UI-2)
+    /assets/css/reset.css          (existing UI-2)
+    /assets/css/base.css           (existing UI-2)
+    /assets/crow/crow.svg          (login hero)
+    /assets/icons/karasu-192.png   (manifest icon)
+    /assets/fonts/*.woff2          (Inter Display +
+                                    JetBrains Mono;
+                                    entire fonts dir
+                                    stays cached pre-
+                                    auth so login
+                                    renders cleanly
+                                    offline)
+    /assets/manifest.json          (browser PWA
+                                    install prompt
+                                    discovery)
+
+  Optional (chunk brief picks at code time; if
+  shipped, added to the cache + the §3-D whitelist):
     /assets/icons/favicon.ico
-    /assets/icons/karasu-192.png
-    /assets/fonts/inter-display-*.woff2
-    /manifest.webmanifest
 
   Cached assets MUST NOT include:
     The PWA app shell (static/index.html — it has
     bus-capable JS).
-    UI-12b push.js.
+    UI-12b /assets/js/push.js.
     UI-10/UI-11 modal flows.
     /api/* responses (already SW-network-only by
     UI-8 contract; UI-13 reaffirms).
@@ -1328,17 +1477,20 @@ audit. Anticipated shape (mirror of UI-12c §11.6 + Phase
    All comparisons constant-time (hmac.compare_digest).
    Codex round 1 P1 binding 2026-05-07.
 
-9. Trusted-client-IP derivation. The reverse-proxy
-   posture means peer addr is always 127.0.0.1 in
-   deployed mode; rate-limit MUST derive client IP
-   correctly. Direct 127.0.0.1 + no Forwarded →
-   bypass. 127.0.0.1 + Forwarded for=<remote> → use
-   <remote> as rate-limit key (NO bypass unless
-   <remote> itself is localhost). Trusted-proxy
-   list under auth.trusted_proxies in karasu.yaml
-   (default ["127.0.0.1", "::1"]). Malformed
-   Forwarded → fail-closed (no bypass). Codex round
-   1 P1 binding 2026-05-07.
+9. Trusted-client-IP derivation. Defence in depth:
+   (a) docs/deploy-runbook.md proxy snippets MUST
+   overwrite (NOT append) inbound XFF/Forwarded —
+   `proxy_set_header X-Forwarded-For $remote_addr`
+   for nginx, caddy default. (b) The app parses the
+   chain RIGHT-TO-LEFT and returns the first IP NOT
+   in trusted_proxies (standard trusted-hop walk).
+   This survives operator misconfig with append-mode
+   nginx + a client-spoofed leftmost entry.
+   trusted_proxies under auth.trusted_proxies
+   (default ["127.0.0.1", "::1"]). Malformed chain /
+   all-trusted chain → fail-closed (no bypass).
+   Spoofed-chain regression test pinned. Codex round
+   1 + round 2 P1 binding 2026-05-07.
 
 10. Per-CLIENT-IP rate-limit (post-derivation): 5
     failed attempts / 60 s → 429; backoff doubles
@@ -1383,13 +1535,30 @@ audit. Anticipated shape (mirror of UI-12c §11.6 + Phase
     loud-stderr "AUTH DISABLED — dev only" warning
     at startup. Mirrors UI-12c §3-F bootstrap fatal.
     Codex round 1 P1 binding 2026-05-07.
+    LOOPBACK-BIND CONTRACT (Codex round 2 P1):
+    --no-auth ONLY valid when the effective bind
+    host resolves entirely to loopback
+    (127.0.0.0/8, ::1, or localhost). Mixed-
+    resolution hosts → refuse. Non-loopback bind +
+    --no-auth → exit 2. Non-default
+    auth.trusted_proxies + --no-auth → exit 2
+    (the trusted_proxies setting signals deployed
+    intent, incompatible with disabled auth).
 
 17. Logout split: GET /auth/logout is anonymous +
-    idempotent (cookie clear + redirect). POST
+    idempotent (cookie clear + redirect) BUT
+    enforces same-origin Referer/Origin check in
+    deployed posture (cross-site forced-logout via
+    image tags / prefetch / third-party redirects
+    is blocked; Codex round 2 P2 binding). POST
     /auth/logout is auth+CSRF-required (the JS
     affordance from the PWA shell). Both clear
-    cookies; only POST asserts operator intent.
-    Codex round 1 P1 binding 2026-05-07.
+    cookies on success; only POST asserts operator
+    intent. Localhost dev posture accepts absent
+    Origin/Referer for GET; deployed posture
+    rejects with 403 (no cookie mutation on
+    rejected GET). Codex round 1 P1 + round 2 P2
+    binding 2026-05-07.
 
 18. Constant-time compare discipline. Every
     comparison of auth material — session HMAC,
@@ -1500,8 +1669,65 @@ Codex audit:         Round 1 CHANGES-REQUIRED (6 P1 +
                      (added pins 6/8/9/12/16/17/18 +
                      adjusted pin 7).
 
-                     Round 2 audit prompt delivered to
-                     operator. Loop budget: 1/5
+                     Round 2: CHANGES-REQUIRED (3 P1 +
+                     1 P2). All four addressed in-branch:
+                       P1 §3-G Forwarded right-to-left
+                          + proxy overwrite. The leftmost-
+                          wins parse was unsafe under
+                          common nginx
+                          $proxy_add_x_forwarded_for
+                          (appends to client-supplied
+                          chain → spoofed leftmost). Two
+                          layers now binding: (a) docs/
+                          deploy-runbook.md proxy
+                          snippets MUST overwrite XFF/
+                          Forwarded
+                          (proxy_set_header
+                          X-Forwarded-For $remote_addr);
+                          (b) the app parses chain
+                          right-to-left + returns first
+                          IP not in trusted_proxies
+                          (standard trusted-hop walk).
+                          Spoofed-chain regression test
+                          pinned.
+                       P1 §3-H pre-auth cache paths
+                          aligned to /assets/* namespace
+                          (the §3-D rewrite did not
+                          propagate to §3-H — pin 11
+                          would have steered impl back
+                          to stale /sw.js, /static/css/*,
+                          /manifest.webmanifest paths).
+                          §3-H now mirrors §3-D exactly.
+                       P1 §3-B --no-auth loopback-bind
+                          contract added. Flag refuses
+                          to start if --host is
+                          non-loopback OR resolves
+                          non-loopback OR
+                          auth.trusted_proxies is
+                          non-default (signals deploy
+                          intent). Closes the
+                          "--no-auth --host 0.0.0.0"
+                          mistake at startup.
+                       P2 §3-D GET /auth/logout same-
+                          origin Referer/Origin check.
+                          Cross-site forced-logout via
+                          image tags / prefetch /
+                          third-party redirects is
+                          blocked. Rejected GET does
+                          NOT clear cookies. Localhost
+                          dev posture accepts absent
+                          Referer.
+
+                     §11.6 anticipated pins updated:
+                     pin 9 expanded (right-to-left walk
+                     + proxy overwrite); pin 16
+                     expanded (loopback-bind contract);
+                     pin 17 expanded (GET logout
+                     cross-site protection). 20 pins
+                     total preserved.
+
+                     Round 3 audit prompt delivered to
+                     operator. Loop budget: 2/5
                      consumed.
 Implementation:      BLOCKED on this brief's merge.
                      UI-13 code branch does NOT open

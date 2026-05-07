@@ -89,6 +89,14 @@
           })
         }).then(function (r) {
           if (r.ok) {
+            // UI-13 §3-H: notify the SW that the post-auth
+            // cache may now be populated. Best-effort —
+            // navigation happens regardless.
+            try {
+              if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+                navigator.serviceWorker.controller.postMessage({ type: 'auth:granted' });
+              }
+            } catch (e) { /* SW not registered yet — fine */ }
             window.location.assign('/');
           } else {
             slot.hidden = false;

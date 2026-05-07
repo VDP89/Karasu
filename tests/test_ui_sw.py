@@ -218,34 +218,291 @@ def test_api_branch_does_not_share_returns_with_other_branches(
 # ---------------------------------------------------------------------------
 
 
-def test_cache_name_constant_exists_and_is_versioned(
+def test_cache_name_constants_split_pre_and_post_auth(
     sw_source: str,
 ) -> None:
-    """``CACHE_NAME`` is the bump-versioned constant whose value
-    the activate handler diffs against to delete stale caches.
-    The bump rule (see sw.js header comment) is binding; a
-    sw.js diff that touches caching without bumping CACHE_NAME
-    is a regression even if the new value still works at runtime.
+    """UI-13 §3-H binding: the SW splits its cache into two
+    named buckets so a logged-out browser cannot serve PWA
+    shell bytes from the SW.
 
-    The test pins:
-      - ``CACHE_NAME`` is a top-level ``const`` (not a let / var).
-      - Value matches ``karasu-ui-vN`` shape (N = chunk version).
+      PRE_AUTH_CACHE_NAME  = 'karasu-ui-login-vN'
+      POST_AUTH_CACHE_NAME = 'karasu-ui-vN'
+
+    The bump rule (see sw.js header comment) is binding for
+    BOTH names independently. A sw.js diff that touches
+    caching without bumping the affected version is a
+    regression even if the new value still works at runtime.
     """
-    match = re.search(
-        r"^const\s+CACHE_NAME\s*=\s*'(?P<name>karasu-ui-v[0-9a-z]+)'\s*;",
+    pre_match = re.search(
+        r"^const\s+PRE_AUTH_CACHE_NAME\s*=\s*"
+        r"'(?P<name>karasu-ui-login-v[0-9a-z]+)'\s*;",
         sw_source,
         re.MULTILINE,
     )
-    assert match is not None, (
-        "CACHE_NAME must be a top-level const matching "
+    assert pre_match is not None, (
+        "PRE_AUTH_CACHE_NAME must be a top-level const matching "
+        "'karasu-ui-login-vN'"
+    )
+    post_match = re.search(
+        r"^const\s+POST_AUTH_CACHE_NAME\s*=\s*"
+        r"'(?P<name>karasu-ui-v[0-9a-z]+)'\s*;",
+        sw_source,
+        re.MULTILINE,
+    )
+    assert post_match is not None, (
+        "POST_AUTH_CACHE_NAME must be a top-level const matching "
         "'karasu-ui-vN'"
     )
-    # Pin against accidental shadowing — there must be exactly
-    # one declaration.
-    declarations = re.findall(r"^const\s+CACHE_NAME\s*=", sw_source, re.MULTILINE)
-    assert len(declarations) == 1, (
-        f"CACHE_NAME declared {len(declarations)} times; "
-        "there must be exactly one canonical declaration"
+    # Pin against accidental shadowing — exactly one canonical
+    # declaration of each.
+    for name in ("PRE_AUTH_CACHE_NAME", "POST_AUTH_CACHE_NAME"):
+        declarations = re.findall(
+            rf"^const\s+{name}\s*=", sw_source, re.MULTILINE
+        )
+        assert len(declarations) == 1, (
+            f"{name} declared {len(declarations)} times; "
+            "there must be exactly one canonical declaration"
+        )
+
+
+# ---------------------------------------------------------------------------
+# UI-12b additive listeners — DEFERRED assertions
+# ---------------------------------------------------------------------------
+#
+# These tests do NOT yet assert the presence of ``push`` /
+# ``notificationclick`` listeners — the test commit lands first,
+# and the sw.js change lands second per pin §11.6.4. After the
+# sw.js change lands (commit 2), the test_ui_sw module gains a
+# parallel test that asserts the two new listeners exist AND
+# that the four shape-lock tests above STILL pass. The
+# pre-existing tests are the regression gate; the new listener
+# tests are the additive proof.
+
+
+# ---------------------------------------------------------------------------
+# UI-13 §3-H — pre-auth EXACT set + message handler + page hook
+# ---------------------------------------------------------------------------
+
+
+def _precache_list(source: str, name: str) -> list[str]:
+    """Return the URLs declared in ``const <name> = [...]``."""
+    match = re.search(
+        rf"^const\s+{name}\s*=\s*\[(?P<body>.*?)\];",
+        source,
+        re.DOTALL | re.MULTILINE,
+    )
+    assert match is not None, f"{name} not found in sw.js"
+    return re.findall(r"'([^']+)'", match.group("body"))
+
+
+def test_pre_auth_precache_matches_brief_3h_exact_set(sw_source: str) -> None:
+    """UI-13 §3-H lines 1007-1024 binding EXACT set:
+
+       /
+       /assets/css/login.css
+       /assets/css/tokens.css
+       /assets/css/reset.css
+       /assets/css/base.css
+       /assets/crow/crow.svg
+       /assets/icons/karasu-192.png
+       /assets/manifest.json
+       /assets/fonts/*.woff2 (entire dir)
+
+    The PWA app shell, push.js, modals, and 512.png + crow-
+    flight.svg are explicitly EXCLUDED at lines 1030-1036.
+    """
+    urls = set(_precache_list(sw_source, "PRE_AUTH_PRECACHE_URLS"))
+
+    required = {
+        "/",
+        "/assets/css/login.css",
+        "/assets/css/tokens.css",
+        "/assets/css/reset.css",
+        "/assets/css/base.css",
+        "/assets/crow/crow.svg",
+        "/assets/icons/karasu-192.png",
+        "/assets/manifest.json",
+    }
+    missing = required - urls
+    assert not missing, f"pre-auth precache missing required keys: {missing}"
+
+    # Forbidden keys per §3-H lines 1030-1036.
+    forbidden = {
+        "/index.html",
+        "/offline.html",
+        "/assets/js/push.js",
+        "/assets/icons/karasu-512.png",
+        "/assets/crow/crow-flight.svg",
+        "/assets/css/timeline.css",
+        "/assets/css/crow.css",
+        "/assets/css/map.css",
+        "/assets/css/drawer.css",
+    }
+    leaked = forbidden & urls
+    assert not leaked, (
+        f"pre-auth precache MUST NOT include PWA-shell assets: {leaked}"
+    )
+
+    # Fonts dir is binding "entire dir stays cached pre-auth".
+    fonts = {u for u in urls if u.startswith("/assets/fonts/")}
+    assert fonts, "pre-auth precache must include /assets/fonts/*.woff2"
+    for u in fonts:
+        assert u.endswith(".woff2"), f"unexpected non-woff2 font asset: {u}"
+
+
+def test_post_auth_precache_excludes_pre_auth_set(sw_source: str) -> None:
+    """The post-auth list must not duplicate items already in
+    the pre-auth set — otherwise a cache version bump on one
+    side leaves the other holding stale bytes for the same
+    URL key."""
+    pre = set(_precache_list(sw_source, "PRE_AUTH_PRECACHE_URLS"))
+    post = set(_precache_list(sw_source, "POST_AUTH_PRECACHE_URLS"))
+    overlap = pre & post
+    assert not overlap, (
+        f"pre-auth and post-auth precache lists overlap: {overlap}"
+    )
+
+    # The PWA shell delta MUST be in post-auth — these are the
+    # bus-capable assets that must NEVER be served pre-auth.
+    expected_post = {
+        "/offline.html",
+        "/assets/js/push.js",
+        "/assets/css/timeline.css",
+    }
+    missing = expected_post - post
+    assert not missing, f"post-auth precache missing: {missing}"
+
+
+def test_install_handler_opens_pre_auth_cache_only(sw_source: str) -> None:
+    """The install handler must open PRE_AUTH_CACHE_NAME (not
+    the post-auth bucket) so a logged-out browser's first
+    visit pre-caches only the §3-H login surface."""
+    install_match = re.search(
+        r"self\.addEventListener\(\s*['\"]install['\"].*?\n\}\s*\)\s*;",
+        sw_source,
+        re.DOTALL,
+    )
+    assert install_match is not None
+    install_body = install_match.group(0)
+    assert "PRE_AUTH_CACHE_NAME" in install_body, (
+        "install handler must open PRE_AUTH_CACHE_NAME"
+    )
+    assert "POST_AUTH_CACHE_NAME" not in install_body, (
+        "install handler MUST NOT touch POST_AUTH_CACHE_NAME — "
+        "the post-auth cache fills lazily on auth:granted"
+    )
+
+
+def test_activate_handler_keeps_both_canonical_caches(sw_source: str) -> None:
+    """The activate cleanup must preserve BOTH PRE_AUTH and
+    POST_AUTH cache names — deleting either would force a
+    re-precache cycle on every chunk bump."""
+    activate_match = re.search(
+        r"self\.addEventListener\(\s*['\"]activate['\"].*?\n\}\s*\)\s*;",
+        sw_source,
+        re.DOTALL,
+    )
+    assert activate_match is not None
+    body = activate_match.group(0)
+    assert "PRE_AUTH_CACHE_NAME" in body
+    assert "POST_AUTH_CACHE_NAME" in body
+
+
+def test_message_handler_swaps_caches_on_auth_events(
+    sw_source: str,
+) -> None:
+    """UI-13 §3-H lines 1038-1045 binding:
+
+      auth:granted → open POST_AUTH_CACHE_NAME, addAll
+                     POST_AUTH_PRECACHE_URLS.
+      auth:revoked → caches.delete(POST_AUTH_CACHE_NAME).
+
+    The pre-auth cache is NEVER touched by either branch
+    (revocation falls back to the existing pre-auth cache;
+    granting the second time is a no-op precache repeat)."""
+    msg_match = re.search(
+        r"self\.addEventListener\(\s*['\"]message['\"].*?\n\}\s*\)\s*;",
+        sw_source,
+        re.DOTALL,
+    )
+    assert msg_match is not None, (
+        "message handler missing — UI-13 §3-H requires it"
+    )
+    body = msg_match.group(0)
+
+    # auth:granted branch.
+    assert re.search(r"['\"]auth:granted['\"]", body), (
+        "auth:granted branch missing"
+    )
+    assert "POST_AUTH_CACHE_NAME" in body
+    assert "POST_AUTH_PRECACHE_URLS" in body
+
+    # auth:revoked branch.
+    assert re.search(r"['\"]auth:revoked['\"]", body), (
+        "auth:revoked branch missing"
+    )
+    assert re.search(r"caches\.delete\(\s*POST_AUTH_CACHE_NAME\s*\)", body), (
+        "auth:revoked must caches.delete(POST_AUTH_CACHE_NAME)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# UI-13 §3-H — page-side fetch interceptor
+# ---------------------------------------------------------------------------
+
+
+INDEX_HTML_PATH = (
+    REPO_ROOT / "src" / "karasu" / "ui" / "static" / "index.html"
+)
+LOGIN_HTML_PATH = (
+    REPO_ROOT / "src" / "karasu" / "ui" / "static" / "login.html"
+)
+
+
+def test_index_html_wraps_fetch_for_auth_revocation() -> None:
+    """index.html must wrap window.fetch so an /api/* response
+    of 401 OR a redirect-to-/ posts auth:revoked to the SW.
+    §3-H test surface lines 1087-1099 binding."""
+    html = INDEX_HTML_PATH.read_text(encoding="utf-8")
+    # The wrapper assigns to window.fetch.
+    assert re.search(r"window\.fetch\s*=\s*function", html), (
+        "index.html must override window.fetch with an interceptor"
+    )
+    # Detection branches: status 401 OR redirected.
+    assert "401" in html, "interceptor must check response.status === 401"
+    assert "redirected" in html, (
+        "interceptor must check response.redirected for /auth flow"
+    )
+    # Posts auth:revoked.
+    assert re.search(r"['\"]auth:revoked['\"]", html), (
+        "interceptor must postMessage({type:'auth:revoked'})"
+    )
+    # Only wraps /api/* paths so static assets / nav don't trip
+    # the revocation flow.
+    assert re.search(r"/api/", html), (
+        "interceptor must only act on /api/* requests"
+    )
+
+
+def test_login_html_emits_auth_granted_on_success() -> None:
+    """login.html success path must postMessage auth:granted to
+    the SW so the post-auth cache fills before navigation lands
+    at the PWA shell. §3-H lines 1038-1042 binding."""
+    html = LOGIN_HTML_PATH.read_text(encoding="utf-8")
+    assert re.search(r"['\"]auth:granted['\"]", html), (
+        "login.html must postMessage({type:'auth:granted'}) on success"
+    )
+    # The postMessage must be inside the success branch (r.ok).
+    success_match = re.search(
+        r"r\.ok\s*\)\s*\{(?P<body>.*?)window\.location\.assign",
+        html,
+        re.DOTALL,
+    )
+    assert success_match is not None, (
+        "login.html success branch not found"
+    )
+    assert "auth:granted" in success_match.group("body"), (
+        "auth:granted must fire BEFORE the navigation reload"
     )
 
 

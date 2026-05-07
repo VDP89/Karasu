@@ -541,6 +541,70 @@
 <script>
 const REFRESH_MS = 3000;
 
+/* UI-13 §3-H auth-failure revocation hook. Wraps window.fetch
+ * once at script load so every /api/* call (whether from this
+ * file or push.js or any future module) gets intercepted. When
+ * the server signals "your session is no longer valid" via
+ * 401 OR a redirect to / from an /api/* call (cookie expired,
+ * credentials_generation rotated, ops-side credential rewrite),
+ * the hook posts {type:"auth:revoked"} to the SW so the post-
+ * auth cache is dropped, then reloads to / which now renders
+ * login. Pin §3-H test surface: "Cookie present + gen mismatch
+ * → next /api/* call returns 401; page postMessages
+ * auth:revoked; cache clears."
+ *
+ * Best-effort: any error in the interception path falls through
+ * to the original response so the live surface keeps working
+ * even if the SW is unavailable. */
+(function () {
+    const origFetch = window.fetch.bind(window);
+    let revokedOnce = false;   /* coalesce multiple in-flight 401s */
+
+    function isApiPath(input) {
+        try {
+            const url = typeof input === 'string'
+                ? new URL(input, window.location.href)
+                : new URL(input.url, window.location.href);
+            return url.pathname.startsWith('/api/');
+        } catch {
+            return false;
+        }
+    }
+
+    function isRedirectToRoot(response) {
+        if (!response.redirected) return false;
+        try {
+            return new URL(response.url).pathname === '/';
+        } catch {
+            return false;
+        }
+    }
+
+    function emitRevoked() {
+        if (revokedOnce) return;
+        revokedOnce = true;
+        try {
+            if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+                navigator.serviceWorker.controller.postMessage({ type: 'auth:revoked' });
+            }
+        } catch { /* no SW — fine, server-side cookie clear handles the rest */ }
+        /* Reload via location.assign so the GET / lands on the
+         * server's auth middleware → login render. */
+        try { window.location.assign('/'); } catch { /* no-op */ }
+    }
+
+    window.fetch = function (input, init) {
+        const promise = origFetch(input, init);
+        if (!isApiPath(input)) return promise;
+        return promise.then((response) => {
+            if (response.status === 401 || isRedirectToRoot(response)) {
+                emitRevoked();
+            }
+            return response;
+        });
+    };
+})();
+
 async function loadMeta() {
     try {
         const r = await fetch('/api/meta');

@@ -1,21 +1,39 @@
-/* sw.js — Karasu UI service worker (UI-8 + UI-12b).
+/* sw.js — Karasu UI service worker (UI-8 + UI-12b + UI-13).
  *
  * Vanilla, dependency-free. Registered from index.html with a
  * feature-detection guard. Scoped to root via the
  * Service-Worker-Allowed: / header that src/karasu/ui/server.py
  * emits when serving this file.
  *
- * --- Cache version discipline ---------------------------------
+ * --- Cache split discipline (UI-13 §3-H binding) -------------
  *
- * CACHE_NAME embeds the chunk version. The bump rule (Codex P1
- * binding from the UI-8 design review):
+ * UI-13 splits the cache into two named buckets:
  *
- *   Bump CACHE_NAME whenever sw.js, offline.html, manifest.json,
- *   the static CSS files, fonts, or the crow assets change.
+ *   PRE_AUTH_CACHE_NAME  = 'karasu-ui-login-v13'
+ *   POST_AUTH_CACHE_NAME = 'karasu-ui-v13'
  *
- * The activate handler deletes any cache whose name does not
- * match CACHE_NAME, so a bumped value cleans up the old shell
- * on first navigation under the new SW.
+ * The pre-auth cache is populated at install time with the
+ * EXACT §3-H set (login surface + tokens / reset / base CSS +
+ * crow.svg + 192 icon + manifest + fonts + sw.js itself).
+ * The PWA app shell (bus-capable JS, modals, push.js, the rest
+ * of the design-system CSS) is NOT pre-auth-cached — a logged-
+ * out browser must NEVER serve those bytes from the SW.
+ *
+ * The post-auth cache fills lazily after the first
+ * {type:"auth:granted"} postMessage from the page (sent on
+ * successful login). It mirrors the UI-8 PWA shell shape.
+ *
+ * On {type:"auth:revoked"} the post-auth cache is dropped so
+ * an expired-session browser falls back to the pre-auth cache
+ * (which renders login when GET / hits the network and is
+ * redirected, or paints offline.html when the network is
+ * unreachable).
+ *
+ * Bump rule: bump the version suffix on EITHER cache name
+ * whenever any of the assets in that cache change. The
+ * activate handler deletes any cache whose name does not
+ * match either canonical name, so a bumped value cleans up
+ * the old shell on first navigation under the new SW.
  *
  * --- Fetch handler ordering (Codex P1, P0-on-regression) -----
  *
@@ -26,60 +44,63 @@
  *      /offline.html on failure. The cached offline shell
  *      reads the last-known bus_path from localStorage and
  *      paints the perched crow in the .offline pose.
- *   3. Static assets → cache-first. Only after the /api/ +
- *      navigate branches have already returned. Any refactor
- *      that lets /api/* fall through to caches.match() is a
- *      P0 regression.
+ *      UI-13 §3-H pin §11.6.12: navigation IS network-first
+ *      so an expired-session GET / lands at the server's
+ *      redirect-to-login rather than being masked by the
+ *      cached app shell.
+ *   3. Static assets → cache-first against BOTH caches
+ *      (pre-auth checked first, post-auth as fallback).
  *
  * The ordering is the contract. tests/test_ui_sw.py pins it
- * structurally (UI-12b pin §11.6.4).
+ * structurally (UI-12b pin §11.6.4 + UI-13 §3-H additions).
  *
- * --- Push handlers (UI-12b additive) -------------------------
- *
- * UI-12b adds two SW event listeners independent of the fetch
- * handler: ``push`` (renders an OS-level notification when
- * UI-12c emits) and ``notificationclick`` (focuses an existing
- * surface tab or opens a new one). Both register without
- * touching the fetch handler ordering — the additive-only
- * claim is proved by tests/test_ui_sw.py.
- *
- * UI-12b ships with no server-side emit; the push listener is
- * registered for forward-compat. UI-12c earns the VAPID JWT
- * dispatch path that actually delivers messages here.
+ * --- Push handlers (UI-12b additive, unchanged) --------------
  */
 
-const CACHE_NAME = 'karasu-ui-v12b';
+const PRE_AUTH_CACHE_NAME = 'karasu-ui-login-v13';
+const POST_AUTH_CACHE_NAME = 'karasu-ui-v13';
 
-/* Static manifest precached on install. The list is the minimum
- * set the offline page + the application shell need to render
- * editorially when the network is unreachable. /api/* is NOT in
- * the manifest by design. */
-const PRECACHE_URLS = [
+/* §3-H pre-auth EXACT set. The login surface must render
+ * cleanly offline + a logged-out browser must NEVER see the
+ * PWA shell. */
+const PRE_AUTH_PRECACHE_URLS = [
     '/',
-    '/offline.html',
-    '/assets/manifest.json',
+    '/assets/css/login.css',
     '/assets/css/tokens.css',
     '/assets/css/reset.css',
     '/assets/css/base.css',
+    '/assets/crow/crow.svg',
+    '/assets/icons/karasu-192.png',
+    '/assets/manifest.json',
+    /* Entire fonts dir — login surface uses the same Inter
+     * Display + JetBrains Mono faces as the rest of the app. */
+    '/assets/fonts/inter-display-400.woff2',
+    '/assets/fonts/inter-display-500.woff2',
+    '/assets/fonts/inter-display-700.woff2',
+    '/assets/fonts/jetbrains-mono-400.woff2',
+    '/assets/fonts/jetbrains-mono-500.woff2',
+    '/assets/fonts/jetbrains-mono-700.woff2',
+];
+
+/* §3-H post-auth set. Mirror of the UI-8 PWA shell pre-cache,
+ * minus the login-only items already in the pre-auth cache.
+ * Filled lazily on {type:"auth:granted"}. */
+const POST_AUTH_PRECACHE_URLS = [
+    '/offline.html',
     '/assets/css/timeline.css',
     '/assets/css/crow.css',
     '/assets/css/map.css',
     '/assets/css/drawer.css',
-    '/assets/crow/crow.svg',
     '/assets/crow/crow-flight.svg',
-    '/assets/icons/karasu-192.png',
     '/assets/icons/karasu-512.png',
-    /* UI-12b — push.js carries the modal flow + two-phase
-     * mutation rollback paths. Precached so the offline shell
-     * and the live page share the same byte-identical script
-     * (pin §11.6.4 — fetch ordering keeps /api/* network-only;
-     * /assets/* including push.js is cache-first). */
     '/assets/js/push.js',
 ];
 
 self.addEventListener('install', (event) => {
     event.waitUntil(
-        caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_URLS))
+        caches
+            .open(PRE_AUTH_CACHE_NAME)
+            .then((cache) => cache.addAll(PRE_AUTH_PRECACHE_URLS))
     );
     /* Skip the wait so a freshly installed SW activates on the
      * next page load without requiring a manual refresh. The
@@ -88,11 +109,12 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
+    const canonical = new Set([PRE_AUTH_CACHE_NAME, POST_AUTH_CACHE_NAME]);
     event.waitUntil(
         caches.keys().then((names) =>
             Promise.all(
                 names
-                    .filter((name) => name !== CACHE_NAME)
+                    .filter((name) => !canonical.has(name))
                     .map((name) => caches.delete(name))
             )
         )
@@ -113,9 +135,8 @@ self.addEventListener('fetch', (event) => {
     }
 
     /* 2. Navigation — try network, fall back to offline.html on
-     *    failure. The cached offline.html is the editorial
-     *    fallback; the live shell is preferred when the network
-     *    is reachable. */
+     *    failure. UI-13 §3-H pin §11.6.12: this is the network-
+     *    first behaviour the brief binds for navigation. */
     if (event.request.mode === 'navigate') {
         event.respondWith(
             fetch(event.request).catch(() => caches.match('/offline.html'))
@@ -123,13 +144,44 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    /* 3. Static assets — cache-first. Reaches here ONLY after
-     *    the /api/ + navigate branches have already returned;
-     *    /api/* requests cannot fall through to this match by
-     *    construction. */
+    /* 3. Static assets — cache-first. ``caches.match()``
+     *    without a ``cacheName`` option queries every named
+     *    cache in turn, so a single key (e.g. /assets/css/
+     *    tokens.css) lands the pre-auth bucket before the
+     *    post-auth bucket. The pre-auth set is byte-identical
+     *    to its post-auth counterpart for shared keys, so the
+     *    bucket precedence is informational. */
     event.respondWith(
         caches.match(event.request).then((hit) => hit || fetch(event.request))
     );
+});
+
+/* --- UI-13 §3-H message handler ------------------------------
+ *
+ * The page sends {type:"auth:granted"} on successful login and
+ * {type:"auth:revoked"} on logout / 401 / redirect-to-/auth
+ * from /api/*. The SW reflects the cache state accordingly.
+ */
+self.addEventListener('message', (event) => {
+    const data = event.data || {};
+    if (data.type === 'auth:granted') {
+        event.waitUntil(
+            caches
+                .open(POST_AUTH_CACHE_NAME)
+                .then((cache) => cache.addAll(POST_AUTH_PRECACHE_URLS))
+                .catch(() => {
+                    /* Best-effort precache — if a single asset is
+                     * 404 (e.g. the operator hasn't generated the
+                     * 512 icon yet) we still want the swap to
+                     * complete so subsequent fetches land. */
+                })
+        );
+        return;
+    }
+    if (data.type === 'auth:revoked') {
+        event.waitUntil(caches.delete(POST_AUTH_CACHE_NAME));
+        return;
+    }
 });
 
 /* --- UI-12b push handlers (additive) -------------------------

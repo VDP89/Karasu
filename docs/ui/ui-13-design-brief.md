@@ -22,10 +22,10 @@
 > §11.6 pins specific to the remote-frontier code chunk.
 >
 > **STATUS:** Operator sign-off pending. Codex audit
-> rounds 1 + 2 closed (round 1 CHANGES-REQUIRED 6 P1 +
-> 1 P2 → all seven in-branch; round 2 CHANGES-REQUIRED
-> 3 P1 + 1 P2 → all four in-branch). Round 3 audit
-> prompt delivered to operator. Loop budget: 2/5.
+> rounds 1 + 2 + 3 closed (R1 6 P1 + 1 P2 → all in;
+> R2 3 P1 + 1 P2 → all in; R3 1 P1 → in-branch).
+> Round 4 audit prompt delivered to operator. Loop
+> budget: 3/5.
 
 ## 0 · Why this brief exists
 
@@ -833,17 +833,83 @@ round 2 P1 binding 2026-05-07):
     defence; Layer A is the documented best
     practice.
 
+    UNTRUSTED-PEER GUARD (Codex round 3 P1
+    binding 2026-05-07): a critical edge case if
+    the algorithm returns peer_addr whenever the
+    peer is NOT in trusted_proxies. If an
+    operator sets `auth.trusted_proxies: []`
+    while still running caddy/nginx on localhost
+    (or fingers a typo wiping the list), the peer
+    is 127.0.0.1, forwarded headers exist but
+    are not consulted, and the post-derivation
+    rule grants the localhost bypass — the same
+    public-attacker bypass the leftmost-wins
+    parse opened.
+
+    Corrected algorithm:
+
+      def derive_client_ip(peer_addr, chain,
+                            trusted_proxies):
+          if peer_addr not in trusted_proxies:
+              if chain:
+                  # Peer is untrusted but
+                  # claiming a forwarded chain.
+                  # The chain is attacker-
+                  # supplied (the peer is
+                  # forging proxy intent).
+                  # Refuse the chain entirely;
+                  # do NOT fall back to peer
+                  # bypass. Sentinel "remote"
+                  # forces no-bypass + fresh
+                  # rate-limit slot.
+                  return UNTRUSTED_FORWARDED
+              return peer_addr  # genuine direct
+          # Peer is trusted: walk right-to-left
+          for ip in reversed(chain):
+              if ip in trusted_proxies:
+                  continue
+              return ip
+          return None  # all-trusted chain
+
+    The same guard applies to untrusted peers
+    with no chain (returns peer_addr → bypass
+    only if the peer itself is localhost; that's
+    the legitimate direct-localhost-dev case
+    Layer A in §3-G). Untrusted peer + chain →
+    untrusted_forwarded sentinel → NO bypass.
+
+    Empty-trusted_proxies guard (Codex round 3
+    P1 binding): if `auth.trusted_proxies` is
+    explicitly set to `[]` (an empty list, not
+    the default ["127.0.0.1", "::1"]) AND the
+    deployment posture is non-loopback (the
+    `--no-auth` loopback check from §3-B mirrors
+    this), startup MUST refuse with exit 2 +
+    generic stderr ("error: deployed posture
+    requires non-empty auth.trusted_proxies;
+    refusing to start. See docs/deploy-runbook.md
+    for the trusted-hop walk requirements."). The
+    refusal closes the operator-typo path
+    completely — the operator cannot accidentally
+    run a deployed instance with no trusted hops.
+
   Resolved bypass logic (post-derivation):
 
     1. If derive_client_ip returns 127.0.0.1 /
        ::1 → bypass rate-limit.
-    2. Otherwise → use the derived IP as the
+    2. If derive_client_ip returns
+       UNTRUSTED_FORWARDED sentinel → NO bypass;
+       fresh rate-limit slot keyed by the peer
+       addr (so a flood from one untrusted peer
+       still gets bounded). Codex round 3 P1
+       binding.
+    3. Otherwise → use the derived IP as the
        rate-limit key; no bypass.
-    3. derive_client_ip returns None (all chain
+    4. derive_client_ip returns None (all chain
        entries trusted; impossible for real
-       traffic) → fail-closed: no bypass, fresh
-       rate-limit slot.
-    4. Malformed Forwarded / X-Forwarded-For (no
+       traffic from an external client) → fail-
+       closed: no bypass, fresh rate-limit slot.
+    5. Malformed Forwarded / X-Forwarded-For (no
        parseable IPs) → fail-closed: no bypass,
        fresh rate-limit slot.
 
@@ -876,6 +942,30 @@ round 2 P1 binding 2026-05-07):
       where both 127.0.0.1 and 127.0.0.2 are in
       trusted_proxies → walk returns 203.0.113.7;
       NO bypass.
+    * EMPTY trusted_proxies + localhost peer +
+      public XFF: trusted_proxies=[], peer
+      127.0.0.1, X-Forwarded-For "203.0.113.7" →
+      derive_client_ip returns
+      UNTRUSTED_FORWARDED sentinel; NO bypass;
+      fresh slot keyed by 127.0.0.1 (peer addr).
+      The peer cannot bypass via its own
+      forwarded headers when the operator wiped
+      trusted_proxies. (Codex round 3 P1
+      regression test 2026-05-07.)
+    * UNTRUSTED PEER with XFF: peer
+      198.51.100.5 (NOT in trusted_proxies),
+      X-Forwarded-For "127.0.0.1" → returns
+      UNTRUSTED_FORWARDED; NO bypass; fresh slot
+      keyed by 198.51.100.5. Cannot self-promote
+      to localhost via spoofed XFF when not on
+      the trusted-proxy list. (Codex round 3 P1
+      regression test 2026-05-07.)
+    * EMPTY trusted_proxies + non-loopback bind:
+      startup refuses with exit 2 (the
+      operator-typo path is closed at startup,
+      before traffic reaches the rate-limit
+      derivation at all). (Codex round 3 P1
+      regression test 2026-05-07.)
 
 Log line shape on failed login (binding):
   WARNING karasu.ui.auth: login failed (ip=<ip>)
@@ -1477,20 +1567,36 @@ audit. Anticipated shape (mirror of UI-12c §11.6 + Phase
    All comparisons constant-time (hmac.compare_digest).
    Codex round 1 P1 binding 2026-05-07.
 
-9. Trusted-client-IP derivation. Defence in depth:
+9. Trusted-client-IP derivation. Defence in depth
+   across THREE layers (Codex rounds 1+2+3 P1
+   bindings 2026-05-07):
    (a) docs/deploy-runbook.md proxy snippets MUST
-   overwrite (NOT append) inbound XFF/Forwarded —
-   `proxy_set_header X-Forwarded-For $remote_addr`
-   for nginx, caddy default. (b) The app parses the
-   chain RIGHT-TO-LEFT and returns the first IP NOT
-   in trusted_proxies (standard trusted-hop walk).
-   This survives operator misconfig with append-mode
-   nginx + a client-spoofed leftmost entry.
-   trusted_proxies under auth.trusted_proxies
-   (default ["127.0.0.1", "::1"]). Malformed chain /
-   all-trusted chain → fail-closed (no bypass).
-   Spoofed-chain regression test pinned. Codex round
-   1 + round 2 P1 binding 2026-05-07.
+       overwrite (NOT append) inbound XFF/Forwarded —
+       `proxy_set_header X-Forwarded-For $remote_addr`
+       for nginx, caddy default.
+   (b) The app parses the chain RIGHT-TO-LEFT and
+       walks until first IP NOT in trusted_proxies
+       (standard trusted-hop walk). Survives operator
+       misconfig with append-mode nginx + a
+       client-spoofed leftmost entry.
+   (c) UNTRUSTED-PEER GUARD: if peer is NOT in
+       trusted_proxies AND a Forwarded/XFF chain is
+       present, derive_client_ip returns the
+       UNTRUSTED_FORWARDED sentinel. NO localhost
+       bypass; fresh rate-limit slot keyed by the
+       peer addr. Closes the
+       `auth.trusted_proxies: []` typo path where
+       a localhost peer would otherwise self-promote
+       via attacker-supplied XFF.
+   Empty trusted_proxies + non-loopback bind →
+   startup refuses (exit 2). Malformed chain → fail-
+   closed. trusted_proxies default ["127.0.0.1",
+   "::1"]. Test surface pins direct localhost,
+   proxied public, proxied localhost, remote direct,
+   spoofed chain under append-mode proxy, multi-hop
+   trusted chain, empty trusted_proxies + public
+   XFF, untrusted peer + XFF, empty trusted_proxies
+   + non-loopback bind refusal.
 
 10. Per-CLIENT-IP rate-limit (post-derivation): 5
     failed attempts / 60 s → 429; backoff doubles
@@ -1726,8 +1832,40 @@ Codex audit:         Round 1 CHANGES-REQUIRED (6 P1 +
                      cross-site protection). 20 pins
                      total preserved.
 
-                     Round 3 audit prompt delivered to
-                     operator. Loop budget: 2/5
+                     Round 3: CHANGES-REQUIRED (1 P1).
+                     Addressed in-branch:
+                       P1 §3-G untrusted-peer + empty
+                          trusted_proxies edge. The
+                          algorithm returned peer_addr
+                          when peer not in
+                          trusted_proxies → if operator
+                          set `auth.trusted_proxies: []`
+                          while still running caddy /
+                          nginx on localhost, the peer
+                          (127.0.0.1) bypassed the
+                          rate-limit while attacker-
+                          supplied XFF was ignored.
+                          Fix: untrusted-peer guard —
+                          if peer is NOT in
+                          trusted_proxies AND a chain
+                          is present, return
+                          UNTRUSTED_FORWARDED sentinel
+                          → NO bypass + fresh slot
+                          keyed by peer_addr. Empty
+                          trusted_proxies + non-loopback
+                          bind → startup refuses
+                          (exit 2). Two new regression
+                          tests pinned (empty
+                          trusted_proxies + public
+                          XFF; untrusted peer + XFF).
+
+                     §11.6 anticipated pin 9 expanded
+                     into THREE layers: (a) proxy
+                     overwrite, (b) right-to-left walk,
+                     (c) untrusted-peer guard.
+
+                     Round 4 audit prompt delivered to
+                     operator. Loop budget: 3/5
                      consumed.
 Implementation:      BLOCKED on this brief's merge.
                      UI-13 code branch does NOT open

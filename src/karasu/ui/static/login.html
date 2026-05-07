@@ -1,12 +1,13 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Karasu — Sign in</title>
+  <title>Karasu</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#0d0f12">
+  <meta name="theme-color" content="#0a0a0b">
   <link rel="manifest" href="/assets/manifest.json">
-  <link rel="icon" type="image/png" href="/assets/icons/karasu-192.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/assets/icons/karasu-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="/assets/icons/karasu-512.png">
   <link rel="stylesheet" href="/assets/css/tokens.css">
   <link rel="stylesheet" href="/assets/css/reset.css">
   <link rel="stylesheet" href="/assets/css/base.css">
@@ -14,42 +15,81 @@
 </head>
 <body>
   <main class="login" data-login>
-    <img class="login-crow" src="/assets/crow/crow.svg" alt="" width="96" height="96">
-    <h1 class="login-title">Karasu</h1>
-    <p class="login-lede">Sign in to continue.</p>
-    <form id="login-form" class="login-form" method="post" action="/auth/login" novalidate>
-      <label for="username">Username</label>
-      <input id="username" name="username" type="text" autocomplete="username" required>
-      <label for="password">Password</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" required>
-      <button type="submit" class="login-submit">Sign in</button>
-      <p id="login-error" class="login-error" hidden>Could not sign in.</p>
+    <!-- Inline SVG mirror of /assets/crow/crow.svg so the
+         crow inherits currentColor from .login-crow without
+         the <img>-sandbox isolation that blanks the asset
+         in some Chromium setups. Source of truth:
+         static/crow/crow.svg — keep paths in sync. -->
+    <svg class="login-crow"
+         viewBox="0 0 72 72"
+         width="96"
+         height="96"
+         fill="currentColor"
+         role="img"
+         aria-label="Karasu">
+      <path d="m40.203,22s3.1218-9,11.4467-4c0,0,8.585.75,8.9753,3.375,0,0-7.9346,1.625-10.0159,5.625s3.1218,7-5.3331,15.625c0,0-4.0324,4.375-10.276,4.375,0,0-22,3-25,0"/>
+      <path d="m10.125,46.875s24.875-22.875,32.875-21.875,2,13.25-5.5,17.625-27.375,4.25-27.375,4.25Z"/>
+      <rect x="22" y="45" width="2" height="10"/>
+      <rect x="28" y="45" width="2" height="10"/>
+      <circle cx="49" cy="24" r="1.8" fill="#0a0a0b"/>
+    </svg>
+    <form id="login-form"
+          class="login-form"
+          method="POST"
+          action="/auth/login"
+          enctype="application/x-www-form-urlencoded"
+          novalidate>
+      <label class="login-label" for="username">Username</label>
+      <input class="login-input"
+             id="username"
+             name="username"
+             type="text"
+             autocomplete="username"
+             autocapitalize="off"
+             autocorrect="off"
+             spellcheck="false"
+             required
+             autofocus>
+      <label class="login-label" for="password">Password</label>
+      <input class="login-input"
+             id="password"
+             name="password"
+             type="password"
+             autocomplete="current-password"
+             required>
+      <button class="login-submit" type="submit">Enter</button>
+      <div id="login-error"
+           class="login-error"
+           role="alert"
+           aria-live="polite"
+           hidden>Could not sign in.</div>
     </form>
   </main>
   <script>
-    // Placeholder transport — chunk 5 ships the polished login.js
-    // with proper error rendering, focus management, and CSRF
-    // bootstrap. For now: convert the form to JSON, post, and
-    // reload on success.
+    // Brief §3-E lines 643-648: tiny inline handler that
+    // progressively enhances the form to fetch + replace the
+    // error slot text without a full reload. The form MUST
+    // also work with JS disabled — the server handles the
+    // urlencoded path verbatim (chunk 4 §3-E binding).
     (function () {
-      var form = document.getElementById("login-form");
-      var slot = document.getElementById("login-error");
-      if (!form) return;
-      form.addEventListener("submit", function (event) {
+      var form = document.getElementById('login-form');
+      var slot = document.getElementById('login-error');
+      if (!form || !slot) return;
+      form.addEventListener('submit', function (event) {
         event.preventDefault();
         slot.hidden = true;
         var fd = new FormData(form);
-        fetch("/auth/login", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
+        fetch('/auth/login', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            username: fd.get("username") || "",
-            password: fd.get("password") || ""
+            username: fd.get('username') || '',
+            password: fd.get('password') || ''
           })
         }).then(function (r) {
           if (r.ok) {
-            window.location.assign("/");
+            window.location.assign('/');
           } else {
             slot.hidden = false;
           }

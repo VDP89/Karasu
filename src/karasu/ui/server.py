@@ -1850,13 +1850,17 @@ class UIHandler(BaseHTTPRequestHandler):
     def _send_login_rerender(self) -> None:
         """Form-mode auth-failure path per brief §3-E:
         200 + login.html re-render with the error slot
-        populated. Done via byte-replace on the static file
-        so the placeholder login.html and the chunk-5 polish
-        both work without a templating engine."""
+        populated. Strips the standalone ``hidden`` boolean
+        attribute from the ``id="login-error"`` element via
+        regex so the chunk-5 multi-line attribute layout
+        (and any future re-formatting) keeps working without
+        a templating engine."""
         html = (STATIC_DIR / "login.html").read_bytes()
-        html = html.replace(
-            b'class="login-error" hidden',
-            b'class="login-error"',
+        html = re.sub(
+            rb'(id="login-error"[^>]*?)\s+hidden(\s|>)',
+            rb"\1\2",
+            html,
+            count=1,
         )
         self._send(200, html, "text/html; charset=utf-8")
 
@@ -2140,7 +2144,12 @@ def run_ui_server(
             push_store_path=push_store_path,
         )
     server = ThreadingHTTPServer((host, port), UIHandler)
-    print(f"karasu ui → http://{host}:{port}")
+    # ASCII arrow + UTF-8 stdout reconfigure: Windows console
+    # default cp1252 cannot encode the U+2192 right-arrow, so a
+    # plain operator running ``karasu ui`` on a stock terminal
+    # crashed at startup. Same scar shape as
+    # feedback_subprocess_text_utf8 from the Karasu UI-9.1 work.
+    print(f"karasu ui -> http://{host}:{port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

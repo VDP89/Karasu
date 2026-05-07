@@ -234,21 +234,24 @@ def test_get_root_serves_login_when_no_session(auth_http) -> None:
     host, port, _ = auth_http
     status, body, headers, _ = _request(host, port, "/")
     assert status == 200
-    assert b"login-form" in body  # placeholder login.html shipped
-    # Should NOT be the index/PWA shell.
-    assert b"design-system" not in body or True  # weak; use a stronger marker:
-    assert b"<title>Karasu \xe2\x80\x94 Sign in</title>" in body
+    assert b"login-form" in body  # form id from login.html
+    # Brief §3-E: minimal title, no marketing copy. Chunk 5
+    # polished the placeholder away from the em-dash variant.
+    assert b"<title>Karasu</title>" in body
+    # Inline SVG hero crow is the source-of-truth marker that
+    # the polished login surface (chunk 5) is being served.
+    assert b'class="login-crow"' in body
 
 
 def test_anonymous_assets_reachable(auth_http) -> None:
-    """The anonymous whitelist + the existing asset routing
-    cover these paths. (/assets/icons/* and /assets/crow/* are
-    referenced from manifest.json + sw.js + login.html but
-    routed under STATIC_DIR/assets/* via a separate path the
-    chunk-4 wiring does NOT touch — they're tested at the
-    perimeter primitive level in test_auth_middleware.py and
-    will get HTTP-level coverage when the routing inconsistency
-    is fixed in a follow-up.)"""
+    """Chunk 5 routing fix: icons/ + crow/ moved out of
+    static/assets/ → static/icons/ + static/crow/, aligning
+    the on-disk layout with the /assets/* URL strip. The
+    brief §3-D + §3-H EXACT whitelist covers karasu-192.png
+    (PWA primary icon + login favicon) and crow.svg (login
+    hero). karasu-512.png + crow-flight.svg are NOT in the
+    anonymous set per the brief — they're only reached
+    post-auth from the PWA shell."""
     host, port, _ = auth_http
     for path in (
         "/assets/css/login.css",
@@ -257,9 +260,26 @@ def test_anonymous_assets_reachable(auth_http) -> None:
         "/assets/css/base.css",
         "/assets/sw.js",
         "/assets/manifest.json",
+        "/assets/icons/karasu-192.png",
+        "/assets/crow/crow.svg",
     ):
         status, _, _, _ = _request(host, port, path)
         assert status == 200, path
+
+
+def test_post_auth_only_assets_redirect_without_session(auth_http) -> None:
+    """karasu-512.png + crow-flight.svg are real files post
+    chunk-5 routing fix, but they live OUTSIDE the §3-D
+    anonymous whitelist — the auth perimeter must still
+    redirect a no-session GET to /."""
+    host, port, _ = auth_http
+    for path in (
+        "/assets/icons/karasu-512.png",
+        "/assets/crow/crow-flight.svg",
+    ):
+        status, _, headers, _ = _request(host, port, path)
+        assert status == 302, path
+        assert headers.get("location") == "/"
 
 
 # ---------------------------------------------------------------------------
@@ -840,6 +860,27 @@ def test_form_login_success_returns_302_with_cookies(auth_http) -> None:
     assert _extract_cookie(set_cookies, CSRF_COOKIE_NAME)
 
 
+def _error_slot_visible(body: bytes) -> bool:
+    """Decide whether the re-rendered login.html shows the
+    error slot. Searches for the ``id="login-error"`` element
+    and confirms a standalone ``hidden`` boolean attribute is
+    NOT present inside its opening tag.
+
+    Resilient to multi-line attribute formatting (chunk-5
+    polish) and to attribute reorderings."""
+    import re
+
+    match = re.search(
+        rb'<\w+[^>]*\bid="login-error"[^>]*?>',
+        body,
+        flags=re.DOTALL,
+    )
+    if not match:
+        return False
+    open_tag = match.group(0)
+    return not re.search(rb"(?:^|\s)hidden(\s|>)", open_tag)
+
+
 def test_form_login_wrong_password_returns_200_rerender(auth_http) -> None:
     """Form auth-failure → 200 + login.html re-rendered with
     the error slot visible. JSON 401 path is reserved for the
@@ -849,11 +890,10 @@ def test_form_login_wrong_password_returns_200_rerender(auth_http) -> None:
     assert status == 200
     assert headers.get("content-type", "").startswith("text/html")
     assert b"login-form" in body  # re-rendered login surface
-    # The error slot was hidden in the placeholder; the
-    # re-render must remove the `hidden` attribute on the
-    # ``class="login-error"`` element.
-    assert b'class="login-error" hidden' not in body
-    assert b'class="login-error"' in body
+    # The error slot was hidden in the rendered login.html;
+    # the re-render must strip the `hidden` attribute on the
+    # ``id="login-error"`` element so the message shows.
+    assert _error_slot_visible(body)
     # No cookies set on failure.
     assert set_cookies == []
 
@@ -862,8 +902,16 @@ def test_form_login_unknown_username_returns_200_rerender(auth_http) -> None:
     host, port, _ = auth_http
     status, body, _, _ = _form_login(host, port, username="someone-else")
     assert status == 200
-    assert b'class="login-error"' in body
-    assert b'class="login-error" hidden' not in body
+    assert _error_slot_visible(body)
+
+
+def test_login_pristine_render_keeps_error_hidden(auth_http) -> None:
+    """Sanity check on the helper: GET / with no session
+    serves login.html with the error slot HIDDEN (the
+    operator hasn't tried to log in yet)."""
+    host, port, _ = auth_http
+    _, body, _, _ = _request(host, port, "/")
+    assert not _error_slot_visible(body)
 
 
 def test_form_login_missing_username_returns_422(auth_http) -> None:

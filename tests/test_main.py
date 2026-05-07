@@ -346,3 +346,125 @@ def test_cli_ui_push_store_explicit_overrides_default(
     cmd_ui(args)
 
     assert captured["push_store_path"] == explicit
+
+
+# ---------------------------------------------------------------------------
+# UI-12c — cmd_watch fatal preflight on malformed push store
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_watch_exits_non_zero_on_malformed_push_store(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex P1 round 1 (UI-12c code audit) + brief §3-F:
+    a malformed push subscription store at startup must
+    produce non-zero exit + loud generic stderr + bus tail
+    untouched + no path/key/raw endpoint material in the
+    message. The controller's run loop MUST NOT start.
+
+    The contract distinguishes ``karasu watch`` (NOT an HTTP
+    context) from the UI server's HTTP 500 generic-body
+    contract: stderr message, exit code 2, no controller
+    spin-up.
+    """
+    from karasu.__main__ import build_parser, cmd_watch
+
+    # Sentinel-bearing corruption — path + endpoint-shaped
+    # tokens we assert do NOT leak into stderr.
+    bus_dir = tmp_path / "anchor"
+    bus_dir.mkdir()
+    bus_path = bus_dir / "events.jsonl"
+    push_store = bus_dir / "karasu-push.json"
+    push_store.write_text(
+        "{ malformed json with SENTINEL_LEAK_PATH /secret/path",
+        encoding="utf-8",
+    )
+
+    config_path = tmp_path / "karasu.yaml"
+    config_path.write_text(
+        f"event_bus:\n  path: {bus_path}\n",
+        encoding="utf-8",
+    )
+
+    # Sentinel: assert the controller never reaches
+    # ``run_forever``. If the preflight failed to gate, we'd
+    # block here forever; instead we monkeypatch so a
+    # regression surfaces as a test failure rather than a
+    # hang.
+    reached_run_forever: list[bool] = []
+
+    def fake_run_forever(*_: object, **__: object) -> None:
+        reached_run_forever.append(True)
+
+    from karasu.controller.loop import LoopController
+
+    monkeypatch.setattr(
+        LoopController, "run_forever", fake_run_forever
+    )
+
+    parser = build_parser()
+    args = parser.parse_args(["--config", str(config_path), "watch"])
+    exit_code = cmd_watch(args)
+
+    captured = capsys.readouterr()
+
+    # Non-zero exit (brief §3-F + Codex P1 round 1).
+    assert exit_code == 2
+
+    # Controller never spun up.
+    assert reached_run_forever == []
+
+    # Loud, generic stderr — no path leak, no JSON content
+    # leak, no sentinel.
+    assert "error:" in captured.err
+    assert "malformed" in captured.err
+    assert "SENTINEL_LEAK_PATH" not in captured.err
+    assert str(push_store) not in captured.err
+    assert "/secret/path" not in captured.err
+
+    # Bus path untouched (bus file does not exist; the
+    # controller never created it).
+    assert not bus_path.exists()
+
+
+def test_cmd_watch_succeeds_on_clean_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sanity counterpart: a clean (or absent) push store
+    lets ``cmd_watch`` proceed to ``run_forever``. The
+    bootstrap is idempotent on the missing-store path
+    (auto-generates a VAPID keypair)."""
+    from karasu.__main__ import build_parser, cmd_watch
+
+    bus_dir = tmp_path / "anchor"
+    bus_dir.mkdir()
+    bus_path = bus_dir / "events.jsonl"
+
+    config_path = tmp_path / "karasu.yaml"
+    config_path.write_text(
+        f"event_bus:\n  path: {bus_path}\n",
+        encoding="utf-8",
+    )
+
+    reached: list[bool] = []
+
+    def fake_run_forever(*_: object, **__: object) -> None:
+        reached.append(True)
+
+    from karasu.controller.loop import LoopController
+
+    monkeypatch.setattr(
+        LoopController, "run_forever", fake_run_forever
+    )
+
+    parser = build_parser()
+    args = parser.parse_args(["--config", str(config_path), "watch"])
+    exit_code = cmd_watch(args)
+
+    assert exit_code == 0
+    assert reached == [True]
+    # Bootstrap should have populated the store.
+    push_store = bus_dir / "karasu-push.json"
+    assert push_store.exists()

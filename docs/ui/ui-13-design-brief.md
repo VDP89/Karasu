@@ -21,9 +21,10 @@
 > contract: exact mechanisms, file shapes, test surface,
 > §11.6 pins specific to the remote-frontier code chunk.
 >
-> **STATUS:** DRAFT — operator sign-off pending on §3
-> (A-H) + §3.5 + §10 markers.
-> Codex audit: pending.
+> **STATUS:** Operator sign-off pending. Codex audit
+> round 1 closed (CHANGES-REQUIRED, 6 P1 + 1 P2, no
+> P0; all seven addressed in-branch). Round 2 audit
+> prompt delivered to operator. Loop budget: 1/5.
 
 ## 0 · Why this brief exists
 
@@ -275,12 +276,55 @@ Bootstrap CLI: `karasu auth set-credentials` (NEW
 subcommand). Prompts for username + password (no
 echo), generates a fresh signing secret, writes
 karasu-auth.json. Default config dir is the same as
-karasu-push.json (next to events.jsonl).
+karasu-push.json (next to events.jsonl). Stdin-pipe
+fallback supported for ops automation without a TTY
+(documented in docs/deploy-runbook.md).
 
-Manual seed: documented in docs/deploy-runbook.md as
-the alternative for ops automation that doesn't have
-a TTY (prompted-password fallback breaks under
-cron / systemd).
+FAIL-CLOSED STARTUP CONTRACT (Codex round 1 P1
+binding, 2026-05-07):
+
+  When `karasu ui` starts in deployed posture (auth
+  enabled is the default; --no-auth dev flag is
+  documented for localhost iteration only), the
+  startup MUST refuse to bind the listener if any of:
+
+    * karasu-auth.json absent.
+    * karasu-auth.json malformed (invalid JSON,
+      non-object root, missing required fields).
+    * karasu-auth.json present with mode looser than
+      0600 on POSIX (Windows advisory-mode warning per
+      UI-12b loud-stderr shape; deployed posture on
+      Windows STILL refuses to start until the file
+      is at least owner-only via icacls).
+    * password_hash field absent / wrong shape /
+      empty.
+    * session_signing_secret absent / decode-fails-
+      base64 / shorter than 32 bytes.
+    * credentials_generation absent / not an int /
+      negative.
+
+  On any failure: print a generic stderr message
+  ("error: karasu auth credentials are missing or
+  malformed; refusing to start. See
+  docs/deploy-runbook.md for bring-up.") + non-zero
+  exit code (2). NO secret material in the message.
+  NO file path in the message (the operator already
+  knows the conventional location). NO fallback
+  anonymous shell — the deployed posture refuses
+  rather than silently serving the bus to anonymous
+  visitors.
+
+  Localhost `--no-auth` dev flag (NEW; chunk brief
+  reserves; default OFF) bypasses the auth gate
+  entirely for localhost iteration. The flag emits
+  a loud-stderr "AUTH DISABLED — dev only, NOT for
+  production" warning at startup. NEVER set in any
+  documented deploy-runbook.md path.
+
+  Mirrors the UI-12c §3-F bootstrap-fatal pattern
+  (PushStoreError → cmd_watch returns 2 with generic
+  stderr) — auth is the same shape: malformed-store
+  → fatal startup, no quiet fallback.
 ```
 
 [NEEDS OPERATOR SIGN-OFF]
@@ -330,13 +374,28 @@ Rotation seams (see §3-B):
 Validation order (binding):
   1. Parse cookie value as JSON.
   2. Verify HMAC signature against current
-     session_signing_secret.
+     session_signing_secret. Comparison MUST use
+     hmac.compare_digest (constant-time; Codex round 1
+     P2 binding 2026-05-07). Plain `==` comparison
+     leaks signature timing and is a regression.
   3. Check `gen` matches current credentials_generation.
   4. Check `exp > now` (clock skew margin: 60 s).
   5. If all four pass, request is authenticated as
      `user`.
   Any single failure → unauthenticated path (login
   page for GET /, 401 + generic body for /api/*).
+
+Constant-time compare discipline (binding; Codex
+round 1 P2 2026-05-07): every comparison of auth
+material in this brief uses hmac.compare_digest:
+  * Session cookie HMAC verification (this section).
+  * scrypt password hash comparison on login (§3-G).
+  * CSRF cookie nonce.sig vs X-Karasu-CSRF header
+    comparison + cookie sig re-verification (§3-F).
+The brief already pins timing parity for the
+no-username branch; constant-time comparisons close
+the same class of leak for valid-user wrong-password
++ tampered-cookie + replayed-CSRF paths.
 ```
 
 [NEEDS OPERATOR SIGN-OFF]
@@ -348,25 +407,62 @@ new `src/karasu/ui/_auth.py` module the chunk picks)
 runs BEFORE every request handler:
 
 ```text
-ANONYMOUS PATHS (whitelisted; transport-agnostic):
+URL CONTRACT (Codex round 1 P1 binding 2026-05-07):
+The brief uses the EXISTING /assets/* namespace from
+UI-0..UI-12c verbatim. No new namespace, no aliased
+routes. The login page links the SAME tokens.css /
+reset.css / base.css under /assets/css/* + adds
+/assets/css/login.css. The manifest stays at
+/assets/manifest.json. The SW stays at /assets/sw.js.
+
+ANONYMOUS PATHS (whitelisted; transport-agnostic;
+EXACT set):
   GET /                          → if no session, render
-                                   login.html;
+                                   login.html (inline);
                                    if session, render the
-                                   PWA shell.
-  GET /assets/login.css
-  GET /assets/icons/favicon.ico
-  GET /assets/icons/karasu-192.png   (manifest icon)
-  GET /manifest.webmanifest
-  GET /assets/crow/crow.svg          (rendered in login)
-  GET /assets/fonts/inter-display-*.woff2
-                                     (login uses the
-                                      design-system tokens)
-  POST /auth/login
-  POST /auth/logout                  (idempotent — clears
-                                      cookie + redirects
-                                      to /)
-  GET /sw.js                          (anonymous BUT see
-                                      §3-G SW scope)
+                                   PWA shell (existing
+                                   index.html).
+  GET /assets/css/login.css      (NEW file UI-13 ships)
+  GET /assets/css/tokens.css     (existing UI-2)
+  GET /assets/css/reset.css      (existing UI-2)
+  GET /assets/css/base.css       (existing UI-2)
+  GET /assets/icons/karasu-192.png   (manifest icon;
+                                      also rendered as
+                                      login crow if
+                                      crow.svg disabled)
+  GET /assets/crow/crow.svg          (rendered in login
+                                      hero)
+  GET /assets/fonts/*.woff2          (login uses
+                                      design-system
+                                      tokens; entire
+                                      fonts directory
+                                      stays anonymous)
+  GET /assets/manifest.json          (browser PWA
+                                      install prompt
+                                      discovery; macro
+                                      §3-C item 2
+                                      binding)
+  GET /assets/sw.js                  (anonymous BUT see
+                                      §3-H SW scope —
+                                      pre-auth cache
+                                      strictly limited)
+  POST /auth/login                   (CSRF-cookie-exempt
+                                      per §3-F; Origin
+                                      check enforced)
+  GET /auth/logout                   (idempotent;
+                                      clears cookie +
+                                      redirects to /;
+                                      see Logout
+                                      section below)
+
+NOTE: a favicon route (/favicon.ico OR
+/assets/icons/favicon.ico) is NOT in the existing
+codebase. UI-13 either ships a favicon at
+/assets/icons/favicon.ico (added to the whitelist if
+shipped) or omits it (browsers gracefully 404). The
+chunk brief picks at code time; the macro pin
+enforces the EXACT set, so adding/removing the
+favicon path is a brief amendment.
 
 EVERY OTHER PATH:
   Requires a valid session per §3-C.
@@ -377,6 +473,24 @@ EVERY OTHER PATH:
   POST/PUT/DELETE with session BUT failing CSRF
     (§3-F) → 403 + generic body
                    {"error":"forbidden"}.
+
+LOGOUT split (Codex round 1 P1 binding 2026-05-07):
+  GET  /auth/logout — idempotent, anonymous, clears
+                      session + csrf cookies via
+                      Set-Cookie Max-Age=0 + redirects
+                      to /. Safe for browser back-button
+                      navigation, link-clicks, and
+                      no-session calls.
+  POST /auth/logout — auth-required + CSRF-required. For
+                      explicit JS-driven logout from the
+                      PWA shell. The frontend's logout
+                      affordance uses POST so the
+                      operator's intent is unambiguous;
+                      GET stays as the recovery /
+                      idempotent shape.
+  Both clear the cookies; only the POST shape requires
+  a valid session + CSRF (so a stray GET on a stale tab
+  cannot be forced by a malicious link in another tab).
 
 This perimeter implements Phase 4 macro §3-C item 1
 (transport-agnostic) + item 2 (anonymous reachability
@@ -398,12 +512,11 @@ HTTP server when GET / arrives without a valid session:
   <head>
     <meta charset="utf-8">
     <title>Karasu</title>
-    <link rel="stylesheet" href="/static/css/tokens.css">
-    <link rel="stylesheet" href="/static/css/reset.css">
-    <link rel="stylesheet" href="/static/css/base.css">
-    <link rel="stylesheet" href="/static/css/login.css">
-    <link rel="manifest" href="/manifest.webmanifest">
-    <link rel="icon" href="/assets/icons/favicon.ico">
+    <link rel="stylesheet" href="/assets/css/tokens.css">
+    <link rel="stylesheet" href="/assets/css/reset.css">
+    <link rel="stylesheet" href="/assets/css/base.css">
+    <link rel="stylesheet" href="/assets/css/login.css">
+    <link rel="manifest" href="/assets/manifest.json">
   </head>
   <body>
     <main class="login">
@@ -462,42 +575,79 @@ re-render with error slot populated on failure).
 
 ### F) CSRF mechanism
 
-PROPOSAL — **signed double-submit cookie + Origin /
-Referer check** for every mutating request on every
-transport:
+PROPOSAL — **signed double-submit cookie + strict
+Origin/Referer check** for every mutating request on
+every transport. The "signed" word is intentional and
+binding: the cookie carries a value derived from the
+session signing secret, NOT just a random token (Codex
+round 1 P1 binding 2026-05-07).
 
 ```text
 On login success, server sets a SECOND cookie:
   Cookie name: karasu_csrf
-  Value:       <32-byte random b64url-no-pad>
+  Value:       <nonce>.<sig>
+                 where:
+                   nonce = 32 bytes os.urandom, b64url-
+                           no-pad (43 chars)
+                   sig   = HMAC-SHA256(
+                             session_signing_secret,
+                             b"csrf:" + nonce_bytes +
+                             b"|user:" +
+                             username.encode("utf-8") +
+                             b"|gen:" + str(gen).encode()
+                           ) → b64url-no-pad
   Attributes:  Secure (when TLS), SameSite=Strict, Path=/
                NOT HttpOnly (the JS layer needs to read
                it to attach as a header).
 
-Mutating request validation (POST/PUT/DELETE):
+The signed shape (a) binds the CSRF token to the
+current session's signing secret + user + credentials
+generation, so a token leaked via JS errors or DOM
+inspection cannot be replayed against a different
+session, and (b) credentials_generation rotation
+invalidates every CSRF token in the wild atomically
+along with sessions.
+
+Mutating request validation (POST/PUT/DELETE on every
+transport):
   1. Origin header MUST equal the configured public
-     origin (or be absent for same-origin browsers
-     that strip it on same-origin POSTs — chunk brief
-     picks the exact policy; default is "Origin must
-     match OR be absent").
+     origin in deployed posture. Referer fallback ONLY
+     if Origin is absent. Both absent → 403, NO
+     fallback. Default deployed posture rejects
+     absent-Origin; the localhost dev posture
+     (--no-auth flag from §3-B OR direct 127.0.0.1
+     traffic with no Forwarded) MAY accept absent-
+     Origin as the explicit dev/legacy fallback,
+     loud-stderr-warned at startup.
   2. The request MUST carry header
-       X-Karasu-CSRF: <value>
-     equal to the karasu_csrf cookie value.
-  3. The session cookie MUST be valid per §3-C.
-  4. All three checks pass → request proceeds.
+       X-Karasu-CSRF: <nonce>.<sig>
+     equal to the karasu_csrf cookie value, compared
+     via hmac.compare_digest (constant-time, see §3-G
+     log discipline + Codex round 1 P2 binding).
+  3. The cookie's signature MUST verify against the
+     CURRENT session_signing_secret + the session's
+     username + gen. Verification uses
+     hmac.compare_digest.
+  4. The session cookie MUST be valid per §3-C.
+  5. All four checks pass → request proceeds.
      Any failure → 403 + generic body.
 
 Bootstrap (login itself is mutating):
   POST /auth/login is exempt from the karasu_csrf
-  cookie check (the cookie doesn't exist yet) but
-  enforces the Origin header check. SameSite=Strict
-  on session+csrf cookies after login means
-  third-party origins cannot ride existing sessions.
+  cookie check (the cookie doesn't exist pre-login)
+  but enforces the strict Origin/Referer check above.
+  SameSite=Strict on session+csrf cookies after login
+  means third-party origins cannot ride existing
+  sessions. The login form's HTML submission carries
+  Origin natively from same-origin browsers; an
+  absent-Origin pre-login POST in deployed posture
+  is rejected (matches deployed-posture mutating
+  default).
 
 Frontend: the inline JS in static/index.html that
 handles fetch()-based POSTs to /api/* (UI-12b push.js
 is the canonical example) is updated to read the
-karasu_csrf cookie + attach it as the
+karasu_csrf cookie + attach it verbatim as the
 X-Karasu-CSRF header.
 
 Frontend regression: every existing UI-10/UI-11/UI-12b
@@ -530,8 +680,8 @@ Login failure response (binding):
     to the wrong-password branch (test pinned).
 
 Rate-limit / backoff (binding):
-  Per-IP: max 5 failed login attempts per 60 s; 6th
-          attempt → 429 + generic body
+  Per-CLIENT-IP: max 5 failed login attempts per 60 s;
+          6th attempt → 429 + generic body
           {"error":"too many attempts"}; backoff
           window doubles on each subsequent burst
           (cap at 1 hour).
@@ -540,9 +690,57 @@ Rate-limit / backoff (binding):
           return 429 for the same backoff window.
   In-memory only; restart-cleared by design (mirror
   of UI-12c pin §11.6.5 dedupe ring).
-  Bypass: localhost requests (127.0.0.1 / ::1) skip
-          the rate-limit entirely so dev iteration
-          isn't blocked.
+
+Trusted-client-IP derivation (Codex round 1 P1
+binding 2026-05-07):
+
+  The reverse-proxy production posture (caddy/nginx
+  on 127.0.0.1) means the TCP peer address is ALWAYS
+  127.0.0.1 in deployed mode. A naive "peer ==
+  127.0.0.1 → bypass rate-limit" rule would let
+  EVERY public login attempt skip protection. The
+  rate-limit MUST derive the client IP correctly:
+
+    1. If the TCP peer is 127.0.0.1 / ::1 AND
+       the request carries no Forwarded /
+       X-Forwarded-For header → DIRECT LOCALHOST.
+       Bypass rate-limit (true dev iteration).
+    2. If the TCP peer is in the trusted-proxy
+       allowlist (default: 127.0.0.1 / ::1; chunk
+       brief allows widening for split-host caddy
+       layouts), the client IP is derived from
+       the LEFTMOST entry of the Forwarded header's
+       `for=` directive (RFC 7239) OR
+       X-Forwarded-For. The DERIVED IP is the
+       rate-limit key. Bypass applies ONLY if the
+       derived IP itself is also localhost
+       (127.0.0.1 / ::1) — i.e. the operator is
+       running both caddy and a browser on the
+       same dev box.
+    3. If the TCP peer is anything else (direct
+       remote connection, no proxy) → use the
+       peer address as the client IP. No bypass.
+    4. Malformed Forwarded / X-Forwarded-For (no
+       parseable IP) → fail-closed: treat as a
+       remote client with NO bypass + a fresh
+       rate-limit slot (the conservative posture).
+
+  Trusted-proxy list lives in karasu.yaml under
+    auth.trusted_proxies: ["127.0.0.1", "::1"]
+  Default is the localhost pair. Operators with a
+  remote caddy host add the proxy IP explicitly;
+  the chunk brief documents the threat model
+  (proxy-host compromise = full bypass).
+
+  Test surface (binding):
+    * Direct 127.0.0.1 with no Forwarded → bypass.
+    * 127.0.0.1 peer + Forwarded for=192.0.2.5 →
+      192.0.2.5 is the rate-limit key; NO bypass.
+    * 127.0.0.1 peer + Forwarded for=127.0.0.1 →
+      bypass (caddy + browser on same box).
+    * Remote peer with no proxy in the trusted
+      list → peer address keys; NO bypass.
+    * Malformed Forwarded → no bypass; fresh slot.
 
 Log line shape on failed login (binding):
   WARNING karasu.ui.auth: login failed (ip=<ip>)
@@ -601,6 +799,59 @@ Post-auth SW scope (binding):
   On logout, the page sends {type: "auth:revoked"}.
   The SW clears the post-auth cache and reverts to
   the pre-auth cache.
+
+Post-auth cache revocation (Codex round 1 P1 binding
+2026-05-07):
+
+  Sessions can become invalid WITHOUT an explicit
+  logout postMessage (cookie expiry, credentials_
+  generation rotation, ops-side credential rewrite).
+  A post-auth cache that survives those events would
+  keep serving the bus-capable shell to a browser
+  the server already considers unauthenticated.
+
+  Two binding mechanisms:
+
+    1. Navigation network-first for `/`. The SW
+       fetch handler MUST treat GET / as
+       network-first (hit the server, fall back to
+       cache only on offline). The server's auth
+       middleware redirects an expired/gen-mismatch
+       session to the login render; the network-
+       first behaviour means the redirect lands at
+       the page rather than being masked by the
+       cached app shell.
+
+    2. SW + page revocation on auth-failure
+       responses. When ANY fetch from the page
+       returns 401 OR a redirect to /auth (i.e. the
+       server signals "your session is no longer
+       valid"), the page sends
+       {type: "auth:revoked"} to the SW. The SW
+       clears the post-auth cache + reverts to the
+       pre-auth cache. The page reloads to /, which
+       now renders login.
+
+    Both layers compose: network-first for / catches
+    navigation-time expiry; the auth-failure
+    revocation catches mid-session expiry on /api/*
+    fetches. Restart of the karasu watch / karasu ui
+    process does NOT need to clear post-auth cache
+    automatically; the next /api/* fetch on the
+    operator's tab triggers the revocation flow.
+
+  Test surface (binding):
+    * Cookie present + expired exp → next fetch to
+      / network-fetches; server redirects; cache
+      reverts.
+    * Cookie present + gen mismatch → next /api/*
+      call returns 401; page postMessages
+      auth:revoked; cache clears.
+    * Logout POST → page postMessages auth:revoked
+      explicitly + cache clears (existing path).
+    * Offline + valid cookie → cache serves
+      post-auth shell normally (network-first
+      degrades gracefully).
 
 Cache-name discipline:
   CACHE_NAME pre-auth: "karasu-ui-login-v13"
@@ -1026,9 +1277,10 @@ audit. Anticipated shape (mirror of UI-12c §11.6 + Phase
    N=16384 / r=8 / p=1 binding.
 
 3. Sessions are signed cookies (stdlib hmac +
-   secrets). Validation order: parse → HMAC verify →
-   gen match → exp check (60 s clock skew margin) →
-   pass. Any failure → unauthenticated.
+   secrets). Validation order: parse → HMAC verify
+   (constant-time hmac.compare_digest) → gen match →
+   exp check (60 s clock skew margin) → pass.
+   Any failure → unauthenticated.
 
 4. Cookie attributes binding: HttpOnly, Secure (when
    TLS detected), SameSite=Strict, Path=/, Max-Age
@@ -1039,29 +1291,61 @@ audit. Anticipated shape (mirror of UI-12c §11.6 + Phase
    middleware rejects gen mismatch). No DB-backed
    per-session revocation in UI-13.
 
-6. Anonymous path whitelist is the EXACT set in §3-D.
-   Adding a path requires a chunk brief amendment.
+6. Anonymous path whitelist is the EXACT set in §3-D
+   under the existing /assets/* namespace. URL
+   contract: /assets/css/login.css (NEW), existing
+   /assets/css/{tokens,reset,base}.css,
+   /assets/manifest.json, /assets/sw.js,
+   /assets/crow/crow.svg, /assets/icons/karasu-192.png,
+   /assets/fonts/*.woff2, plus GET / + POST
+   /auth/login + GET /auth/logout. POST /auth/logout
+   is auth+CSRF-required and NOT in the anon
+   whitelist (Codex round 1 P1 binding).
 
 7. Login failure response is generic ("Could not
    sign in.") + dummy scrypt verification on the
-   no-username branch for timing parity. No
-   username / hash / secret in any log line. Failed-
-   auth log: WARNING with IP + generic marker.
+   no-username branch for timing parity. scrypt
+   hash comparison is constant-time
+   (hmac.compare_digest, Codex round 1 P2 binding).
+   No username / hash / secret in any log line.
+   Failed-auth log: WARNING with derived client IP +
+   generic marker.
 
-8. CSRF mechanism is signed double-submit cookie
-   (karasu_csrf, NOT HttpOnly, SameSite=Strict) +
-   Origin header check. Every mutating route on
-   every transport requires both. POST /auth/login
-   exempt from cookie check (cookie doesn't exist
-   pre-login) but enforces Origin.
+8. CSRF mechanism is SIGNED double-submit cookie
+   (karasu_csrf value = nonce.sig where sig =
+   HMAC-SHA256(session_signing_secret,
+   "csrf:"||nonce||"|user:"||username||"|gen:"||gen);
+   NOT HttpOnly, SameSite=Strict) + strict
+   Origin/Referer match check. Every mutating route
+   on every transport requires both. POST
+   /auth/login is exempt from the CSRF cookie check
+   (cookie doesn't exist pre-login) but enforces
+   the Origin/Referer match in deployed posture.
+   Absent-Origin + absent-Referer → 403 by default;
+   only the localhost dev posture (--no-auth flag
+   OR direct 127.0.0.1 traffic with no Forwarded)
+   accepts absent-Origin (loud-stderr-warned).
+   All comparisons constant-time (hmac.compare_digest).
+   Codex round 1 P1 binding 2026-05-07.
 
-9. Per-IP rate-limit: 5 failed attempts / 60 s →
-   429; backoff doubles per burst (cap 1 hour).
-   Per-credentials: 10 failed / 5 min. Localhost
-   bypass for dev iteration. In-memory only;
-   restart-cleared.
+9. Trusted-client-IP derivation. The reverse-proxy
+   posture means peer addr is always 127.0.0.1 in
+   deployed mode; rate-limit MUST derive client IP
+   correctly. Direct 127.0.0.1 + no Forwarded →
+   bypass. 127.0.0.1 + Forwarded for=<remote> → use
+   <remote> as rate-limit key (NO bypass unless
+   <remote> itself is localhost). Trusted-proxy
+   list under auth.trusted_proxies in karasu.yaml
+   (default ["127.0.0.1", "::1"]). Malformed
+   Forwarded → fail-closed (no bypass). Codex round
+   1 P1 binding 2026-05-07.
 
-10. SW pre-auth cache shape is the EXACT set in
+10. Per-CLIENT-IP rate-limit (post-derivation): 5
+    failed attempts / 60 s → 429; backoff doubles
+    per burst (cap 1 hour). Per-credentials: 10
+    failed / 5 min. In-memory only; restart-cleared.
+
+11. SW pre-auth cache shape is the EXACT set in
     §3-H ("Cached assets pre-auth"). The PWA app
     shell + UI-12b push.js + UI-10/UI-11 modals are
     NOT pre-cached. Post-auth swap on
@@ -1070,26 +1354,61 @@ audit. Anticipated shape (mirror of UI-12c §11.6 + Phase
     "karasu-ui-login-v13" pre-auth + "karasu-ui-v13"
     post-auth.
 
-11. UI-13 emits NO bus events. Auth events live in
+12. Post-auth cache revocation paths beyond explicit
+    logout: (a) navigation network-first for `/` so
+    the server's expiry/gen-mismatch redirect lands
+    at the operator's tab; (b) page sends
+    auth:revoked postMessage on any 401 OR
+    redirect-to-/auth response from /api/*.
+    Test surface pins expired cookie + gen mismatch
+    + offline + logout paths. Codex round 1 P1
+    binding 2026-05-07.
+
+13. UI-13 emits NO bus events. Auth events live in
     server logs only.
 
-12. Frontend CSRF header attach: every existing
+14. Frontend CSRF header attach: every existing
     UI-10 / UI-11 / UI-12b mutating call MUST attach
     X-Karasu-CSRF. Test surface pins each by hand.
 
-13. Bootstrap CLI: `karasu auth set-credentials`.
+15. Bootstrap CLI: `karasu auth set-credentials`.
     Prompted-password fallback for ops automation
     via stdin pipe; documented in deploy-runbook.
 
-14. cryptography import scope (UI-12c §11.6.13)
+16. Fail-closed startup: deployed `karasu ui` refuses
+    to bind the listener if karasu-auth.json is
+    absent / malformed / wrong-mode / partial.
+    Generic stderr + exit 2 + no anonymous fallback.
+    Localhost --no-auth dev flag is the ONLY bypass;
+    loud-stderr "AUTH DISABLED — dev only" warning
+    at startup. Mirrors UI-12c §3-F bootstrap fatal.
+    Codex round 1 P1 binding 2026-05-07.
+
+17. Logout split: GET /auth/logout is anonymous +
+    idempotent (cookie clear + redirect). POST
+    /auth/logout is auth+CSRF-required (the JS
+    affordance from the PWA shell). Both clear
+    cookies; only POST asserts operator intent.
+    Codex round 1 P1 binding 2026-05-07.
+
+18. Constant-time compare discipline. Every
+    comparison of auth material — session HMAC,
+    scrypt password hash, CSRF cookie nonce.sig vs
+    header, CSRF cookie sig re-verification — uses
+    hmac.compare_digest. Plain `==` on auth material
+    is a regression. Codex round 1 P2 binding
+    2026-05-07.
+
+19. cryptography import scope (UI-12c §11.6.13)
     NOT extended. UI-13 uses stdlib hashlib + hmac +
     secrets + ssl exclusively.
 
-15. docs/deploy-runbook.md is the bring-up source of
+20. docs/deploy-runbook.md is the bring-up source of
     truth. Includes caddy snippet, nginx snippet,
-    mkcert dev flow, credential rotation, common
-    troubleshooting (TLS misconfig, expired cert,
-    wrong Forwarded posture).
+    mkcert dev flow, credential rotation, trusted-
+    proxy threat model, common troubleshooting (TLS
+    misconfig, expired cert, wrong Forwarded
+    posture, fail-closed startup messages).
 ```
 
 These are anticipated; final wording lands after Codex's
@@ -1107,10 +1426,83 @@ Operator sign-off:   pending on §3 (A-H) + §3.5 + §10
                      Macro brief codifies the
                      orientation into vinculant draft
                      form.
-Codex audit:         pending. Audit prompt to be
-                     delivered out-of-band by operator
-                     per
-                     feedback_audit_prompt_automatic.md.
+Codex audit:         Round 1 CHANGES-REQUIRED (6 P1 +
+                     1 P2, no P0). All seven findings
+                     addressed in-branch:
+                       P1 §3-G trusted-client-IP
+                          derivation: localhost
+                          bypass only on direct peer
+                          AND no-Forwarded; proxied
+                          requests derive IP from
+                          Forwarded/X-Forwarded-For
+                          and bypass only when the
+                          DERIVED IP is also
+                          localhost. trusted_proxies
+                          list under karasu.yaml
+                          (default localhost). Test
+                          surface pinned.
+                       P1 §3-F CSRF "signed" actually
+                          signed: cookie value is
+                          nonce.sig where sig binds
+                          session_signing_secret +
+                          user + gen via HMAC-SHA256.
+                          Validation uses
+                          hmac.compare_digest. Origin/
+                          Referer required to MATCH in
+                          deployed posture; absent-
+                          Origin acceptance is the
+                          dev/legacy fallback only.
+                       P1 §3-D logout split GET (anon
+                          idempotent) vs POST
+                          (auth+CSRF). POST /auth/logout
+                          REMOVED from anon whitelist;
+                          GET /auth/logout stays for
+                          recovery / no-session calls.
+                       P1 §3-D anonymous whitelist
+                          aligned to existing
+                          /assets/* namespace
+                          (/assets/css/login.css NEW;
+                          /assets/manifest.json,
+                          /assets/sw.js, etc.).
+                          login.html link rewrites to
+                          match. URL contract pinned
+                          in §11.6 anticipated pin 6.
+                       P1 §3-H post-auth cache
+                          revocation: navigation
+                          network-first for /; page
+                          sends auth:revoked
+                          postMessage on any 401 OR
+                          redirect-to-/auth response.
+                          Tests pin expired cookie +
+                          gen mismatch + offline +
+                          explicit logout.
+                       P1 §3-B fail-closed startup:
+                          deployed `karasu ui` refuses
+                          to bind on absent / malformed
+                          / wrong-mode / partial
+                          karasu-auth.json. Generic
+                          stderr + exit 2 + no anon
+                          fallback. Localhost
+                          --no-auth dev flag with
+                          loud-stderr warning is the
+                          only bypass. Mirrors UI-12c
+                          §3-F bootstrap fatal.
+                       P2 §3-C constant-time compare
+                          discipline: every auth-
+                          material comparison
+                          (session HMAC, scrypt hash,
+                          CSRF cookie sig + header)
+                          uses hmac.compare_digest.
+
+                     §11.6 anticipated pins re-
+                     numbered and expanded from 15 to
+                     20 to absorb the new bindings
+                     (added pins 6/8/9/12/16/17/18 +
+                     adjusted pin 7).
+
+                     Round 2 audit prompt delivered to
+                     operator. Loop budget: 1/5
+                     consumed.
 Implementation:      BLOCKED on this brief's merge.
                      UI-13 code branch does NOT open
                      until this brief lands in main.

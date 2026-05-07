@@ -99,7 +99,7 @@ UI-14 may add an install prompt posture (chunk brief
 specifies) — but the design system + crow + footer
 primitives are frozen.
 
-## 3 · Confirmed decisions (operator sign-off pending)
+## 3 · Confirmed decisions (operator sign-off complete 2026-05-07)
 
 ### A) Deployment shape — single instance, self-hosted
 
@@ -164,52 +164,142 @@ PROPOSAL — Phase 4 trust boundary moves from "localhost is
 inherently trusted" to "the network is not". The implications:
 
 ```text
-1. EVERY route under /api/* MUST require an authenticated
-   session. The UI-12a /api/push read shape is no longer
-   safe to leak to anonymous callers — push subscription
-   counts + VAPID public keys are operator-private metadata
-   on a deployed surface.
+1. EVERY route or transport that reads or mutates operator
+   state — bus, scars, trust gradient, push subscriptions,
+   auth/session metadata, dispatch state, agent metadata,
+   or any future operator-private surface — MUST require
+   an authenticated session in the deployed posture. This
+   pin is PATH-INDEPENDENT: applies to /api/*, any future
+   SSE / WebSocket transport, debug or diagnostic
+   surfaces, static JSON dumps that project operator
+   state, and any helper route a chunk introduces. The
+   UI-12a /api/push read shape is no longer safe to leak
+   to anonymous callers — push subscription counts +
+   VAPID public keys are operator-private metadata on a
+   deployed surface (Codex round 1 P1 binding,
+   2026-05-07).
 
-2. Static assets (the PWA shell, sw.js, design-system page,
-   /assets/*) MAY remain anonymously reachable. The UI-13
-   chunk brief draws the exact perimeter; the default is
-   "auth-required for /api/*; anon for static".
+2. Unauthenticated `/` MUST render ONLY the login surface.
+   Inert assets strictly required to render the login
+   screen (login.css, login fonts that aren't already
+   under /assets/fonts/, favicon) MAY be anonymous; every
+   other path — /api/*, the design-system page, debug or
+   diagnostic surfaces, the PWA shell with bus-capable
+   JS, sw.js when registered under an authenticated
+   scope, and any future static JSON that projects
+   operator state — MUST be auth-gated in the deployed
+   posture. The web app manifest itself may remain
+   anonymous for browser discovery (the install posture
+   needs it pre-auth for the PWA prompt to fire); UI-13
+   chunk brief specifies sw.js / manifest reachability
+   explicitly, including SW scope discipline so a
+   registered SW behind login does not become a leak
+   vector. (Codex round 1 P1 binding, 2026-05-07.)
 
-3. CSRF protection MUST cover every POST / PUT / DELETE
-   route. The candidates (double-submit cookie, signed
+3. CSRF / origin protection MUST cover every mutating
+   route on every transport (POST / PUT / DELETE on
+   /api/*, plus any future mutating SSE / WebSocket
+   message). Candidates (double-submit cookie, signed
    header token, SameSite=Strict + origin check) are
    chunk-level decisions. The macro pin is "no
-   non-idempotent /api/* route is reachable without a
-   per-session CSRF guard".
+   non-idempotent route on any transport is reachable
+   without a per-session CSRF guard or equivalent
+   origin assertion".
 
-4. Push subscriptions remain operator-private secret
-   material (pin §11.6.16 carry-forward from UI-12c). The
-   raw endpoint MUST NOT leak via auth-failure error
-   bodies or session-debug surfaces.
+4. Online-guessing protection. Login failure responses
+   MUST be generic — no username / account enumeration
+   distinction, no "user exists vs password wrong"
+   information leak via response shape OR timing.
+   Rate-limit / exponential backoff on failed auth
+   attempts (chunk brief picks the mechanism + per-IP /
+   per-credentials granularity); the macro pin is "the
+   surface MUST NOT be a public oracle for credential
+   guessing". Brute-force resistance lives at this layer
+   AND at the password-hash layer (scrypt cost
+   parameters; chunk brief specifies). (Codex round 1
+   P1 binding, 2026-05-07.)
 
-5. The trust gradient (`autonomous` adapters, trust>=2)
+5. Cookie hardening. Session cookies MUST set HttpOnly,
+   Secure (when TLS is on; chunk brief documents the
+   localhost-dev path for cert-less testing), and
+   SameSite=Strict (or Lax if a deliberate cross-site
+   redirect flow demands it; chunk brief justifies).
+   NO session material in localStorage /
+   sessionStorage / DOM-readable JS — the session
+   ID lives in the cookie only. (Codex round 1 P1
+   binding, 2026-05-07.)
+
+6. Session lifecycle. Sessions expire after a bounded
+   period (chunk brief picks the duration; 7-30 day
+   range is reasonable for daily-dogfood single
+   operator). Session rotation on credential rotation
+   AND on explicit logout. Ops-side credential rotation
+   (operator edits the credentials file + restarts) MUST
+   invalidate ALL existing sessions — restart-clears the
+   in-memory session table for signed-cookie schemes,
+   or wipes the DB-backed table for that scheme. (Codex
+   round 1 P1 binding, 2026-05-07.)
+
+7. Credential / session material in logs. NEVER.
+   Carries forward pin §11.6.16 raw-endpoint privacy
+   discipline verbatim: passwords, password hashes,
+   session tokens, session IDs, signing secrets, TLS
+   private keys, VAPID private keys — none of these
+   materialise in log lines, bus events, error response
+   bodies, HTTP response headers (other than the
+   intended Set-Cookie), or debug surfaces. Failed-auth
+   log lines MAY carry the request IP + a generic
+   "auth failed" marker; nothing more. Exception
+   handlers around auth code follow the
+   `endpoint_hash + type(exc).__name__` pattern UI-12c
+   round 1 P1 sealed for transport failures. (Codex
+   round 1 P1 binding, 2026-05-07.)
+
+8. Push subscriptions remain operator-private secret
+   material (pin §11.6.16 carry-forward from UI-12c).
+   The raw endpoint MUST NOT leak via auth-failure
+   error bodies, session-debug surfaces, or any new
+   diagnostic page Phase 4 introduces.
+
+9. The trust gradient (`autonomous` adapters, trust>=2)
    keeps its existing semantics. Phase 4 does NOT add
    per-operator trust scoping; trust is system-wide.
 
-6. Secret handling: the UI-12c VAPID private key, the
-   Phase 4 auth credentials, and any operator API tokens
-   live in `karasu-push.json` (mode 0600) and a NEW
-   `karasu-auth.json` (also mode 0600). NEVER in
-   environment variables visible to subprocesses, NEVER in
-   command-line args, NEVER in logs. The chunk-level UI-13
-   brief specifies the exact file format.
+10. Secret handling — complete inventory binding for
+    Phase 4 (Codex round 1 P2 binding, 2026-05-07):
+      * UI-12c VAPID private key (existing, in
+        karasu-push.json mode 0600).
+      * Phase 4 auth credentials / verifier (NEW;
+        karasu-auth.json mode 0600).
+      * Session signing secret (NEW; same file or a
+        dedicated karasu-session-key — chunk brief
+        decides).
+      * TLS private key WHEN karasu owns TLS
+        termination (NEW; chunk brief specifies path;
+        mode 0600).
+      * Any future operator API tokens.
+    All secrets live in mode-0600 files (POSIX; Windows
+    advisory-mode equivalent per UI-12b loud-stderr
+    warning shape). NEVER in environment variables
+    visible to subprocesses, NEVER in command-line
+    args, NEVER in logs, NEVER in HTTP response bodies.
+    Test fixtures use sentinel patterns; production-side
+    defaults are absent — the operator MUST explicitly
+    seed. The chunk-level UI-13 brief specifies the
+    exact file formats + provisioning ergonomics.
 
-7. The bus + scar log + dispatch state remain
-   operator-private. They were already not exposed
-   anonymously in Phase 3 (UI-12a /api/events requires no
-   auth today because the surface was localhost-only;
-   Phase 4 closes that door).
+11. The bus + scar log + dispatch state remain
+    operator-private. They were already not exposed
+    anonymously in Phase 3 (UI-12a /api/events requires
+    no auth today because the surface was
+    localhost-only; Phase 4 closes that door under
+    item 1).
 ```
 
 The single-instance + single-operator deployment shape
 collapses many threat model variables. This brief does NOT
 attempt a full deployed-software threat model; it pins the
-seven items above as binding for every Phase 4 chunk.
+eleven items above as binding for every Phase 4 chunk.
 
 [CONFIRMED 2026-05-07]
 
@@ -393,10 +483,18 @@ Phase 1-3 stack still holds. Phase 4 anticipates:
   UI-0..UI-12c surface.
 
 + The cryptography import scope from UI-12 §11.6.13
-  REMAINS the three push_emit files. UI-13 may earn a
-  named scoped extension IF it lands TLS in stdlib that
-  cannot do (specific scenario chunk brief documents); the
-  default is "no expansion".
+  REMAINS the three push_emit files. The default
+  password-hashing posture is stdlib `hashlib.scrypt`,
+  which does NOT re-open UI-0 §4. The chunk-level UI-13
+  brief MAY earn a named scoped extension if it picks
+  bcrypt or argon2 instead (those would be runtime
+  deps); the same applies to ANY new cryptography-using
+  primitive a chunk introduces (JWT signing via PyJWT
+  vs stdlib hmac, TLS via a non-stdlib lib, etc.). The
+  trigger is the EXACT primitive that needs the dep, not
+  Phase 4 generally — each new dep earns its own UI-12
+  §11.6.13-style precedent per the "exception does NOT
+  generalise" pin.
 ```
 
 ## 5 · Design system (delta vs UI-0..UI-12c)
@@ -595,49 +693,92 @@ wording lands after Codex's verdict):
    authorization / per-operator trust / OAuth / OIDC /
    federated identity are deferred per §3-B.
 
-3. EVERY route under /api/* MUST require an authenticated
-   session in the deployed posture. Static assets follow
-   the chunk-level UI-13 brief.
+3. State privacy is TRANSPORT-AGNOSTIC. Every route or
+   transport (REST /api/*, future SSE / WebSocket, debug
+   pages, static JSON dumps, helper routes) that reads or
+   mutates bus / scars / trust / push / auth-session /
+   dispatch / agent / future operator-private state MUST
+   require an authenticated session in deployed posture.
+   Codex round 1 P1 binding 2026-05-07; supersedes any
+   reading of "every /api/* route" as path-bound.
 
-4. CSRF protection MUST cover every non-idempotent
-   /api/* route. The chunk brief picks the mechanism.
+4. Anonymous reachability is narrow: unauthenticated `/`
+   renders ONLY the login surface, plus inert assets
+   strictly required to render it (login.css, favicon,
+   web app manifest). Every other path — /api/*,
+   design-system page, debug surfaces, PWA shell with
+   bus-capable JS, sw.js — is auth-gated. SW scope
+   discipline pinned in UI-13 chunk brief. Codex round
+   1 P1 binding 2026-05-07.
 
-5. Push subscription endpoints REMAIN operator-private
+5. CSRF / origin protection MUST cover every mutating
+   route on every transport (POST/PUT/DELETE on /api/*,
+   plus any future mutating SSE / WebSocket message).
+   Chunk brief picks the mechanism.
+
+6. Online-guessing protection: generic login failures
+   (no enumeration, no timing distinction), rate-limit /
+   backoff on failed attempts, scrypt cost parameters at
+   the password-hash layer. Codex round 1 P1 binding
+   2026-05-07.
+
+7. Cookie hardening: HttpOnly + Secure + SameSite
+   (Strict default; Lax with chunk-brief justification).
+   No session material in localStorage / sessionStorage /
+   DOM-readable JS. Codex round 1 P1 binding 2026-05-07.
+
+8. Session lifecycle: bounded expiry (chunk brief picks
+   duration); rotation on credential rotation +
+   explicit logout; ops-side credential rotation
+   invalidates ALL existing sessions. Codex round 1 P1
+   binding 2026-05-07.
+
+9. Push subscription endpoints REMAIN operator-private
    secret material (pin §11.6.16 of UI-12c carry-forward).
    Auth-failure error bodies + session-debug surfaces
    MUST NOT echo the raw endpoint.
 
-6. Trust gradient stays system-wide (NOT per-operator)
-   until Phase 4.y multi-operator ever lands.
+10. Trust gradient stays system-wide (NOT per-operator)
+    until Phase 4.y multi-operator ever lands.
 
-7. Secrets (VAPID private key, auth credentials, session
-   signing secret) live in mode-0600 files; NEVER in env
-   vars / args / logs.
+11. Secret inventory binding (Codex round 1 P2 binding
+    2026-05-07): VAPID private key, auth credentials /
+    verifier, session signing secret, TLS private key
+    when karasu owns TLS, future operator API tokens.
+    All in mode-0600 files. NEVER in env vars / args /
+    logs / HTTP response bodies. Credential / session /
+    key material in logs is FORBIDDEN per pin
+    §11.6.16-style carry-forward.
 
-8. Bus + scar + dispatch state remain operator-private.
-   /api/events behind auth.
+12. Bus + scar + dispatch state remain operator-private.
+    /api/events + every state-projecting transport
+    behind auth.
 
-9. The cryptography import scope stays at the three
-   push_emit files. UI-13 chunk brief MAY earn a named
-   scoped extension for password hashing; the default is
-   no expansion.
+13. The cryptography import scope stays at the three
+    push_emit files. Default password-hashing posture is
+    stdlib hashlib.scrypt (NO new dep). UI-13 chunk
+    brief MAY earn a named scoped extension if it picks
+    bcrypt / argon2 / a non-stdlib JWT lib / etc.; the
+    trigger is the EXACT primitive needing it, not
+    Phase 4 generally. Each extension earns its own
+    UI-12 §11.6.13-style precedent.
 
-10. UI-15+ native packaging is conditional. Default
+14. UI-15+ native packaging is conditional. Default
     disposition: deferred until dogfood proves PWA gap.
 
-11. Each Phase 4 chunk earns its own chunk-level brief
+15. Each Phase 4 chunk earns its own chunk-level brief
     BEFORE code (UI-9 audit pin #1 carry-forward).
 
-12. Each chunk merges WITH a memory-sync follow-up PR
+16. Each chunk merges WITH a memory-sync follow-up PR
     mirroring PR #99 / #103 / #106.
 
-13. Loop budget 5 rounds per audit cycle (macro brief +
+17. Loop budget 5 rounds per audit cycle (macro brief +
     each chunk brief + each chunk code PR).
 
-14. NO @codex review tag, NO ChatGPT Codex Connector —
+18. NO @codex review tag, NO ChatGPT Codex Connector —
     audit stays operator-mediated.
 
-15. The first second of looking at a deployed Karasu MUST
+19. The first second of looking at a deployed Karasu MUST
     read as locked-by-default — login screen, not an
     empty shell with bus hooks. §3.5 binding.
 ```
@@ -665,9 +806,52 @@ Operator sign-off:   COMPLETE (Victor, 2026-05-07: "avanzar
                      form. §10 sub-questions deferred to the
                      UI-13 chunk-level brief by operator
                      direction.
-Codex audit:         pending. Audit prompt delivered
-                     out-of-band by operator per
-                     feedback_audit_prompt_automatic.md.
+Codex audit:         Round 1 CHANGES-REQUIRED (4 P1 + 2 P2,
+                     no P0). All six findings addressed
+                     in-branch:
+                       P1 §3 header consistency (§3 header
+                          "operator sign-off pending" → "complete
+                          2026-05-07"; STATUS + §12 already
+                          flipped in commit 2a44e83).
+                       P1 §3-C item 2 narrowed: anonymous
+                          reachability is now ONLY the login
+                          surface + inert login assets +
+                          web app manifest; all other paths
+                          (PWA shell with bus JS, sw.js,
+                          design-system, debug, static
+                          state JSON) are auth-gated.
+                       P1 §3-C items 4-7 added: online-
+                          guessing protection, cookie
+                          hardening (HttpOnly + Secure +
+                          SameSite), session lifecycle
+                          (expiry + rotation), credential /
+                          session material privacy in logs.
+                       P1 §3-C item 1 generalised to
+                          transport-agnostic — every route
+                          OR transport reading / mutating
+                          operator state requires auth in
+                          deployed posture (path-independent
+                          across REST, SSE, WS, debug,
+                          static JSON, helper routes).
+                       P2 §3-C item 10 expanded to a
+                          complete secret inventory: VAPID
+                          private key, auth credentials,
+                          session signing secret, TLS
+                          private key when karasu owns
+                          TLS, future operator API tokens.
+                          All mode-0600.
+                       P2 §4 cryptography-scope wording
+                          rewritten: trigger is the EXACT
+                          primitive (password hashing, JWT,
+                          TLS-via-non-stdlib, etc.), not
+                          Phase 4 generally; default
+                          hashlib.scrypt does NOT re-open
+                          UI-0 §4.
+                     §11.6 anticipated pins re-numbered
+                     and expanded from 15 to 19 to absorb
+                     the new bindings. Round 2 audit prompt
+                     delivered to operator.
+                     Loop budget: 1/5 consumed.
 Implementation:      BLOCKED on this brief's merge.
                      UI-13 chunk brief does NOT open until
                      this macro brief lands in main.

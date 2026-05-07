@@ -21,11 +21,16 @@
 > contract: exact mechanisms, file shapes, test surface,
 > §11.6 pins specific to the remote-frontier code chunk.
 >
-> **STATUS:** Operator sign-off pending. Codex audit
-> rounds 1 + 2 + 3 closed (R1 6 P1 + 1 P2 → all in;
-> R2 3 P1 + 1 P2 → all in; R3 1 P1 → in-branch).
-> Round 4 audit prompt delivered to operator. Loop
-> budget: 3/5.
+> **STATUS:** APPROVED — mergeable. Operator sign-off
+> complete (Victor, 2026-05-08: "Avanzar nomás", every
+> §3 (A-H) + §3.5 + §6 + §10 marker flipped to
+> [CONFIRMED 2026-05-08]). Codex audit closed at
+> round 4 of 5: R1 CHANGES-REQUIRED (6 P1 + 1 P2)
+> → all seven in-branch; R2 CHANGES-REQUIRED (3 P1 +
+> 1 P2) → all four in-branch; R3 CHANGES-REQUIRED
+> (1 P1) → in-branch; R4 APPROVED clean. Loop
+> budget: 3/5. 20 §11.6 anticipated pins ratified
+> binding for the UI-13 code chunk.
 
 ## 0 · Why this brief exists
 
@@ -183,11 +188,11 @@ is `static/css/login.css` (one new feature CSS file
 following the UI-4 timeline.css / UI-12b modal.css
 pattern).
 
-## 3 · Confirmed decisions (operator sign-off pending)
+## 3 · Confirmed decisions (operator sign-off complete 2026-05-08)
 
 All decisions below carry **operator-confirmed defaults**
 provided 2026-05-07. Markers flip from
-`[NEEDS OPERATOR SIGN-OFF]` to
+`[CONFIRMED 2026-05-08]` to
 `[CONFIRMED 2026-05-07]` once Victor confirms the brief
 en bloc.
 
@@ -230,7 +235,7 @@ NEVER:
     but the documentation gradient is unambiguous.
 ```
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-08]
 
 ### B) Credentials format
 
@@ -370,7 +375,7 @@ binding, 2026-05-07):
   → fatal startup, no quiet fallback.
 ```
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-08]
 
 ### C) Session format
 
@@ -441,7 +446,7 @@ the same class of leak for valid-user wrong-password
 + tampered-cookie + replayed-CSRF paths.
 ```
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-08]
 
 ### D) Auth middleware + path perimeter
 
@@ -571,7 +576,7 @@ inherit the same default (auth-required unless
 explicitly whitelisted by a chunk brief).
 ```
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-08]
 
 ### E) Login screen visual primitive
 
@@ -643,7 +648,7 @@ reload. The form MUST work with JS disabled (POST →
 re-render with error slot populated on failure).
 ```
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-08]
 
 ### F) CSRF mechanism
 
@@ -729,7 +734,7 @@ attach the header. The chunk brief audits each by
 hand + the test surface pins them.
 ```
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-08]
 
 ### G) Online-guessing + log discipline
 
@@ -985,7 +990,7 @@ middleware reject):
   demands it.
 ```
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-08]
 
 ### H) Service worker scope discipline
 
@@ -1105,9 +1110,9 @@ adjustment for offline-first install ergonomics; the
 chunk-level UI-14 brief documents.
 ```
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-08]
 
-## 3.5 · Operator pin (binding when sign-off lands)
+## 3.5 · Operator pin (binding)
 
 PROPOSAL — paralleling UI-12c §3.5 + Phase 4 §3.5:
 
@@ -1137,7 +1142,7 @@ a generic web app. Three felt properties:
      auth-relevant code paths are a regression.
 ```
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-08]
 
 ## 4 · Tech stack (delta vs UI-0..UI-12c + Phase 4 macro)
 
@@ -1355,8 +1360,7 @@ POSSIBLE SPLIT into UI-13a + UI-13b:
   surface or the audit cycles demand it.
 ```
 
-[NEEDS OPERATOR SIGN-OFF on the single-chunk vs split
-disposition; default single chunk]
+[CONFIRMED 2026-05-08 — single chunk default]
 
 ## 7 · Audit cadence (UI-12c §7 + Phase 4 §7 carry-forward)
 
@@ -1454,47 +1458,39 @@ en-bloc sign-off.
 ```text
 1. TLS posture. PROPOSAL — caddy/nginx principal +
    stdlib ssl dev fallback (§3-A).
-   [NEEDS OPERATOR SIGN-OFF — default
-   confirmed 2026-05-07]
+   [CONFIRMED 2026-05-08]
 
 2. Credentials format. PROPOSAL — username + password
    + scrypt (§3-B).
-   [NEEDS OPERATOR SIGN-OFF — default
-   confirmed 2026-05-07]
+   [CONFIRMED 2026-05-08]
 
 3. Session format. PROPOSAL — signed cookie via
    stdlib hmac + secrets (§3-C).
-   [NEEDS OPERATOR SIGN-OFF — default
-   confirmed 2026-05-07]
+   [CONFIRMED 2026-05-08]
 
 4. Login screen primitive. PROPOSAL — minimal,
    blocked, no marketing/signup/reset/third-parties
    (§3-E).
-   [NEEDS OPERATOR SIGN-OFF — default
-   confirmed 2026-05-07]
+   [CONFIRMED 2026-05-08]
 
 5. F9 / F10 / F11 disposition. PROPOSAL — parallel
    ops track, OUT of UI-13 scope, unless brief proves
    one blocks security/deploy.
-   [NEEDS OPERATOR SIGN-OFF — default
-   confirmed 2026-05-07]
+   [CONFIRMED 2026-05-08]
 
 6. CSRF mechanism. PROPOSAL — signed double-submit
    cookie + Origin check (§3-F).
-   [NEEDS OPERATOR SIGN-OFF — default
-   confirmed 2026-05-07]
+   [CONFIRMED 2026-05-08]
 
 7. SW scope discipline. PROPOSAL — pre-auth only
    login/manifest/inert assets; post-auth swap on
    login success message (§3-H).
-   [NEEDS OPERATOR SIGN-OFF — default
-   confirmed 2026-05-07]
+   [CONFIRMED 2026-05-08]
 
 8. `karasu deploy` CLI helper. PROPOSAL — DISCARDED;
    replaced by env / config + ops runbook
    (docs/deploy-runbook.md).
-   [NEEDS OPERATOR SIGN-OFF — default
-   confirmed 2026-05-07]
+   [CONFIRMED 2026-05-08]
 ```
 
 ## 11 · §11.6 anticipated pins (Codex audit, pending)
@@ -1693,14 +1689,18 @@ once Codex's audit closes.
 ## 12 · Status
 
 ```text
-Brief status:        DRAFT — operator sign-off pending.
-Operator sign-off:   pending on §3 (A-H) + §3.5 + §10
-                     en bloc. Operator orientation
-                     provided 2026-05-07 with confirmed
-                     defaults for all 8 §10 questions.
-                     Macro brief codifies the
-                     orientation into vinculant draft
-                     form.
+Brief status:        APPROVED + operator sign-off
+                     complete. Mergeable. Loop budget:
+                     3 of 5 consumed.
+Operator sign-off:   COMPLETE (Victor, 2026-05-08:
+                     "Avanzar nomás"). Every §3 (A-H)
+                     + §3.5 + §6 + §10 marker flipped
+                     to [CONFIRMED 2026-05-08].
+                     Operator orientation provided
+                     2026-05-07 with defaults for all
+                     8 §10 questions; chunk-level
+                     brief codifies the orientation
+                     into vinculant form.
 Codex audit:         Round 1 CHANGES-REQUIRED (6 P1 +
                      1 P2, no P0). All seven findings
                      addressed in-branch:
@@ -1864,9 +1864,11 @@ Codex audit:         Round 1 CHANGES-REQUIRED (6 P1 +
                      overwrite, (b) right-to-left walk,
                      (c) untrusted-peer guard.
 
-                     Round 4 audit prompt delivered to
-                     operator. Loop budget: 3/5
-                     consumed.
+                     Round 4: APPROVED clean. Loop
+                     budget: 3/5 consumed. Codex audit
+                     CLOSED. 20 §11.6 anticipated pins
+                     ratified binding for the UI-13
+                     code chunk.
 Implementation:      BLOCKED on this brief's merge.
                      UI-13 code branch does NOT open
                      until this brief lands in main.

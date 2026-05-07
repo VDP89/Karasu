@@ -80,10 +80,21 @@ def audience_for(endpoint: str) -> str:
     ``https://fcm.googleapis.com`` cannot deliver to
     ``https://updates.push.services.mozilla.com``. The caller
     caches per audience; this helper centralises the parse.
+
+    Pin §11.6.16 binding (Codex P1 round 1 audit, UI-12c code):
+    the ``ValueError`` raised on a malformed input MUST NOT
+    embed the raw endpoint in its message. A corrupted store
+    entry passing a sentinel-bearing endpoint here would
+    otherwise resurface the URL via the exception's ``args``
+    when an upstream broad-except logger captured the
+    traceback. The message is intentionally generic; the
+    caller is responsible for logging endpoint_hash + type
+    only on the privacy-aware error path
+    (:mod:`._dispatch`).
     """
     parsed = urlparse(endpoint)
     if not parsed.scheme or not parsed.netloc:
-        raise ValueError(f"endpoint is not a valid URL: {endpoint!r}")
+        raise ValueError("endpoint is not a valid absolute URL")
     return f"{parsed.scheme}://{parsed.netloc}"
 
 

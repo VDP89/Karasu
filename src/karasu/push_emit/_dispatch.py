@@ -246,6 +246,15 @@ class PushDispatcher:
             self._log_transport_failure(endpoint_hash, exc)
         except (TimeoutError, ConnectionError, OSError) as exc:
             self._log_transport_failure(endpoint_hash, exc)
+        except ValueError as exc:
+            # Codex P1 round 1 (UI-12c code audit): defence in
+            # depth against a corrupted store entry whose
+            # endpoint URL fails ``audience_for`` validation, or
+            # whose payload bytes blow ``encrypt_payload``'s
+            # input contract. Both raise ``ValueError`` with
+            # potentially sensitive material in the args. Same
+            # hash-only privacy discipline as transport failures.
+            self._log_transport_failure(endpoint_hash, exc)
 
     # ------------------------------------------------------------------
     # Internals

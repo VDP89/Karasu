@@ -241,14 +241,27 @@ class RateLimit:
         # sibling on_event calls.
         try:
             self._dispatcher(event, endpoint_hash, category)
-        except Exception:
+        except Exception as exc:
             # Dispatcher exceptions must not poison the rate
             # limiter; the dispatcher's own log discipline
             # records the failure.
+            #
+            # Codex P1 round 1 (UI-12c code audit): TYPE-only
+            # logging — ``logger.exception`` would attach
+            # ``exc_info=True`` and emit the full traceback +
+            # exception message. Upstream callees
+            # (:func:`audience_for`, :func:`encrypt_payload`,
+            # the dispatcher's own __cause__ chain) can carry
+            # raw endpoint bytes or payload material in their
+            # ``args``; a traceback would resurface them per
+            # pin §11.6.16. Endpoint hash is NOT in scope here
+            # (it is per-call data the rate limit holds in the
+            # closure) so we log only the exception type.
             import logging
 
-            logging.getLogger(__name__).exception(
-                "rate-limit dispatcher raised; ignoring"
+            logging.getLogger(__name__).warning(
+                "rate-limit dispatcher raised; ignoring (%s)",
+                type(exc).__name__,
             )
 
     # ------------------------------------------------------------------

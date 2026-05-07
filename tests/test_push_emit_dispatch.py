@@ -399,6 +399,66 @@ def test_transport_exception_does_not_prune(
     assert len(raw["subscriptions"]) == 1
 
 
+def test_invalid_endpoint_in_store_logs_only_hash_and_type(
+    seeded_store: tuple[Path, str],
+    vapid_keys: tuple[str, str],
+    http: HttpRecorder,
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+) -> None:
+    """Codex P1 round 1 (UI-12c code audit) + pin §11.6.16:
+    a corrupted store entry whose ``endpoint`` is not a
+    valid URL must NOT leak the raw URL through the
+    ``ValueError`` raised by :func:`audience_for`. The
+    dispatcher catches ``ValueError`` with the same hash +
+    type-only privacy discipline as transport failures, and
+    :mod:`._rate_limit` no longer uses ``logger.exception``
+    (which would attach exc_info + traceback).
+
+    The sentinel-bearing endpoint is injected by hand into
+    the store (mirroring the threat model: hand-edited /
+    attacker-supplied corruption). The dispatcher walks the
+    store, finds it, calls ``audience_for`` → raises →
+    caught."""
+    path, _ = seeded_store
+    # Inject an invalid-URL subscription with a sentinel.
+    sentinel_endpoint = "SENTINEL_INVALID_URL_TOKEN_123_no_scheme"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["subscriptions"].append(
+        {
+            "endpoint": sentinel_endpoint,
+            "endpoint_hash": "deadbeef" * 8,
+            "keys": {"p256dh": _sample_p256dh(), "auth": _sample_auth()},
+            "categories": ["attention"],
+            "created_at": "2026-05-07T00:00:00Z",
+            "updated_at": "2026-05-07T00:00:00Z",
+        }
+    )
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    public, private = vapid_keys
+    config = DispatcherConfig(
+        store_path=path,
+        private_key=load_private_key(private),
+        public_key_b64u=public,
+        subject="mailto:op@x.test",
+    )
+    disp = PushDispatcher(config, http_post=http)
+
+    with caplog.at_level(logging.DEBUG, logger="karasu.push_emit._dispatch"):
+        disp.dispatch(_ev(), "deadbeef" * 8, "attention")
+
+    # The sentinel endpoint MUST NOT appear in any log line.
+    for record in caplog.records:
+        msg = record.getMessage()
+        assert "SENTINEL_INVALID_URL_TOKEN" not in msg
+        assert sentinel_endpoint not in msg
+    # The hash IS logged (audit-only metadata).
+    assert any("deadbeef" in r.getMessage() for r in caplog.records)
+    # No POST attempted (audience_for raised).
+    assert http.requests == []
+
+
 def test_transport_exception_does_not_emit_bus_event() -> None:
     """The dispatcher itself emits no bus events — that's the
     rate-limit / classifier upstream concern. The 410/404

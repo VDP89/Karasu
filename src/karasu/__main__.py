@@ -376,15 +376,40 @@ def cmd_watch(args: argparse.Namespace) -> int:
     # cross-process file lock from UI-12c §3-G serialises the
     # prune writes against UI-12b's POST handlers.
     from karasu.push_emit import PushEmit, PushEmitConfig
+    from karasu.push_emit._keys import bootstrap_if_missing
+    from karasu.ui.push_store import PushStoreError
 
-    push_emit = PushEmit(
-        PushEmitConfig(
-            store_path=_push_store_path(config),
-            bus_path=bus.path,
-            contact_email=_push_contact_email(config),
-            debounce_seconds=float(args.push_debounce_ms) / 1000.0,
-        )
+    push_config = PushEmitConfig(
+        store_path=_push_store_path(config),
+        bus_path=bus.path,
+        contact_email=_push_contact_email(config),
+        debounce_seconds=float(args.push_debounce_ms) / 1000.0,
     )
+
+    # Codex P1 round 1 (UI-12c code audit) + brief §3-F
+    # binding: VAPID bootstrap is FATAL at startup. A
+    # malformed/unreadable push store must produce a loud
+    # generic stderr message + non-zero exit + bus tail
+    # untouched (NOT the UI server's HTTP 500 contract —
+    # ``karasu watch`` is not an HTTP context).
+    # ``LoopController.start()`` catches every
+    # ``source.start()`` exception and continues, so we
+    # preflight the bootstrap explicitly before
+    # ``controller.run_forever()``. The preflight is
+    # idempotent with the inner ``PushEmit.start()`` bootstrap
+    # call (no-op when the store is already complete).
+    try:
+        bootstrap_if_missing(push_config.store_path)
+    except PushStoreError:
+        print(
+            "error: karasu push subscription store is "
+            "malformed; refusing to start. Inspect the file "
+            "manually and remove or fix the corruption.",
+            file=sys.stderr,
+        )
+        return 2
+
+    push_emit = PushEmit(push_config)
     controller.add_source(push_emit)
 
     print(f"karasu watch: writing events to {bus.path}", file=sys.stderr)

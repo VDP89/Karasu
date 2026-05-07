@@ -549,3 +549,41 @@ def test_dispatcher_exception_does_not_break_rate_limit(
     factory_record[1].fire()
 
     assert len(bad_calls) == 2
+
+
+def test_dispatcher_exception_logs_only_type_not_message(
+    fake_timer_factory: Callable[..., FakeTimer],
+    factory_record: list[FakeTimer],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Codex P1 round 1 (UI-12c code audit): the broad-except
+    around the dispatcher MUST NOT use ``logger.exception``
+    (attaches exc_info + traceback) and MUST NOT emit the
+    exception's args/message. Upstream callees can carry raw
+    endpoint URLs or payload bytes in their args; a traceback
+    would resurface them per pin §11.6.16."""
+    sentinel = "SENTINEL_LEAK_TOKEN_https://fcm.test/abc-secret"
+
+    def bad(event: Event, eh: str, cat: str) -> None:
+        raise ValueError(sentinel)
+
+    rl = RateLimit(
+        dispatcher=bad,
+        debounce_seconds=5.0,
+        timer_factory=fake_timer_factory,
+    )
+    rl.on_event(_ev(id="x"), "abc", "attention")
+    with caplog.at_level("DEBUG", logger="karasu.push_emit._rate_limit"):
+        factory_record[0].fire()
+
+    for record in caplog.records:
+        msg = record.getMessage()
+        assert sentinel not in msg
+        assert "SENTINEL_LEAK_TOKEN" not in msg
+        # Traceback would appear in record.exc_info / formatted
+        # output if exc_info=True was used. Assert absent.
+        assert record.exc_info is None
+    # The TYPE is logged.
+    assert any(
+        "ValueError" in r.getMessage() for r in caplog.records
+    )

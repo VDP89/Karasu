@@ -18,9 +18,11 @@
 > sealed editorial frame. This brief plays the same role for
 > the UI-13..UI-15+ family.
 >
-> **STATUS:** [NEEDS OPERATOR SIGN-OFF — every §3 (A-F) +
-> §3.5 + §10 marker]
-> Codex audit: pending.
+> **STATUS:** OPERATOR SIGN-OFF COMPLETE (Victor, 2026-05-07:
+> "avanzar nomas"). Every §3 (A-F) + §3.5 + §10 marker
+> flipped to [CONFIRMED 2026-05-07].
+> Codex audit: pending. Audit prompt delivered to operator
+> for ferrying out-of-band.
 
 ## 0 · Why this brief exists
 
@@ -124,7 +126,7 @@ in Phase 4. If dogfood proves the single instance is
 insufficient, a Phase 4.x brief earns the multi-host
 contract.
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-07]
 
 ### B) Auth model — single-operator with credentials
 
@@ -154,7 +156,7 @@ Multi-operator collaboration / per-user trust gradient
 filtering / operator-scoped audit log is **explicitly
 DEFERRED** to Phase 4.y or later.
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-07]
 
 ### C) Threat model (binding)
 
@@ -209,7 +211,7 @@ collapses many threat model variables. This brief does NOT
 attempt a full deployed-software threat model; it pins the
 seven items above as binding for every Phase 4 chunk.
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-07]
 
 ### D) Roadmap (binding sequence)
 
@@ -272,7 +274,7 @@ Inverting the order (PWA first, auth second) would let the
 operator install a Karasu app over plain HTTP and then
 break the install state when the auth boundary lands.
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-07]
 
 ### E) "Done" definition for Phase 4
 
@@ -307,7 +309,7 @@ UI-15+ native packaging is OUT of the Phase 4 close
 criteria. Phase 4 is "real platform, web-first"; native is
 the polish frontier.
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-07]
 
 ### F) Loop budget per chunk
 
@@ -327,7 +329,7 @@ itself takes its own audit cycle:
 Track loop budget per chunk in the chunk brief's §12
 status block (mirror of UI-12c § status pattern).
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-07]
 
 ## 3.5 · Operator pin (binding when sign-off lands)
 
@@ -357,7 +359,7 @@ Karasu *opening up to the internet*. Three felt properties:
      PUSH; for AUTH it is "silence is suspicious".
 ```
 
-[NEEDS OPERATOR SIGN-OFF]
+[CONFIRMED 2026-05-07]
 
 ## 4 · Tech stack (delta vs Phase 1-3)
 
@@ -540,7 +542,7 @@ forward:
      (c) supports both with operator-side configuration.
    The macro brief does NOT pre-decide; UI-13 brief
    commits.
-   [NEEDS OPERATOR SIGN-OFF on whether to defer to UI-13]
+   [CONFIRMED 2026-05-07 — deferred to UI-13]
 
 2. Credentials format.
    PROPOSAL — chunk-level UI-13 brief decides between
@@ -548,7 +550,7 @@ forward:
    intuition says single-passphrase is simpler for one
    user; chunk brief weighs against industry expectations
    when the surface eventually grows.
-   [NEEDS OPERATOR SIGN-OFF on whether to defer to UI-13]
+   [CONFIRMED 2026-05-07 — deferred to UI-13]
 
 3. Session token format.
    PROPOSAL — chunk-level UI-13 brief decides between:
@@ -556,26 +558,26 @@ forward:
      (b) DB-backed session (a tiny JSONL or SQLite table
          keyed by random session id).
    Macro brief does NOT pre-decide.
-   [NEEDS OPERATOR SIGN-OFF on whether to defer to UI-13]
+   [CONFIRMED 2026-05-07 — deferred to UI-13]
 
 4. Login screen visual primitive.
    PROPOSAL — chunk-level UI-13 brief specifies. Macro
    pin: no marketing, no signup link, no third-party auth.
-   [NEEDS OPERATOR SIGN-OFF on the macro pin]
+   [CONFIRMED 2026-05-07 — macro pin binding]
 
 5. Phase 3 hardening (F9 / F10 / F11) absorption.
    PROPOSAL — UI-13 chunk brief MAY absorb them as a
    sub-commit if the operator wants to clean the slate
    before Phase 4 ships; otherwise they live as a
    parallel ops track and earn a tiny dedicated PR each.
-   [NEEDS OPERATOR SIGN-OFF on disposition]
+   [CONFIRMED 2026-05-07 — disposition deferred to UI-13 chunk brief]
 
 6. Native packaging trigger.
    PROPOSAL — UI-15+ is conditional. The macro brief
    commits to NOT writing the UI-15 brief unless dogfood
    after UI-14 surfaces a concrete platform need (iOS
    background push reliability is the leading candidate).
-   [NEEDS OPERATOR SIGN-OFF on the deferral posture]
+   [CONFIRMED 2026-05-07 — UI-15 deferred until dogfood proves PWA gap]
 ```
 
 ## 11 · §11.6 anticipated pins (Codex audit, pending)
@@ -647,19 +649,24 @@ verbatim binding once Codex's audit closes.
 ## 12 · Status
 
 ```text
-Brief status:        DRAFT — operator sign-off pending.
-Operator sign-off:   pending on §3 (A-F) + §3.5 + §10.
-                     Operator orientation already provided
-                     2026-05-07 (Path A macro brief; UI-13
-                     remote operator surface as first chunk;
-                     UI-14 PWA installable; UI-15+
-                     conditional deferred; single instance
-                     + single operator + credentials +
-                     session; product frame in §1).
-                     Macro brief codifies the orientation
-                     into vinculant form.
+Brief status:        OPERATOR SIGN-OFF COMPLETE. Codex audit
+                     pending.
+Operator sign-off:   COMPLETE (Victor, 2026-05-07: "avanzar
+                     nomas"). Every §3 (A-F) + §3.5 + §10
+                     marker flipped to [CONFIRMED 2026-05-07].
+                     Operator orientation provided 2026-05-07
+                     (Path A macro brief; UI-13 remote
+                     operator surface as first chunk; UI-14
+                     PWA installable; UI-15+ conditional
+                     deferred; single instance + single
+                     operator + credentials + session;
+                     product frame in §1). The macro brief
+                     codifies the orientation into vinculant
+                     form. §10 sub-questions deferred to the
+                     UI-13 chunk-level brief by operator
+                     direction.
 Codex audit:         pending. Audit prompt delivered
-                     out-of-band per
+                     out-of-band by operator per
                      feedback_audit_prompt_automatic.md.
 Implementation:      BLOCKED on this brief's merge.
                      UI-13 chunk brief does NOT open until

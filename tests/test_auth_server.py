@@ -879,6 +879,35 @@ def test_form_login_missing_username_returns_422(auth_http) -> None:
     assert status == 422
 
 
+def test_form_login_repeated_username_returns_422(auth_http) -> None:
+    """Codex P2 round 2 audit binding 2026-05-08: ambiguous
+    repeated form fields → 422 rather than silently picking
+    the first value."""
+    host, port, _ = auth_http
+    status, _, _, _ = _request(
+        host,
+        port,
+        "/auth/login",
+        method="POST",
+        body=b"username=a&username=b&password=hunter2",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert status == 422
+
+
+def test_form_login_repeated_password_returns_422(auth_http) -> None:
+    host, port, _ = auth_http
+    status, _, _, _ = _request(
+        host,
+        port,
+        "/auth/login",
+        method="POST",
+        body=b"username=victor&password=p1&password=p2",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert status == 422
+
+
 def test_form_login_empty_password_returns_422(auth_http) -> None:
     host, port, _ = auth_http
     status, _, _, _ = _request(
@@ -1039,6 +1068,27 @@ def test_windows_mode_check_emits_advisory_warning(tmp_path, capsys) -> None:
 # ---------------------------------------------------------------------------
 # Existing configure_auth tests
 # ---------------------------------------------------------------------------
+
+
+def test_configure_auth_rejects_no_auth_false_without_path(tmp_path: Path) -> None:
+    """Codex P1 round 2 audit binding 2026-05-08: auth-
+    enabled startup with no credentials_path must raise so
+    cmd_ui exits 2 loudly. Silently clearing the cache + the
+    rate-limit would leave a listener up that 401s every
+    request, hiding the operator misconfiguration."""
+    from karasu.ui._auth import AuthCredentialsError
+
+    try:
+        with pytest.raises(AuthCredentialsError, match="credentials_path"):
+            ui_server.configure_auth(
+                credentials_path=None,
+                no_auth=False,
+                deployed=False,
+                trusted_proxies=frozenset({"127.0.0.1"}),
+                expected_origins=(),
+            )
+    finally:
+        ui_server._reset_auth_state()
 
 
 def test_configure_auth_no_auth_clears_state(tmp_path: Path) -> None:

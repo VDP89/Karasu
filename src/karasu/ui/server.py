@@ -1818,7 +1818,13 @@ class UIHandler(BaseHTTPRequestHandler):
                 return _LOGIN_MALFORMED_JSON
             u_list = parsed.get("username") or []
             p_list = parsed.get("password") or []
-            if not u_list or not p_list:
+            # Codex P2 round 2 audit binding 2026-05-08:
+            # login parsing at the remote boundary must be
+            # unambiguous. Repeated ``username`` or
+            # ``password`` parameters get the generic 422
+            # rather than silently authenticating against
+            # the first value.
+            if len(u_list) != 1 or len(p_list) != 1:
                 return _LOGIN_INVALID_FIELDS
             username = u_list[0]
             password = p_list[0]
@@ -2069,9 +2075,19 @@ def configure_auth(
     AUTH_EXPECTED_ORIGINS = expected_origins
     AUTH_CREDENTIALS_PATH = credentials_path
     _AUTH_RATE_LIMIT = LoginRateLimit() if not no_auth else None
-    if no_auth or credentials_path is None:
+    if no_auth:
         _AUTH_CREDS_CACHE = None
         return
+    # Codex P1 round 2 audit binding 2026-05-08: auth-
+    # enabled startup with no credentials_path is a fail-
+    # closed violation per §3-B — silently clearing the
+    # cache would leave the listener up but every request
+    # would 401 / redirect, hiding the misconfiguration
+    # behind an opaque user-facing error. Raise so cmd_ui
+    # exits 2 with the same generic stderr line as the
+    # missing-file branch.
+    if credentials_path is None:
+        raise AuthCredentialsError("auth enabled but credentials_path missing")
     _AUTH_CREDS_CACHE = load_credentials(credentials_path)
 
 

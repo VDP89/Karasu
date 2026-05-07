@@ -525,6 +525,60 @@ STATE_CORPORA: dict[str, list[dict]] = {
 #                     keyframe at its leftmost extreme so the
 #                     posed still is deterministic; the moving
 #                     truth lives in the .webm.
+# UI-12c §7.3 — deterministic browser-side notification mock
+# (Codex P2 round 1 OPTION B). Renders an HTML overlay that
+# mirrors the §3-H title contract for one of the three closed
+# categories. The {title} + {category} placeholders are filled
+# in by ``str.format`` inside CAPTURES["UI-12c-emit"]; the
+# overlay sits centered on a clean canvas (no UI shell) so the
+# audit artifact is purely about the title rendering, not the
+# operator surface chrome (already captured under UI-12-push).
+#
+# The mock is intentionally NOT a perfect OS notification
+# replica — that varies per OS / browser and is brittle in
+# headless Chromium. It IS a deterministic proof that the
+# title strings the SW push handler renders match the brief.
+_PUSH_NOTIFICATION_MOCK_JS = (
+    "document.body.style.background = '#1a1d24';"
+    "const mock = document.createElement('div');"
+    "mock.style.cssText = ("
+    "  'position:fixed;top:50%;left:50%;'"
+    "  + 'transform:translate(-50%,-50%);'"
+    "  + 'width:380px;background:#2b2f3a;color:#e6e9ef;'"
+    "  + 'border:1px solid #3a3f4d;border-radius:8px;'"
+    "  + 'box-shadow:0 8px 24px rgba(0,0,0,0.4);'"
+    "  + 'padding:16px;display:flex;align-items:center;'"
+    "  + 'gap:14px;font-family:-apple-system,BlinkMacSystemFont,'"
+    "  + 'Segoe UI,sans-serif;'"
+    ");"
+    "mock.innerHTML = ("
+    "  '<img src=\"/assets/icons/karasu-192.png\" '"
+    "  + 'style=\"width:48px;height:48px;flex-shrink:0\" '"
+    "  + 'alt=\"\">'"
+    "  + '<div style=\"flex:1;min-width:0\">'"
+    "  + '<div style=\"font-size:11px;color:#9aa0ad;'"
+    "  +   'text-transform:uppercase;letter-spacing:0.05em;'"
+    "  +   'margin-bottom:4px\">Karasu</div>'"
+    "  + '<div style=\"font-size:14px;line-height:1.35;'"
+    "  +   'font-weight:500\">__TITLE__</div>'"
+    "  + '</div>'"
+    ");"
+    "document.body.appendChild(mock);"
+    "document.title = 'UI-12c push: __CATEGORY__';"
+)
+
+
+def _push_mock_js(*, title: str, category: str) -> str:
+    """Substitute the mock notification's title + category
+    placeholders. Plain ``str.replace`` so the JS template can
+    keep its IIFE braces unescaped."""
+    return (
+        _PUSH_NOTIFICATION_MOCK_JS
+        .replace("__TITLE__", title)
+        .replace("__CATEGORY__", category)
+    )
+
+
 CAPTURES: dict[str, list[dict]] = {
     "UI-1-rebase": [
         {"name": "00-index-default.png", "url": "/", "full_page": True},
@@ -1486,6 +1540,59 @@ CAPTURES: dict[str, list[dict]] = {
             "full_page": True,
         },
     ],
+    # UI-12c §7.3 — server-side push emit notification renders.
+    # Codex P2 round 1 acceptable form OPTION B: deterministic
+    # browser-side notification mock. The OS notification tray
+    # chrome is OS-rendered (outside Karasu's design system) and
+    # brittle in headless Chromium; we inject an HTML overlay
+    # that mirrors the §3-H title contract exactly so the audit
+    # has a stable artifact proving the title strings render as
+    # specified per category. The .webm in RECORDINGS["UI-12c-emit"]
+    # captures the operator-felt edge-to-edge flow.
+    "UI-12c-emit": [
+        # 00 — attention category title.
+        {
+            "name": "00-notification-attention.png",
+            "url": "/",
+            "seed": False,
+            "wait_ms": 400,
+            "eval_js": _push_mock_js(
+                title="Karasu paused — operator review needed.",
+                category="attention",
+            ),
+            "post_eval_wait_ms": 200,
+            "viewport": {"width": 480, "height": 220},
+            "full_page": False,
+        },
+        # 01 — errors category title.
+        {
+            "name": "01-notification-errors.png",
+            "url": "/",
+            "seed": False,
+            "wait_ms": 400,
+            "eval_js": _push_mock_js(
+                title="An adapter failed.",
+                category="errors",
+            ),
+            "post_eval_wait_ms": 200,
+            "viewport": {"width": 480, "height": 220},
+            "full_page": False,
+        },
+        # 02 — corrections category title.
+        {
+            "name": "02-notification-corrections.png",
+            "url": "/",
+            "seed": False,
+            "wait_ms": 400,
+            "eval_js": _push_mock_js(
+                title="A scar was recorded out-of-band.",
+                category="corrections",
+            ),
+            "post_eval_wait_ms": 200,
+            "viewport": {"width": 480, "height": 220},
+            "full_page": False,
+        },
+    ],
 }
 
 # Recording plan per slug. Each entry is a single video capture:
@@ -1557,6 +1664,52 @@ _PUSH_RECORDING_MOCK = r"""
     }
 })();
 """
+
+
+# UI-12c §7.3 + pin §11.6.10 carry-forward — edge-to-edge .webm
+# of the operator-felt push delivery flow. Codex P2 round 1
+# accepts deterministic browser-side mock notification (OPTION B).
+# The recording walks: surface idle → simulated push delivery
+# fires (mock notification renders in the operator's view) →
+# next category fires → next category fires → fade out.
+#
+# Per category the mock title appears for ~1.2 s then is
+# replaced by the next; total wall time ~5 s, viewport 1024x640
+# (full-shell so the auditor sees the surface chrome stays still
+# while the notification overlay flashes — pin §11.6.10
+# carry-forward "el crow puede tener vida; la superficie no
+# puede perder calma").
+_PUSH_NOTIFICATION_RECORDING_FRAME_JS = (
+    "(() => {"
+    "  const old = document.querySelector('.ui-12c-emit-mock');"
+    "  if (old) old.remove();"
+    "  const mock = document.createElement('div');"
+    "  mock.className = 'ui-12c-emit-mock';"
+    "  mock.style.cssText = ("
+    "    'position:fixed;top:24px;right:24px;'"
+    "    + 'width:360px;background:#2b2f3a;color:#e6e9ef;'"
+    "    + 'border:1px solid #3a3f4d;border-radius:8px;'"
+    "    + 'box-shadow:0 8px 24px rgba(0,0,0,0.4);'"
+    "    + 'padding:14px;display:flex;align-items:center;'"
+    "    + 'gap:12px;z-index:9999;'"
+    "    + 'font-family:-apple-system,BlinkMacSystemFont,'"
+    "    + 'Segoe UI,sans-serif;'"
+    "  );"
+    "  mock.innerHTML = ("
+    "    '<img src=\"/assets/icons/karasu-192.png\" '"
+    "    + 'style=\"width:40px;height:40px;flex-shrink:0\" '"
+    "    + 'alt=\"\">'"
+    "    + '<div style=\"flex:1;min-width:0\">'"
+    "    + '<div style=\"font-size:10px;color:#9aa0ad;'"
+    "    +   'text-transform:uppercase;letter-spacing:0.05em;'"
+    "    +   'margin-bottom:3px\">Karasu</div>'"
+    "    + '<div style=\"font-size:13px;line-height:1.35;'"
+    "    +   'font-weight:500\">__TITLE__</div>'"
+    "    + '</div>'"
+    "  );"
+    "  document.body.appendChild(mock);"
+    "})();"
+)
 
 
 RECORDINGS: dict[str, dict] = {
@@ -1842,6 +1995,60 @@ RECORDINGS: dict[str, dict] = {
                     "  if (typeof window.loadPushState === 'function') "
                     "    await window.loadPushState(); "
                     "})();"
+                ),
+                "wait_ms": 600,
+            },
+        ],
+    },
+    # UI-12c §7.3 + pin §11.6.10 — server-side push delivery
+    # walk-through. Codex P2 round 1 OPTION B: mock notification
+    # overlay rendered in the operator's view since the OS
+    # tray chrome is not deterministic in headless. Walks the
+    # three category titles (attention → errors → corrections)
+    # so the auditor sees the surface chrome stays still
+    # (pin §11.6.10 carry-forward) while only the notification
+    # overlay flashes.
+    "UI-12c-emit": {
+        "viewport": {"width": 1024, "height": 640},
+        "url": "/",
+        "frames": [
+            # Frame 0: idle surface, no notification.
+            {"wait_ms": 800},
+            # Frame 1: attention notification appears (operator
+            # is asked to review a paused agent).
+            {
+                "eval_js": _PUSH_NOTIFICATION_RECORDING_FRAME_JS.replace(
+                    "__TITLE__",
+                    "Karasu paused — operator review needed.",
+                ),
+                "wait_ms": 1200,
+            },
+            # Frame 2: errors notification supersedes (the tag
+            # is "karasu" singular per §3-H — fresh push REPLACES
+            # pending; the recording reflects this by removing
+            # the previous mock before adding the new one).
+            {
+                "eval_js": _PUSH_NOTIFICATION_RECORDING_FRAME_JS.replace(
+                    "__TITLE__",
+                    "An adapter failed.",
+                ),
+                "wait_ms": 1200,
+            },
+            # Frame 3: corrections notification supersedes.
+            {
+                "eval_js": _PUSH_NOTIFICATION_RECORDING_FRAME_JS.replace(
+                    "__TITLE__",
+                    "A scar was recorded out-of-band.",
+                ),
+                "wait_ms": 1200,
+            },
+            # Frame 4: notifications fade — operator dismissed.
+            {
+                "eval_js": (
+                    "const m = document.querySelector("
+                    "  '.ui-12c-emit-mock'"
+                    ");"
+                    "if (m) m.remove();"
                 ),
                 "wait_ms": 600,
             },

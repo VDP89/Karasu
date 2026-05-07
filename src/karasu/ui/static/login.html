@@ -66,6 +66,20 @@
     </form>
   </main>
   <script>
+    // Codex round 3 P1 audit binding 2026-05-08: register
+    // the SW from the LOGIN surface so the install handler
+    // runs PRE-AUTH and the install precache for `/` lands
+    // login.html under the pre-auth cache before any
+    // authenticated session exists. (The install also passes
+    // credentials: 'omit' for `/` defensively per the SW
+    // change, covering the version-bump-while-logged-in
+    // case.)
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/assets/sw.js', { scope: '/' })
+        .catch(function () { /* best-effort */ });
+    }
+  </script>
+  <script>
     // Brief §3-E lines 643-648: tiny inline handler that
     // progressively enhances the form to fetch + replace the
     // error slot text without a full reload. The form MUST

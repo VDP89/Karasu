@@ -353,13 +353,15 @@ def test_cmd_ui_auth_on_explicit_credentials_overrides_default(
     assert ui_server.AUTH_CREDENTIALS_PATH == explicit
 
 
-def test_cmd_ui_auth_on_loopback_bind_is_dev_posture(
+def test_cmd_ui_auth_on_dev_posture_when_no_expected_origins(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Loopback bind + auth-on → deployed=False (cookies
-    non-Secure). Non-loopback bind + auth-on → deployed=True
-    (cookies Secure). Pinned at the configure_auth state."""
+    """Codex round 3 P0 audit binding 2026-05-08:
+    ``deployed`` is decoupled from the bind address. With no
+    auth.expected_origins configured (operator did not declare
+    a public origin), the posture is dev — cookies non-Secure,
+    Origin/Referer absent accepted as the dev fallback."""
     _capture_run_ui_server(monkeypatch)
 
     bus_dir = tmp_path / "anchor"
@@ -378,7 +380,102 @@ def test_cmd_ui_auth_on_loopback_bind_is_dev_posture(
     )
     rc = cmd_ui(args)
     assert rc == 0
-    assert ui_server.AUTH_DEPLOYED is False  # loopback
+    assert ui_server.AUTH_DEPLOYED is False
+    assert ui_server.AUTH_EXPECTED_ORIGINS == ()
+
+
+def test_cmd_ui_auth_on_loopback_bind_with_public_origin_is_deployed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex round 3 P0 regression: production shape is
+    caddy/nginx terminating TLS while karasu binds 127.0.0.1.
+    Configured auth.expected_origins MUST mark the posture as
+    deployed even on a loopback bind — cookies Secure +
+    Origin/Referer absent rejected."""
+    _capture_run_ui_server(monkeypatch)
+
+    bus_dir = tmp_path / "anchor"
+    bus_dir.mkdir()
+    creds_path = bus_dir / "karasu-auth.json"
+    _write_creds_file(creds_path, username="victor", password="hunter2")
+    config = tmp_path / "karasu.yaml"
+    config.write_text(
+        f"event_bus:\n  path: {bus_dir / 'events.jsonl'}\n"
+        "auth:\n"
+        "  trusted_proxies: ['127.0.0.1']\n"
+        "  expected_origins:\n"
+        "    - https://karasu.example.com\n",
+        encoding="utf-8",
+    )
+    parser = build_parser()
+    args = parser.parse_args(
+        ["--config", str(config), "ui", "--host", "127.0.0.1"]
+    )
+    rc = cmd_ui(args)
+    assert rc == 0
+    # The bind is loopback BUT the operator configured the
+    # public origin → deployed posture is on.
+    assert ui_server.AUTH_DEPLOYED is True
+    assert ui_server.AUTH_EXPECTED_ORIGINS == (
+        "https://karasu.example.com",
+    )
+
+
+def test_cmd_ui_session_ttl_days_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--session-ttl-days plumbs through configure_auth to
+    AUTH_SESSION_TTL_SECONDS. Brief §3-C 1..30 day range."""
+    _capture_run_ui_server(monkeypatch)
+
+    bus_dir = tmp_path / "anchor"
+    bus_dir.mkdir()
+    creds_path = bus_dir / "karasu-auth.json"
+    _write_creds_file(creds_path, username="victor", password="hunter2")
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "ui",
+            "--credentials",
+            str(creds_path),
+            "--host",
+            "127.0.0.1",
+            "--session-ttl-days",
+            "7",
+        ]
+    )
+    rc = cmd_ui(args)
+    assert rc == 0
+    assert ui_server.AUTH_SESSION_TTL_SECONDS == 7 * 24 * 60 * 60
+
+
+@pytest.mark.parametrize("days", [0, 31, -1, 100])
+def test_cmd_ui_session_ttl_days_out_of_range_refuses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    days: int,
+) -> None:
+    """Out-of-range TTL → exit 2 + generic stderr."""
+    captured = _capture_run_ui_server(monkeypatch)
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "ui",
+            "--credentials",
+            str(tmp_path / "auth.json"),
+            "--host",
+            "127.0.0.1",
+            "--session-ttl-days",
+            str(days),
+        ]
+    )
+    rc = cmd_ui(args)
+    assert rc == 2
+    assert "session-ttl-days" in capsys.readouterr().err
+    assert "host" not in captured
 
 
 # ---------------------------------------------------------------------------

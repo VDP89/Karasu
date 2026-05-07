@@ -729,6 +729,40 @@ def test_tampered_session_cookie_redirects_to_login(auth_http) -> None:
     assert headers.get("location") == "/"
 
 
+def test_session_invalidated_by_disk_rotation_without_reconfigure(
+    auth_http, tmp_path: Path
+) -> None:
+    """Codex round 3 P1 audit binding 2026-05-08: the runbook
+    rotation contract claims live sessions invalidate WITHOUT
+    a process restart or an explicit configure_auth() call.
+    The mtime-based cache refresh in _refresh_creds_cache
+    delivers that — write_credentials touches the file
+    (mtime moves), the next request rotates the cached creds,
+    and the prior session cookie fails verification.
+
+    This test deliberately does NOT call configure_auth()
+    after the rotation — the live process must pick up the
+    change on its own."""
+    import time as _time
+
+    host, port, creds_path = auth_http
+    _, _, _, set_cookies = _login(host, port)
+    cookie_header = "; ".join(c.split(";", 1)[0] for c in set_cookies)
+
+    # Sleep just long enough that the on-disk mtime moves
+    # past the captured value (FS resolution is typically
+    # 1ms on NTFS / 10ms on ext4 — 50ms is overkill on
+    # purpose for stability across CI shapes).
+    _time.sleep(0.05)
+    write_credentials(creds_path, username=_USERNAME, password="rotated_pw")
+    # NO configure_auth() here — that's the binding test.
+
+    status, _, _, _ = _request(
+        host, port, "/api/events", headers={"Cookie": cookie_header}
+    )
+    assert status == 302  # gen + signature both rotated
+
+
 def test_session_after_credential_rotation_invalidated(
     auth_http, tmp_path: Path
 ) -> None:

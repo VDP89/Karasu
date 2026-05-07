@@ -8,8 +8,15 @@
 ## Preamble
 
 Karasu's HTTP surface is a stdlib `ThreadingHTTPServer`. It
-does NOT terminate TLS itself. The deployed posture puts a
-reverse proxy in front (caddy or nginx) that:
+does NOT terminate TLS itself — the brief §11 anticipated
+`--tls-cert` / `--tls-key` flags are intentionally deferred:
+the sealed UI-13 production shape is a reverse proxy
+terminating TLS in front of a loopback-bound listener
+(caddy / nginx → 127.0.0.1:8787). Direct-TLS is not on the
+chunk-9 PR; reopens for UI-14+ if dogfood demands it.
+
+The deployed posture puts a reverse proxy in front (caddy
+or nginx) that:
 
   1. Owns the public IP + DNS + cert.
   2. Terminates TLS.

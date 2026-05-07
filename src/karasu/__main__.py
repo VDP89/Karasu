@@ -915,16 +915,35 @@ def cmd_ui(args: argparse.Namespace) -> int:
     # ------------------------------------------------------------
     no_auth = bool(args.no_auth)
     host_is_loopback = is_loopback_bind(args.host)
-    # ``deployed`` controls cookie Secure flag + Origin/Referer
-    # absent-rejection. Loopback bind → dev posture; non-loopback
-    # → deployed posture per the brief's §3-A TLS expectation.
-    deployed = not host_is_loopback
+
+    # §3-C session TTL — 1..30 day range per brief.
+    ttl_seconds: int | None = None
+    if args.session_ttl_days is not None:
+        if args.session_ttl_days < 1 or args.session_ttl_days > 30:
+            return _refuse(
+                "--session-ttl-days must be between 1 and 30 (brief §3-C)."
+            )
+        ttl_seconds = int(args.session_ttl_days) * 24 * 60 * 60
 
     try:
         trusted_proxies = _auth_trusted_proxies(config)
         expected_origins = _auth_expected_origins(config)
     except ValueError as exc:
         return _refuse(str(exc))
+
+    # Codex round 3 P0 audit binding 2026-05-08: production
+    # shape is caddy/nginx terminating TLS while karasu binds
+    # 127.0.0.1:8787 — i.e. loopback bind IS the deployed
+    # posture. Deriving ``deployed`` from ``not is_loopback_bind``
+    # flipped the cookie Secure flag + Origin/Referer absent-
+    # rejection in exactly the documented production path.
+    #
+    # The signal that an operator is in deployed posture is that
+    # they configured ``auth.expected_origins`` in karasu.yaml —
+    # that's the public origin behind the proxy + the §3-F
+    # binding. Loopback bind alone says nothing about TLS;
+    # non-empty expected_origins says everything.
+    deployed = bool(expected_origins)
 
     if no_auth:
         # Codex round 2 P1 binding: --no-auth ONLY valid when
@@ -976,6 +995,7 @@ def cmd_ui(args: argparse.Namespace) -> int:
                 deployed=deployed,
                 trusted_proxies=trusted_proxies,
                 expected_origins=expected_origins,
+                session_ttl_seconds=ttl_seconds,
             )
         except AuthCredentialsError:
             return _refuse(
@@ -1109,6 +1129,16 @@ def build_parser() -> argparse.ArgumentParser:
             "the configured bus (typically "
             "``.karasu/karasu-auth.json``). Bootstrap with "
             "``karasu auth set-credentials``."
+        ),
+    )
+    ui.add_argument(
+        "--session-ttl-days",
+        type=int,
+        default=None,
+        metavar="DAYS",
+        help=(
+            "UI-13 §3-C session cookie TTL in days. Range "
+            "1..30; default 14. Brief §11 binding window."
         ),
     )
     ui.set_defaults(func=cmd_ui)

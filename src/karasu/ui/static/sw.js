@@ -97,10 +97,23 @@ const POST_AUTH_PRECACHE_URLS = [
 ];
 
 self.addEventListener('install', (event) => {
+    /* Codex round 3 P1 audit binding 2026-05-08: a SW
+     * version bump while the operator already has a valid
+     * session would cache the authenticated PWA shell HTML
+     * under the pre-auth ``/`` key (the install fetch
+     * carries cookies by default, so the server returns
+     * index.html instead of login.html). Force the
+     * navigation precache to fetch with credentials omitted
+     * so the response is always the login render. The other
+     * pre-auth assets (CSS / fonts / icons) are static —
+     * cookies do not affect their bodies — so they keep the
+     * default cache.addAll path. */
+    const navRequest = new Request('/', { credentials: 'omit' });
+    const otherUrls = PRE_AUTH_PRECACHE_URLS.filter((u) => u !== '/');
     event.waitUntil(
-        caches
-            .open(PRE_AUTH_CACHE_NAME)
-            .then((cache) => cache.addAll(PRE_AUTH_PRECACHE_URLS))
+        caches.open(PRE_AUTH_CACHE_NAME).then((cache) =>
+            Promise.all([cache.add(navRequest), cache.addAll(otherUrls)])
+        )
     );
     /* Skip the wait so a freshly installed SW activates on the
      * next page load without requiring a manual refresh. The

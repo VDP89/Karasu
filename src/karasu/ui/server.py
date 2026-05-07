@@ -135,8 +135,14 @@ AUTH_NO_AUTH: bool = True
 AUTH_DEPLOYED: bool = False
 AUTH_TRUSTED_PROXIES: frozenset[str] = frozenset({"127.0.0.1", "::1"})
 AUTH_EXPECTED_ORIGINS: tuple[str, ...] = ()
+# Brief §3-C session TTL range. Default 14d; operator can
+# override via ``karasu ui --session-ttl-days N`` (1..30
+# range enforced at the CLI parse step).
+from karasu.ui._auth import DEFAULT_SESSION_TTL_SECONDS as _DEFAULT_TTL_S
+AUTH_SESSION_TTL_SECONDS: int = _DEFAULT_TTL_S
 AUTH_CREDENTIALS_PATH: Path | None = None
 _AUTH_CREDS_CACHE: AuthCredentials | None = None
+_AUTH_CREDS_MTIME: float | None = None
 _AUTH_RATE_LIMIT: LoginRateLimit | None = None
 
 # Login JSON body cap. Real bodies are ~200 bytes (username +
@@ -759,25 +765,38 @@ class UIHandler(BaseHTTPRequestHandler):
     def _session_payload(self) -> dict[str, Any] | None:
         """Verify the session cookie and return the payload, or
         None when no valid session is present. Returns None in
-        no-auth posture; the caller decides what that means."""
-        if AUTH_NO_AUTH or _AUTH_CREDS_CACHE is None:
+        no-auth posture; the caller decides what that means.
+
+        Refreshes the credentials cache via mtime check before
+        verifying so a credential rotation (Codex round 3 P1
+        audit binding 2026-05-08) invalidates live sessions
+        without a process restart."""
+        if AUTH_NO_AUTH:
+            return None
+        creds = _refresh_creds_cache()
+        if creds is None:
             return None
         token = self._parse_cookies().get(SESSION_COOKIE_NAME)
         if not token:
             return None
         try:
-            return verify_session_token(token, creds=_AUTH_CREDS_CACHE)
+            return verify_session_token(token, creds=creds)
         except AuthSessionError:
             return None
 
     def _verify_csrf_for_request(self, payload: dict[str, Any]) -> bool:
         """Constant-time CSRF double-submit check using the
-        verified session payload (§3-F)."""
+        verified session payload (§3-F). Reads through the
+        refreshed cache so a rotation that lands between the
+        session check and the CSRF check does not race."""
+        creds = _refresh_creds_cache()
+        if creds is None:
+            return False
         cookies = self._parse_cookies()
         return verify_csrf(
             cookie_value=cookies.get(CSRF_COOKIE_NAME),
             header_value=self.headers.get(CSRF_HEADER_NAME),
-            creds=_AUTH_CREDS_CACHE,
+            creds=creds,
             username=payload["user"],
             gen=payload["gen"],
         )
@@ -1589,7 +1608,15 @@ class UIHandler(BaseHTTPRequestHandler):
                 reaches this branch when configure_auth is
                 inconsistent).
         """
-        if AUTH_NO_AUTH or _AUTH_CREDS_CACHE is None:
+        if AUTH_NO_AUTH:
+            self._send(
+                503,
+                b'{"error":"auth not configured"}',
+                "application/json",
+            )
+            return
+        creds = _refresh_creds_cache()
+        if creds is None:
             self._send(
                 503,
                 b'{"error":"auth not configured"}',
@@ -1653,7 +1680,6 @@ class UIHandler(BaseHTTPRequestHandler):
             )
             return
 
-        creds = _AUTH_CREDS_CACHE
         auth_ok = False
         if username != creds.username:
             # Timing parity: pay a scrypt cost on the no-username
@@ -1690,7 +1716,9 @@ class UIHandler(BaseHTTPRequestHandler):
             "login ok (user=%s, ip=%s)", creds.username, client_ip
         )
 
-        session_token = issue_session_token(creds=creds)
+        session_token = issue_session_token(
+            creds=creds, ttl_seconds=AUTH_SESSION_TTL_SECONDS
+        )
         csrf_token = issue_csrf_token(
             creds=creds,
             username=creds.username,
@@ -1882,10 +1910,8 @@ class UIHandler(BaseHTTPRequestHandler):
           Max-Age = same as session
           Secure when AUTH_DEPLOYED
         """
-        from karasu.ui._auth import DEFAULT_SESSION_TTL_SECONDS
-
         secure = "; Secure" if AUTH_DEPLOYED else ""
-        max_age = DEFAULT_SESSION_TTL_SECONDS
+        max_age = AUTH_SESSION_TTL_SECONDS
         session = (
             f"{SESSION_COOKIE_NAME}={session_token}; "
             f"Max-Age={max_age}; Path=/; HttpOnly; "
@@ -2047,6 +2073,7 @@ def configure_auth(
     deployed: bool = False,
     trusted_proxies: frozenset[str] | None = None,
     expected_origins: tuple[str, ...] = (),
+    session_ttl_seconds: int | None = None,
 ) -> None:
     """Wire the UI-13 auth surface.
 
@@ -2071,16 +2098,21 @@ def configure_auth(
     """
     global AUTH_NO_AUTH, AUTH_DEPLOYED, AUTH_TRUSTED_PROXIES
     global AUTH_EXPECTED_ORIGINS, AUTH_CREDENTIALS_PATH
+    global AUTH_SESSION_TTL_SECONDS
     global _AUTH_CREDS_CACHE, _AUTH_RATE_LIMIT
     AUTH_NO_AUTH = no_auth
     AUTH_DEPLOYED = deployed
     if trusted_proxies is not None:
         AUTH_TRUSTED_PROXIES = trusted_proxies
     AUTH_EXPECTED_ORIGINS = expected_origins
+    if session_ttl_seconds is not None:
+        AUTH_SESSION_TTL_SECONDS = session_ttl_seconds
+    global _AUTH_CREDS_MTIME
     AUTH_CREDENTIALS_PATH = credentials_path
     _AUTH_RATE_LIMIT = LoginRateLimit() if not no_auth else None
     if no_auth:
         _AUTH_CREDS_CACHE = None
+        _AUTH_CREDS_MTIME = None
         return
     # Codex P1 round 2 audit binding 2026-05-08: auth-
     # enabled startup with no credentials_path is a fail-
@@ -2093,6 +2125,10 @@ def configure_auth(
     if credentials_path is None:
         raise AuthCredentialsError("auth enabled but credentials_path missing")
     _AUTH_CREDS_CACHE = load_credentials(credentials_path)
+    try:
+        _AUTH_CREDS_MTIME = credentials_path.stat().st_mtime
+    except OSError:
+        _AUTH_CREDS_MTIME = None
 
 
 def _reset_auth_state() -> None:
@@ -2102,14 +2138,63 @@ def _reset_auth_state() -> None:
     surface."""
     global AUTH_NO_AUTH, AUTH_DEPLOYED, AUTH_TRUSTED_PROXIES
     global AUTH_EXPECTED_ORIGINS, AUTH_CREDENTIALS_PATH
-    global _AUTH_CREDS_CACHE, _AUTH_RATE_LIMIT
+    global _AUTH_CREDS_CACHE, _AUTH_CREDS_MTIME, _AUTH_RATE_LIMIT
     AUTH_NO_AUTH = True
     AUTH_DEPLOYED = False
     AUTH_TRUSTED_PROXIES = frozenset({"127.0.0.1", "::1"})
     AUTH_EXPECTED_ORIGINS = ()
     AUTH_CREDENTIALS_PATH = None
     _AUTH_CREDS_CACHE = None
+    _AUTH_CREDS_MTIME = None
     _AUTH_RATE_LIMIT = None
+    global AUTH_SESSION_TTL_SECONDS
+    AUTH_SESSION_TTL_SECONDS = _DEFAULT_TTL_S
+
+
+def _refresh_creds_cache() -> AuthCredentials | None:
+    """Re-read karasu-auth.json when its mtime changed since
+    the last load. Codex round 3 P1 audit binding 2026-05-08:
+    the runbook's "no restart needed" rotation contract
+    requires the live process to pick up the new
+    credentials_generation + signing secret before the next
+    auth check fires.
+
+    Per-request hot-reload. Cheap on the happy path (one
+    ``stat`` syscall when mtime is unchanged); reload only
+    when the file actually changed.
+
+    Returns the (possibly refreshed) cached credentials.
+    Defensive when:
+      * AUTH_NO_AUTH is True       → returns None.
+      * file vanished post-startup → returns the prior cache
+                                     (caller treats as no
+                                     valid session).
+      * malformed reload           → keeps the prior cache;
+                                     deployed posture continues
+                                     verifying against the
+                                     last good shape rather
+                                     than locking the operator
+                                     out on a transient corrupt
+                                     write.
+    """
+    global _AUTH_CREDS_CACHE, _AUTH_CREDS_MTIME
+    if AUTH_NO_AUTH or AUTH_CREDENTIALS_PATH is None:
+        return _AUTH_CREDS_CACHE
+    try:
+        current_mtime = AUTH_CREDENTIALS_PATH.stat().st_mtime
+    except OSError:
+        return _AUTH_CREDS_CACHE
+    if current_mtime == _AUTH_CREDS_MTIME:
+        return _AUTH_CREDS_CACHE
+    try:
+        _AUTH_CREDS_CACHE = load_credentials(AUTH_CREDENTIALS_PATH)
+        _AUTH_CREDS_MTIME = current_mtime
+    except AuthCredentialsError:
+        # Keep the prior good cache so a transient malformed
+        # write (e.g. mid-rotation interrupted) does not lock
+        # the operator out. The next stat will retry.
+        pass
+    return _AUTH_CREDS_CACHE
 
 
 def run_ui_server(

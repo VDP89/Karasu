@@ -373,6 +373,43 @@ def test_post_auth_precache_excludes_pre_auth_set(sw_source: str) -> None:
     assert not missing, f"post-auth precache missing: {missing}"
 
 
+def test_install_handler_root_uses_credentials_omit(sw_source: str) -> None:
+    """Codex round 3 P1 audit binding 2026-05-08: the install
+    handler must request ``/`` with credentials:'omit' so a
+    SW version bump while the operator already holds a valid
+    session does NOT cache the authenticated PWA shell HTML
+    under the pre-auth cache key. Other static assets (CSS /
+    fonts / icons) stay on the default addAll path because
+    cookies do not affect their bodies."""
+    install_match = re.search(
+        r"self\.addEventListener\(\s*['\"]install['\"].*?\n\}\s*\)\s*;",
+        sw_source,
+        re.DOTALL,
+    )
+    assert install_match is not None
+    body = install_match.group(0)
+    assert re.search(
+        r"new\s+Request\(\s*['\"]/[\s'\"]*['\"]\s*,\s*"
+        r"\{\s*credentials\s*:\s*['\"]omit['\"]\s*\}\s*\)",
+        body,
+    ), (
+        "install handler must precache `/` via "
+        "new Request('/', { credentials: 'omit' })"
+    )
+
+
+def test_login_html_registers_service_worker() -> None:
+    """Codex round 3 P1 audit binding: the login surface MUST
+    register the SW so the install runs PRE-auth and the
+    pre-auth cache fills before any authenticated session
+    exists."""
+    html = LOGIN_HTML_PATH.read_text(encoding="utf-8")
+    assert re.search(
+        r"navigator\.serviceWorker\.register\(\s*['\"]/assets/sw\.js['\"]",
+        html,
+    ), "login.html must register the SW from /assets/sw.js"
+
+
 def test_install_handler_opens_pre_auth_cache_only(sw_source: str) -> None:
     """The install handler must open PRE_AUTH_CACHE_NAME (not
     the post-auth bucket) so a logged-out browser's first

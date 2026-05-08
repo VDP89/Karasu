@@ -222,7 +222,7 @@ off pixels at the corners; the canonical crow as currently
 sized risks losing the head detail). §3-C documents the
 fallback path.
 
-## 3 · Confirmed decisions (operator sign-off pending)
+## 3 · Confirmed decisions (operator sign-off complete 2026-05-08)
 
 ### A) Web app manifest fields
 
@@ -230,11 +230,16 @@ fallback path.
 `start_url`.
 
 ```text
-File: src/karasu/ui/static/manifest.webmanifest
-       (served at GET /manifest.webmanifest, anonymous-OK
-        per UI-13 §3-D path perimeter — manifest is one of
-        the small inert pre-auth assets the browser needs
-        to discover the install posture).
+File: src/karasu/ui/static/manifest.json
+       (UI-13 already provisioned this file; UI-14 modifies
+        the existing content rather than creating a new
+        artefact at a new path).
+Served at: GET /assets/manifest.json
+       (UI-13 §3-D anonymous whitelist, EXISTING entry —
+        UI-14 does NOT add a new path; only updates the
+        manifest body and re-binds the existing path
+        contract). The /assets/* namespace maps to
+        src/karasu/ui/static/* per server.py:1043-1044.
 
 Sealed fields:
 {
@@ -272,7 +277,7 @@ Reasoning:
 
 [SEALED 2026-05-08]
 
-**[PROPOSAL — NEEDS OPERATOR SIGN-OFF]** — `theme_color`,
+**[SEALED 2026-05-08]** — `theme_color`,
 `background_color`, `orientation`, `icons` array, optional
 fields.
 
@@ -305,12 +310,17 @@ PROPOSAL:
 Reasoning:
 
 - `theme_color` and `background_color` both `#0a0a0b` —
-  inferred from the existing `--bg-0` token. The brief
-  treats this as PROPOSAL until UI-14 chunk code verifies
-  the value against `static/css/tokens.css` and against
-  the screenshots produced by `scripts/ui_screenshots.py`
-  (the PNG should be visually indistinguishable from the
-  app shell's empty state).
+  inferred from the existing `--bg-0` token. The current
+  on-disk manifest (UI-13 minimal seed) has
+  `theme_color: #131316`; UI-14 chunk code verifies the
+  hex against `static/css/tokens.css` at implementation
+  time and aligns the manifest body with the token, then
+  amends in a follow-up commit if the token resolves to a
+  different value than `#0a0a0b`. Both fields collapse to
+  the canvas color so the splash screen the browser
+  auto-generates from theme + background + 512 px icon
+  is visually indistinguishable from the app shell's
+  empty state.
 - `orientation: "any"`. The shell is editorial reading;
   both portrait and landscape work. Locking to `portrait`
   would be a UX regression on tablet.
@@ -538,8 +548,8 @@ Reasoning:
 
 ### D) Mobile layout audit
 
-**[PROPOSAL — NEEDS OPERATOR SIGN-OFF]** — corrective audit
-of existing breakpoints, one optional new breakpoint.
+**[SEALED 2026-05-08]** — corrective audit of existing
+breakpoints, one optional new breakpoint.
 
 ```text
 TARGET VIEWPORTS (logical px):
@@ -615,17 +625,29 @@ appear. This is a platform decision by Apple, not a bug.
 
 UI-14 BINDING:
 
-1. The PWA's push opt-in modal (UI-12b) detects the iOS
-   in-Safari case via `navigator.standalone === false` AND
-   user-agent matches iOS Safari. In that branch, the
-   modal's primary CTA changes from "Enable notifications"
-   to "Install Karasu first" with a one-line link to the
-   install affordance (§3-B), and the rest of the flow
-   remains gated.
+1. UI-12b's `browserPushSupport()` already returns
+   `state: "unsupported"` on iOS Safari tab (no
+   PushManager / no Notification API). UI-12b's
+   `wirePushFooter` already DETACHES click + keydown
+   handlers when state is "unsupported" — the modal does
+   NOT open in that branch, and PushManager.subscribe is
+   structurally unreachable. UI-14 does NOT introduce
+   new gating logic. UI-14 ONLY refines the COPY of the
+   footer "Notifications: unsupported" line on iOS Safari
+   tab to surface "Install Karasu first" with a pointer
+   (single inline link OR a sentence) to
+   docs/pwa-install.md or the install affordance in the
+   same footer family. The detection branch
+   (navigator.standalone === false + iOS Safari UA) is
+   read-only inside UI-14's footer-render code path; it
+   does NOT touch the modal open/close logic, the
+   subscribe flow, or the rollback path.
 
-2. After install, when the operator opens the home-screen
-   icon, `navigator.standalone === true`, and the modal
-   reverts to its standard UI-12b flow.
+2. After install, the operator opens the home-screen
+   icon and `navigator.standalone === true`. UI-12b's
+   browserPushSupport detects PushManager + Notification
+   normally; the footer state flips from "unsupported"
+   to "off" and the modal flow runs as UI-12b sealed.
 
 3. Android Chrome supports Web Push in both browser-tab
    and installed-PWA postures. UI-14 does NOT artificially
@@ -683,8 +705,13 @@ Reasoning:
   Firefox is best-effort but not a release blocker.
 
 [SEALED 2026-05-08 — iOS push requires installed PWA; UI-14
-delivers documentation + UI-12b modal copy adjustment, no
-new code path]
+delivers docs/pwa-install.md (NEW) + COPY-ONLY refinement
+of the existing UI-12b "unsupported" footer line on iOS
+Safari tab. ZERO new gating logic; ZERO change to the
+PushManager.subscribe call site or its callers; ZERO
+change to the UI-12b modal open/close path. If audit finds
+UI-14 modifying any conditional around the subscribe call,
+that is a pin violation per §11.6.17.]
 
 ### F) Service worker update strategy
 
@@ -809,44 +836,97 @@ can install Karasu before logging in.
 POST-INSTALL OPEN:
 The installed PWA opens at start_url ("/"). UI-13's auth
 middleware decides:
-  - No session cookie OR invalid cookie → render the
-    login surface (login.html + login.css + login.js, all
-    UI-13 sealed primitives).
-  - Valid session cookie → render the application shell.
+  - No session cookie OR invalid cookie → GET / renders
+    the login surface (login.html + login.css are UI-13
+    sealed primitives served from the existing /assets/
+    namespace).
+  - Valid session cookie → GET / renders the application
+    shell (existing index.html).
+There is NO separate /login route; the login surface
+renders inline at GET / per UI-13 §3-D.
 
-WHAT THE PWA SHELL SHIPS PRE-AUTH:
-Per UI-13 §3-D path perimeter (binding):
+UI-13 PATH PERIMETER (verbatim from UI-13 §3-D + binding
+on disk in src/karasu/ui/_auth.py:887-908):
 
-  PRE-AUTH ANONYMOUS allowed:
-    GET /                       (login page if not authed)
-    GET /login                  (login page)
-    GET /assets/css/login.css
-    GET /assets/css/tokens.css  (parsed by login.css)
-    GET /assets/css/reset.css
-    GET /assets/css/base.css
-    GET /assets/css/typography.css
-    GET /assets/fonts/*         (woff2 self-hosted)
-    GET /assets/icons/*         (PWA icons; UI-14 ADDS to
-                                 the anonymous list)
-    GET /favicon.ico
-    GET /manifest.webmanifest   (UI-14 ADDS — required for
-                                 install detection)
-    GET /sw.js                  (UI-13 sealed: anonymous
-                                 with strict scope)
-    POST /auth/login            (rate-limited)
-    GET  /auth/logout, POST /auth/logout
+  GET (anonymous):
+    /
+    /assets/css/login.css
+    /assets/css/tokens.css
+    /assets/css/reset.css
+    /assets/css/base.css
+    /assets/icons/karasu-192.png
+    /assets/crow/crow.svg
+    /assets/manifest.json
+    /assets/sw.js
+    /auth/logout                     (idempotent recovery
+                                      shape; same-origin
+                                      Referer/Origin check
+                                      enforced in deployed
+                                      posture per UI-13
+                                      §3-D LOGOUT split)
 
-  EVERYTHING ELSE auth-gated:
-    GET /api/* (events, health, meta, agents, push)
-    POST /api/push/subscribe, POST /api/push/unsubscribe
-    GET /design-system
+  GET prefix (anonymous):
+    /assets/fonts/                   (entire woff2 dir)
 
-UI-14 BINDING ADDITION:
-The manifest path (/manifest.webmanifest) and the icon
-paths (/assets/icons/karasu-*.png) join the anonymous
-allow-list. The brief documents this explicitly because
-UI-13's path perimeter is shape-locked; UI-14 is the
-chunk earning the additions.
+  POST (anonymous):
+    /auth/login                      (rate-limited;
+                                      CSRF-cookie-exempt;
+                                      Origin check)
+
+  POST /auth/logout is AUTH-REQUIRED + CSRF-REQUIRED
+  (NOT anonymous). UI-14 does NOT change this. The GET
+  shape covers idempotent recovery; the POST shape is
+  for explicit JS-driven logout from the PWA shell.
+
+  EVERY OTHER PATH requires a valid session per UI-13
+  §3-C: GET routes without session redirect to /; mutating
+  routes without session → 401 generic; mutating routes
+  with session but failing CSRF → 403 generic.
+
+UI-14 ADDITIONS to the EXACT anonymous set (the only
+extension UI-14 earns; all live INSIDE the existing
+/assets/icons/ namespace, which UI-13 already exposes
+under /assets/):
+
+  GET /assets/icons/karasu-512.png            ← EXISTING
+                                                file on
+                                                disk;
+                                                UI-13's
+                                                manifest
+                                                already
+                                                declares
+                                                it but
+                                                UI-13's
+                                                exact
+                                                whitelist
+                                                missed it.
+                                                UI-14
+                                                closes the
+                                                gap.
+  GET /assets/icons/karasu-maskable-192.png   ← NEW PNG
+                                                + new
+                                                whitelist
+                                                entry.
+  GET /assets/icons/karasu-maskable-512.png   ← NEW PNG
+                                                + new
+                                                whitelist
+                                                entry.
+
+ZERO new paths outside /assets/. ZERO changes to
+/auth/* perimeter. ZERO changes to /api/* perimeter.
+ZERO change to the GET / inline-login behavior. The
+existing UI-13 entries (manifest.json, sw.js,
+icons/karasu-192.png, crow.svg, fonts/, css/, and the
+/auth/* shape) all remain BIT-for-BIT as UI-13 sealed
+them.
+
+WHAT UI-14 MODIFIES INSIDE /assets/manifest.json:
+The file already exists (UI-13 minimal seed). UI-14
+expands the body per §3-A SEALED — adds icons array
+entries (192/512 maskable), adjusts theme_color +
+background_color to the --bg-0 token if verification
+finds drift, adds optional fields (categories / lang /
+dir). The path /assets/manifest.json does NOT change.
 
 PIN: NO BUS / EVENT / SCAR / TRUST / PUSH STATE LEAKS
 PRE-AUTH. The PWA shell pre-auth is the login surface +
@@ -856,9 +936,10 @@ post-auth only.
 
 PIN: SW PRE-AUTH/POST-AUTH CACHE SPLIT (UI-13 §3-H)
 UNCHANGED. UI-14's update strategy (§3-F) modifies the
-SW lifecycle but does NOT modify the cache routing or
-key ranges. Pre-auth cache (login assets) and post-auth
-cache (shell assets) remain disjoint per UI-13 sealed.
+SW install + activate + message handlers but does NOT
+modify the fetch handler, cache routing, or key ranges.
+Pre-auth cache (login assets) and post-auth cache (shell
+assets) remain disjoint per UI-13 sealed.
 ```
 
 Reasoning:
@@ -988,9 +1069,20 @@ UI-14 MAY modify:
     family lives) — install affordance styling.
   - static/js/install.js (NEW — beforeinstallprompt
     capture, dismiss state, refresh affordance).
-  - static/manifest.webmanifest (NEW).
-  - static/assets/icons/* (NEW pre-rendered PNGs checked
-    into the repo per §3-C SEALED — no build pipeline).
+  - static/manifest.json (MODIFIED — UI-13 minimal
+    seed exists; UI-14 expands body per §3-A SEALED;
+    path /assets/manifest.json UNCHANGED).
+  - static/icons/karasu-maskable-{192,512}.png
+    (NEW pre-rendered PNGs checked into the repo per
+    §3-C SEALED — no build pipeline. The 192-any +
+    512-any files already exist on disk; UI-14 adds ONLY
+    the maskable variants.)
+  - src/karasu/ui/_auth.py (MODIFIED — extends the
+    `_ANONYMOUS_GET_PATHS` frozenset with 3 entries:
+    /assets/icons/karasu-512.png (closes the UI-13 gap
+    where the 512 was declared in manifest but not
+    whitelisted) + the 2 new maskable PNG paths. NO
+    other change to _auth.py.)
   - scripts/ui_icons.py (OPTIONAL helper; lands ONLY if
     Pillow alone suffices per §3-C SEALED Path A;
     otherwise dropped per Path B).
@@ -1032,13 +1124,17 @@ other revisit attempt is a brief failure.
 
 ```text
 NEW runtime files:
-  src/karasu/ui/static/manifest.webmanifest
-  src/karasu/ui/static/assets/icons/karasu-{192,512}.png
-  src/karasu/ui/static/assets/icons/karasu-maskable-{192,512}.png
+  src/karasu/ui/static/icons/karasu-maskable-192.png
+  src/karasu/ui/static/icons/karasu-maskable-512.png
                                   (PRE-RENDERED PNGs, checked
                                    into the repo per §3-C
-                                   sealed; NO build pipeline
-                                   ships)
+                                   SEALED; NO build pipeline
+                                   ships. The 192-any and
+                                   512-any PNGs already exist
+                                   under static/icons/ per
+                                   UI-13 minimal seed; UI-14
+                                   adds ONLY the maskable
+                                   variants as new files.)
   src/karasu/ui/static/js/install.js
 
 OPTIONAL helper script (NOT runtime; only if usable
@@ -1050,40 +1146,66 @@ within existing dev deps):
                                   sealed Path B)
 
 MODIFIED runtime files:
-  src/karasu/ui/static/sw.js          (§3-F update strategy
-                                       + message handler)
-  src/karasu/ui/static/index.html     (manifest link tag +
-                                       footer install slot)
-  src/karasu/ui/static/css/footer.css (or equivalent slot
-                                       file — install
-                                       affordance styling)
-  src/karasu/ui/server.py             (route /manifest.web-
-                                       manifest with correct
-                                       Content-Type +
-                                       anonymous-OK; route
-                                       /assets/icons/* same;
-                                       both join the
-                                       UI-13 §3-D anonymous
-                                       allow-list)
+  src/karasu/ui/static/sw.js           (§3-F update strategy
+                                        + message handler;
+                                        fetch handler ordering
+                                        + cache routing
+                                        UNCHANGED per UI-8 +
+                                        UI-13 §3-H)
+  src/karasu/ui/static/index.html      (footer install slot;
+                                        existing manifest
+                                        <link rel="manifest">
+                                        already targets
+                                        /assets/manifest.json)
+  src/karasu/ui/static/manifest.json   (body expansion per
+                                        §3-A SEALED — adds
+                                        maskable icon entries,
+                                        aligns theme/bg color
+                                        with --bg-0 token if
+                                        verification finds
+                                        drift, optional
+                                        categories/lang/dir)
+  src/karasu/ui/static/css/footer.css  (or equivalent slot
+                                        file — install
+                                        affordance styling)
+  src/karasu/ui/_auth.py               (extends
+                                        _ANONYMOUS_GET_PATHS
+                                        with /assets/icons/
+                                        karasu-512.png +
+                                        2 maskable PNG paths;
+                                        no other change)
+
+server.py routing is NOT modified — the /assets/* prefix
+already resolves to src/karasu/ui/static/* via the
+existing handler at server.py:1043-1044, so the new PNGs
+are served by the existing path mapping the moment they
+land on disk and join the auth allow-list via _auth.py.
 
 NEW tests:
-  tests/test_ui_install.py     (install affordance shape +
-                                dismiss state + iOS modal
-                                copy)
+  tests/test_ui_install.py     (install affordance footer
+                                shape + dismiss state +
+                                iOS inline-hint copy +
+                                no-modal negative-shape
+                                assertion)
   tests/test_ui_icons.py       (golden PNG hash + maskable
                                 safe-area assertion)
-  tests/test_ui_sw_update.py   (install/activate/message
-                                handler discipline)
-  tests/test_ui_manifest.py    (manifest shape validation +
-                                anonymous routing test +
-                                Content-Type pin)
+  tests/test_ui_sw_update.py   (install / activate / message
+                                handler discipline + fetch
+                                handler ordering UNCHANGED
+                                regression test)
+  tests/test_ui_manifest.py    (manifest body shape
+                                validation + anonymous
+                                /assets/manifest.json route
+                                + Content-Type pin +
+                                _ANONYMOUS_GET_PATHS includes
+                                the 3 new icon entries)
 
 NEW docs:
-  docs/pwa-install.md          (per-platform install +
-                                push walkthrough; OR an
-                                expansion of
-                                docs/deploy-runbook.md
-                                — chunk picks)
+  docs/pwa-install.md          (per-platform install + push
+                                walkthrough — SEALED per
+                                §3-E + Q11; deploy-runbook
+                                is NOT extended for PWA
+                                install content)
 
 NEW dev deps:
   NONE. Operator-pinned 2026-05-08: pre-rendered PNGs are
@@ -1106,10 +1228,10 @@ Reasoning:
 
 - Operator-pinned 2026-05-08 rejects the cairosvg dev dep.
   Pre-rendered PNGs in the repo are the simpler path:
-  binaries in `src/karasu/ui/static/assets/icons/` ship as
-  package data, no build step, no rasterisation toolchain
-  in the project surface. The optional helper script is
-  bounded to existing deps.
+  binaries in `src/karasu/ui/static/icons/` ship as
+  package data (the existing UI-13 location), no build
+  step, no rasterisation toolchain in the project surface.
+  The optional helper script is bounded to existing deps.
 - The UI-0 §4 ban on build steps applies to the **runtime
   delivery pipeline**. Pre-rendered PNGs are already
   static; the optional helper (if it lands) is operator-
@@ -1131,8 +1253,10 @@ COMPONENTS:
   NEW: install-affordance (footer slot variant).
   NEW: refresh-affordance (footer slot variant — surfaces
        when sw.js update is waiting per §3-F).
-  NEW: ios-install-modal (modal variant — informational
-       only; opens on user click in iOS Safari path).
+  (NO modal component — §3-B SEALED: NO MODAL ANYWHERE,
+   including iOS. iOS instruction lives ONLY as the
+   inline hint inside the install-affordance "ready"
+   state and in docs/pwa-install.md.)
 
 CSS FILES:
   No new dedicated CSS file unless an audit-driven mobile
@@ -1162,19 +1286,30 @@ DEFAULT: single chunk.
 UI-14 ships as one PR sized at the macro brief estimate
 (~800-1500 LOC including tests + docs). The shape:
 
-  Commit 1: scripts/ui_icons.py + dev deps + golden PNGs
-            + test_ui_icons.py.
-  Commit 2: manifest.webmanifest + server.py routing +
-            test_ui_manifest.py + UI-13 anonymous allow-
-            list extension.
-  Commit 3: install.js + footer slot + index.html +
-            install.css (or extension of existing) +
-            test_ui_install.py.
-  Commit 4: sw.js update strategy + test_ui_sw_update.py.
+  Commit 1: pre-rendered maskable PNGs (192 + 512)
+            committed under static/icons/ + golden hash
+            test in test_ui_icons.py + (optional)
+            scripts/ui_icons.py helper iff Pillow alone
+            suffices. NO new dev deps.
+  Commit 2: static/manifest.json body expansion (icons
+            array including maskable entries; theme/bg
+            color verification vs --bg-0 token; optional
+            categories/lang/dir) + test_ui_manifest.py +
+            src/karasu/ui/_auth.py _ANONYMOUS_GET_PATHS
+            extension (3 entries: 512-any + 2 maskable
+            paths). NO server.py routing change.
+  Commit 3: install.js + footer install slot in
+            index.html + install affordance styling
+            (extends existing footer.css or equivalent
+            slot file) + test_ui_install.py.
+  Commit 4: sw.js install + activate + message handler
+            update strategy + test_ui_sw_update.py
+            (fetch handler ordering UNCHANGED regression).
   Commit 5: mobile layout audit fixes + ui_screenshots.py
             extensions + screenshots/.
-  Commit 6: docs/pwa-install.md (or deploy-runbook.md
-            extension) + THIRD_PARTY_NOTICES.md if needed.
+  Commit 6: docs/pwa-install.md (NEW per §3-E SEALED) +
+            THIRD_PARTY_NOTICES.md addendum for icon PNG
+            adaptation chain.
   Commit 7+: Codex audit follow-ups in-branch.
 
 POSSIBLE SPLIT: 14a + 14b.
@@ -1439,16 +1574,38 @@ merge.
           re-binds).
 
 §11.6.3 — NO install banners. NO install toasts. NO
-          first-visit hints. NO modal-on-load. The install
-          affordance is the footer slot ONLY (with the
-          iOS-only one-shot modal opening on USER CLICK
-          per §3-B). UI-8 audit pin #5 binds.
+          first-visit hints. NO modal-on-load. NO MODAL
+          ANYWHERE — including iOS Safari (§3-B SEALED
+          2026-05-08 removed the earlier proposal's
+          one-shot modal). The install affordance is the
+          footer slot ONLY in all four states; the iOS
+          "ready" state ships its instruction as an inline
+          hint "(Share → Add to Home Screen)" in the same
+          footer slot, never as a JS-driven modal. Full
+          educational walk-through lives in
+          docs/pwa-install.md (§3-E SEALED). UI-8 audit
+          pin #5 binds.
 
-§11.6.4 — manifest.webmanifest is anonymous-reachable.
-          icons/ paths are anonymous-reachable. NO other
-          anonymous-allow-list extension is permitted by
-          UI-14. The UI-13 §3-D path perimeter is the
-          authority; UI-14 §3-G surgically adds two paths.
+§11.6.4 — UI-13 §3-D path perimeter is the authority.
+          UI-14 extends the EXACT anonymous GET set with
+          THREE entries inside the existing /assets/icons/
+          namespace:
+            /assets/icons/karasu-512.png  (closes UI-13's
+                                           manifest-vs-
+                                           whitelist gap)
+            /assets/icons/karasu-maskable-192.png  (NEW)
+            /assets/icons/karasu-maskable-512.png  (NEW)
+          /assets/manifest.json + /assets/sw.js +
+          /assets/icons/karasu-192.png + /assets/crow/
+          crow.svg + /assets/fonts/* + /assets/css/* + /
+          + /auth/login (POST) + /auth/logout (GET) ALL
+          remain UI-13 sealed verbatim. POST /auth/logout
+          stays AUTH+CSRF-required. NO new path outside
+          /assets/icons/. NO change to the /auth/*
+          perimeter. NO change to /api/* perimeter. The
+          binding test surface lives in
+          tests/test_ui_manifest.py + the UI-13
+          regression tests for is_anonymous_path.
 
 §11.6.5 — NO operator state, NO bus events, NO scar log,
           NO trust state, NO push subscriptions, NO
@@ -1543,21 +1700,33 @@ merge.
            rendering by viewport size beyond CSS media
            queries.
 
-§11.6.16 — install.js + manifest.webmanifest + icons/* +
-           pwa-install.md docs MUST NOT contain raw push
-           endpoints, raw VAPID secrets, raw session
-           tokens, raw credentials, raw scrypt hashes, OR
-           any other secret material. Pin §11.6.16
-           carry-forward verbatim from UI-12c.
+§11.6.16 — install.js + static/manifest.json + static/
+           icons/* + docs/pwa-install.md MUST NOT contain
+           raw push endpoints, raw VAPID secrets, raw
+           session tokens, raw credentials, raw scrypt
+           hashes, OR any other secret material. Pin
+           §11.6.16 carry-forward verbatim from UI-12c.
 
-§11.6.17 — iOS push branch in UI-12b modal copy: when
-           navigator.standalone === false on iOS, the
-           modal primary CTA changes copy AND links to
-           the install affordance. The push subscription
-           flow (PushManager.subscribe) is NOT called in
-           that branch (would silently fail on iOS Safari
-           tab). UI-14 modifies the COPY ONLY; the
-           UI-12b code path post-install is identical.
+§11.6.17 — iOS push UX: COPY ONLY change in the existing
+           UI-12b "unsupported" branch. UI-12b's
+           wirePushFooter already detaches click + keydown
+           handlers when push state is "unsupported"
+           (current-state.md UI-12b entry), so the modal
+           does NOT open in iOS-Safari-tab and
+           PushManager.subscribe is structurally
+           unreachable from that branch. UI-14 does NOT
+           introduce new gating logic; UI-14 ONLY refines
+           the copy of the footer's "Notifications:
+           unsupported" line on iOS Safari tab to surface
+           "Install Karasu first" with a pointer to
+           docs/pwa-install.md (or a single link to the
+           install affordance in the same footer family).
+           UI-12b's subscribe call site, browserPushSupport
+           detection, and modal open/close logic are
+           UNCHANGED. If audit finds UI-14 introducing any
+           new conditional around PushManager.subscribe,
+           that is a pin violation — back the brief out
+           to copy + docs only.
 
 §11.6.18 — Telegram interface remains active alongside
            the PWA. UI-14 does NOT remove the Telegram

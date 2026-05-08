@@ -282,7 +282,7 @@ Reasoning:
 fields.
 
 ```text
-PROPOSAL:
+SEALED 2026-05-08:
 {
   "theme_color":      "#0a0a0b",
   "background_color": "#0a0a0b",
@@ -324,13 +324,14 @@ Reasoning:
 - `orientation: "any"`. The shell is editorial reading;
   both portrait and landscape work. Locking to `portrait`
   would be a UX regression on tablet.
-- `icons` array: PROPOSAL-pending the maskable variant
-  audit (§3-C). The canonical crow at 24/96 px (UI-3 / UI-5
-  baseline) does not directly translate to 192/512 PNG
-  rasterization without padding rules. §3-C documents the
-  pipeline.
-- `categories`, `lang`, `dir` are nice-to-have for app
-  store / install prompt copy. PROPOSAL.
+- `icons` array: SEALED on the four entries above. §3-C
+  documents the maskable rasterisation pipeline + the
+  fallback chain (re-tighten SVG → glyph-only) for the
+  case where the canonical crow at 24/96 px does not
+  cleanly translate to 192/512 PNG with the 12.5%
+  safe-area inset.
+- `categories`, `lang`, `dir`: SEALED at the values
+  above for app store / install prompt copy.
 
 The chunk-level brief (this doc) reserves the right to add
 or remove optional manifest fields based on
@@ -440,7 +441,7 @@ rendered PNGs checked into the repo; NO new dev dependency.
 
 ```text
 SOURCE:
-src/karasu/ui/static/assets/crow/crow.svg
+src/karasu/ui/static/crow/crow.svg
   (canonical UI-5 asset, viewBox 72×72, currentColor,
    OpenMoji-adapted CC-BY-SA 4.0 with operator legs + eye).
 
@@ -480,7 +481,7 @@ native SVG rasteriser), falls to Path B without
 introducing any new dependency.
 
 OUTPUT (committed binaries):
-src/karasu/ui/static/assets/icons/
+src/karasu/ui/static/icons/
   karasu-192.png            (any, 192×192)
   karasu-512.png            (any, 512×512)
   karasu-maskable-192.png   (maskable; 12.5% safe-area
@@ -531,7 +532,7 @@ Reasoning:
   and remains the source.
 - Operator binding 2026-05-08 rejects cairosvg dev dep.
   Pre-rendered PNGs in the repo are the simpler path:
-  binaries in `src/karasu/ui/static/assets/icons/` ship as
+  binaries in `src/karasu/ui/static/icons/` ship as
   package data, no build step, consistent with UI-0 §4
   "no build / no bundler" rule applied generously
   (script-based regen does not violate UI-0; the runtime
@@ -967,7 +968,7 @@ submarca, no marketing string.
 ```text
 name        : "Karasu"
 short_name  : "Karasu"
-icon source : src/karasu/ui/static/assets/crow/crow.svg
+icon source : src/karasu/ui/static/crow/crow.svg
               (UI-5 canonical, OpenMoji-adapted CC-BY-SA 4.0
                with operator additions; preserved)
 display     : "standalone" (§3-A sealed)
@@ -1739,11 +1740,15 @@ merge.
            HEAD post-UI-13). Net delta is positive
            (~50-100 new tests anticipated).
 
-§11.6.20 — ALL §3 SEALED items in this brief are binding
-           on the UI-14 code chunk; ALL §3 PROPOSAL items
-           flip to SEALED at operator sign-off OR are
-           amended in a brief follow-up commit before the
-           code branch opens.
+§11.6.20 — ALL §3 sub-decisions in this brief are SEALED
+           as of 2026-05-08 (operator sign-off complete;
+           Codex round 1 + round 2 audit-driven
+           refinements landed in-branch). The SEALED set
+           IS the binding contract on the UI-14 code
+           chunk. Any future amendment requires a
+           follow-up commit to THIS brief BEFORE the
+           UI-14 code branch opens; in-flight code that
+           contradicts a SEALED item is a pin violation.
 ```
 
 ## 12 · Status

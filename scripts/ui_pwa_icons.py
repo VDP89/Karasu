@@ -1,68 +1,98 @@
-"""Render the canonical crow asset to PWA icon PNGs.
+"""Render Karasu PWA icons to ``src/karasu/ui/static/icons/``.
 
-UI-8 ships a Web App Manifest with home-screen icons at 192×192
-and 512×512. The icons MUST recolour through Karasu's palette so
-the installed PWA tile reads as the same editorial mark as the
-header glyph — not a generic browser fallback.
+UI-8 sealed the any-purpose icons (192 / 512) with the crow glyph
+sized to ~70 % of the canvas box. UI-14 §3-A extends the manifest
+icon array with maskable variants (192 / 512) sized to ~55 % of
+the canvas so the glyph stays inside the 80 %-diameter safe zone
+the W3C maskable spec assumes a launcher mask may apply.
 
-Pillow does not rasterise SVG natively, and adding cairosvg or
-resvg-py to the dev dependencies for a one-shot render would
-violate UI-0 §4 (no new runtime dep). Playwright is already in
-the tooling for screenshots, so we use it: render an inline HTML
-page that embeds the canonical crow.svg at the target box size
-against the --bg-0 canvas, screenshot, save the PNG.
+Why Playwright and not Pillow / cairosvg / resvg:
 
-Run from the repo root:
+- Pillow does not rasterise SVG natively.
+- Adding ``cairosvg`` / ``resvg-py`` for a one-shot render would
+  violate UI-0 §4 (no new runtime dep). UI-14 §3-C re-pinned the
+  same constraint at the chunk level.
+- Playwright is already in the dev tooling for ``ui_screenshots``
+  and the UI-8 baseline of this script. Reusing it costs nothing.
 
-    python scripts/ui_pwa_icons.py
+Run from the repo root::
 
-Outputs:
+    python scripts/ui_pwa_icons.py              # all four PNGs
+    python scripts/ui_pwa_icons.py --maskable   # only maskable
 
-    src/karasu/ui/static/icons/karasu-192.png
-    src/karasu/ui/static/icons/karasu-512.png
+Outputs::
 
-The PNGs are committed as static assets so the SW pre-cache list
-references stable files; re-running the script is reproducible
-because the same SVG + the same render dimensions yield the same
-output.
+    src/karasu/ui/static/icons/karasu-192.png            (any)
+    src/karasu/ui/static/icons/karasu-512.png            (any)
+    src/karasu/ui/static/icons/karasu-maskable-192.png   (maskable)
+    src/karasu/ui/static/icons/karasu-maskable-512.png   (maskable)
+
+Re-running with the same Playwright + Chromium version is
+reproducible; cross-version drift may produce different bytes,
+which ``tests/test_ui_icons.py`` surfaces via dimension + corner
+pixel + SHA-256 invariants.
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ICONS_DIR = REPO_ROOT / "src" / "karasu" / "ui" / "static" / "icons"
 CROW_SVG = REPO_ROOT / "src" / "karasu" / "ui" / "static" / "crow" / "crow.svg"
 
-# Literal hex matching tokens.css exactly. P2 binding from the
-# UI-8 design review: an off-by-one channel is a regression.
+# Literal hex matching tokens.css exactly. P2 binding from the UI-8
+# design review: an off-by-one channel is a regression.
 BG_0 = "#0a0a0b"   # canvas
 FG_1 = "#ededf2"   # primary fg — the crow's resting colour
 
-ICON_SIZES = (192, 512)
+ICON_SIZES: tuple[int, ...] = (192, 512)
+
+# Box ratios. UI-8 sealed 0.70 for any-purpose; UI-14 §3-C sets
+# 0.55 for maskable so the glyph corner reaches r = box/2 * sqrt(2)
+# = ~38.9 % of canvas, inside the W3C 40 % safe radius with margin.
+ANY_RATIO = 0.70
+MASKABLE_RATIO = 0.55
 
 
-def _icon_html(size: int) -> str:
-    """Build an inline HTML page that paints the crow centred on a
-    --bg-0 square at exactly ``size`` × ``size`` pixels.
+@dataclass(frozen=True)
+class IconSpec:
+    purpose: str   # "any" | "maskable"
+    size: int      # 192 | 512
+    ratio: float   # crow_box / canvas
 
-    The crow uses ``currentColor`` for fill, so wrapping it in a
-    span with ``color: --fg-1`` recolours the silhouette to the
-    canonical resting colour. The crow occupies ~70% of the box;
-    the surrounding margin keeps the silhouette readable when the
-    PWA tile is rendered with rounded corners by the OS.
+    @property
+    def filename(self) -> str:
+        if self.purpose == "any":
+            return f"karasu-{self.size}.png"
+        return f"karasu-{self.purpose}-{self.size}.png"
+
+
+def _all_specs() -> tuple[IconSpec, ...]:
+    return (
+        *(IconSpec("any", s, ANY_RATIO) for s in ICON_SIZES),
+        *(IconSpec("maskable", s, MASKABLE_RATIO) for s in ICON_SIZES),
+    )
+
+
+def _icon_html(spec: IconSpec) -> str:
+    """Inline HTML that paints the crow centred on a --bg-0 canvas
+    of ``spec.size`` square. The crow uses ``currentColor`` for fill,
+    so wrapping it in a span coloured ``--fg-1`` recolours the
+    silhouette to the resting tone.
     """
     crow_svg = CROW_SVG.read_text(encoding="utf-8")
-    crow_box = int(size * 0.7)
+    crow_box = int(spec.size * spec.ratio)
     return f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
 <style>
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-html, body {{ width: {size}px; height: {size}px; overflow: hidden; }}
+html, body {{ width: {spec.size}px; height: {spec.size}px; overflow: hidden; }}
 body {{
     background: {BG_0};
     color: {FG_1};
@@ -81,7 +111,24 @@ body {{
 """
 
 
-def main() -> int:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Render Karasu PWA icons (any + maskable purposes)."
+    )
+    parser.add_argument(
+        "--maskable",
+        action="store_true",
+        help=(
+            "generate only the maskable PNGs and skip the UI-8 sealed "
+            "any-purpose pair (preserves their committed bytes)."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -97,22 +144,26 @@ def main() -> int:
         print(f"error: source SVG not found at {CROW_SVG}", file=sys.stderr)
         return 2
 
+    specs = tuple(
+        s for s in _all_specs()
+        if not args.maskable or s.purpose == "maskable"
+    )
+
     ICONS_DIR.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
         try:
-            for size in ICON_SIZES:
+            for spec in specs:
                 context = browser.new_context(
-                    viewport={"width": size, "height": size},
+                    viewport={"width": spec.size, "height": spec.size},
                     device_scale_factor=1,
                 )
                 page = context.new_page()
-                page.set_content(_icon_html(size))
-                # Give the SVG one frame to lay out; the canvas
-                # is static so a single tick is enough.
+                page.set_content(_icon_html(spec))
+                # Single tick — the canvas is static.
                 page.wait_for_timeout(100)
-                out = ICONS_DIR / f"karasu-{size}.png"
+                out = ICONS_DIR / spec.filename
                 page.screenshot(path=str(out), omit_background=False)
                 context.close()
                 print(f"  wrote {out.relative_to(REPO_ROOT)}")

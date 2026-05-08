@@ -1,7 +1,7 @@
 # Karasu UI — UI-14 Design Brief (PWA installable surface)
 
-> Status: **DRAFT — operator sign-off pending. Codex audit
-> after sign-off.**
+> Status: **SIGN-OFF COMPLETE 2026-05-08 — Codex audit
+> pending.**
 >
 > Estimated scope: ~800–1500 LOC including tests + docs (per
 > Phase 4 macro brief §3-D estimate).
@@ -325,15 +325,19 @@ Reasoning:
 The chunk-level brief (this doc) reserves the right to add
 or remove optional manifest fields based on
 browser-compat checks (`https://developer.mozilla.org/...
-/Manifest`). Any sealed field at this level is binding;
-proposal fields are open until merge.
+/Manifest`). The optional fields and icon array shape are
+SEALED at the values listed above; the chunk verifies the
+`theme_color` / `background_color` hex against
+`static/css/tokens.css` at implementation time and amends
+in a follow-up commit if the token resolves to a different
+value.
 
-[PROPOSAL — NEEDS OPERATOR SIGN-OFF]
+[SEALED 2026-05-08 — operator sign-off complete]
 
 ### B) Install prompt posture
 
-**[PROPOSAL — NEEDS OPERATOR SIGN-OFF]** — discreet footer
-affordance, no banners, persistent dismiss.
+**[SEALED 2026-05-08]** — discreet footer affordance, no
+banners, NO iOS modal, persistent dismiss.
 
 ```text
 SHAPE:
@@ -360,21 +364,30 @@ Behavior:
 
   ready        : iOS Safari path — no beforeinstallprompt
                  API, but the browser supports A2HS. Render
-                 in --accent. Click opens a one-shot modal
-                 explaining the iOS install gesture (Share
-                 button → Add to Home Screen) — modal is
-                 informational only, no JS-driven install
-                 trigger possible on iOS.
+                 in --accent text "Install: ready" with a
+                 single-line inline hint "(Share → Add to
+                 Home Screen)" rendered in --fg-2 alongside.
+                 NO CLICK HANDLER. The iOS install gesture
+                 is browser-native; UI-14 surfaces the
+                 instruction inline, in the footer, and
+                 stops there. Full educational walk-through
+                 lives in docs/pwa-install.md (§3-E
+                 deliverable).
 
   installed    : navigator.standalone === true OR
                  matchMedia('(display-mode: standalone)').
                  Render in --fg-2 ("Install: installed").
                  No click handler.
 
-PIN: NO BANNERS. NO MODAL FOR DESKTOP/CHROMIUM. NO TOAST.
-NO FIRST-VISIT HINT. The affordance is the footer line
-and the iOS-only one-shot modal — and the iOS modal opens
-ONLY on user click, never auto.
+PIN: NO BANNERS. NO MODAL ANYWHERE — desktop, Chromium,
+Android, OR iOS. NO TOAST. NO FIRST-VISIT HINT.
+NO CHROME-INSIDE-THE-APP for iOS instruction. The
+affordance is the footer line in all four states; iOS
+"ready" state ships its hint inline in the same footer
+slot, NOT as a modal opened on click. iOS users learn the
+install gesture from the inline hint or from
+docs/pwa-install.md, never from a JS-driven modal that
+UI-14 raises.
 
 DISMISS:
 After a successful prompt that the user declined ("Not
@@ -397,22 +410,23 @@ Reasoning:
 - UI-8 audit pin #5 ("no install banners / update toasts /
   connection badges") is the design constraint. UI-14
   honors it strictly: the only NEW visual is a footer line.
-- Operator binding: *"footer affordance discreta, no
-  first-visit hint... persistir dismiss si se muestra
-  algo"*. The 30-day re-show window is a proposal; the
-  brief earns it because permanent dismiss + an evolving
-  surface is a worse outcome than gentle re-surfacing.
-- The iOS modal is a **proposal** — operator may prefer no
-  modal at all and a footer-only "Install: ready (Share →
-  Add to Home Screen)" hint instead. Sub-decision marker
-  for operator at sign-off.
+- Operator binding 2026-05-08: *"footer slot only. Nada de
+  modal iOS por ahora. Si hace falta educación para iOS,
+  que viva en docs/pwa-install.md, no en chrome dentro de
+  la app."* The earlier proposal split (footer slot +
+  iOS one-shot modal on click) is REJECTED at sign-off;
+  iOS instruction lives ONLY as inline hint in the
+  "ready" state and in `docs/pwa-install.md`.
+- The 30-day re-show window stands. Permanent dismiss +
+  an evolving surface is a worse outcome than gentle
+  re-surfacing.
 
-[PROPOSAL — NEEDS OPERATOR SIGN-OFF — sub-marker on iOS modal]
+[SEALED 2026-05-08 — operator sign-off complete; footer slot only, NO iOS modal]
 
 ### C) Icons + maskable handling
 
-**[PROPOSAL — NEEDS OPERATOR SIGN-OFF]** — canonical crow
-baseline, maskable variant via safe-padding adaptation.
+**[SEALED 2026-05-08]** — canonical crow baseline; pre-
+rendered PNGs checked into the repo; NO new dev dependency.
 
 ```text
 SOURCE:
@@ -420,72 +434,107 @@ src/karasu/ui/static/assets/crow/crow.svg
   (canonical UI-5 asset, viewBox 72×72, currentColor,
    OpenMoji-adapted CC-BY-SA 4.0 with operator legs + eye).
 
-PIPELINE (build artefact, NOT runtime):
-scripts/ui_icons.py (NEW):
-  Pure stdlib + Pillow + cairosvg (already in dev deps for
-  ui_screenshots.py). Reads the canonical SVG, renders to
-  PNG at 192/512, applies the maskable safe-area padding
-  (~12.5% inset on all sides per spec.whatwg.org/manifest),
-  emits the four target files under
-  src/karasu/ui/static/assets/icons/.
+DELIVERY (operator-pinned 2026-05-08):
+Pre-rendered PNGs are checked into the repo as binary
+files. NO build pipeline is shipped. NO new runtime
+dependency. NO new dev dependency.
 
-  Idempotent: re-running with no source change produces
-  byte-identical output (deterministic Pillow encoder).
-  CI artefact pinned in tests/test_ui_icons.py via golden
-  PNG hash.
+  Operator binding: "pre-renderizadas checkeadas en repo.
+  Evitemos meter dev dep solo para iconos en este chunk.
+  Script opcional si ya usa libs existentes, pero no
+  dependencia nueva."
 
-  License continuity: every emitted PNG carries the same
-  CC-BY-SA 4.0 chain as the source SVG. The operator
-  added legs (CC0 by attribution since author=operator)
-  and the eye notch (CC0 same) merge into the file under
-  the more-restrictive license per share-alike. The
-  THIRD_PARTY_NOTICES.md addition lists OpenMoji + the
-  Karasu adaptation chain.
+OPTIONAL HELPER SCRIPT (within existing deps only):
+A helper `scripts/ui_icons.py` MAY land if it can be
+written using ONLY libraries already pinned in the dev
+deps (Pillow already pinned for `scripts/ui_screenshots.py`
+PNG diffing). cairosvg is NOT a current dev dep and SHALL
+NOT be added by UI-14.
 
-OUTPUT:
+  Path A (if Pillow alone suffices via PIL.ImageDraw +
+  upstream rasterisation of the SVG done outside the
+  script): land the helper as a regen utility. Dev
+  workflow: re-run the script when the canonical crow
+  changes, commit the new PNGs.
+
+  Path B (if Pillow alone cannot rasterise SVG): no
+  helper script. The operator regenerates PNGs by hand
+  (any tool of choice — Inkscape CLI, Figma export, etc.)
+  and commits them. The brief documents the maskable
+  inset (12.5%) and the size targets so the regen is
+  reproducible.
+
+The chunk implementation tries Path A first; if Pillow's
+SVG support is insufficient (Pillow does NOT ship a
+native SVG rasteriser), falls to Path B without
+introducing any new dependency.
+
+OUTPUT (committed binaries):
 src/karasu/ui/static/assets/icons/
-  karasu-192.png            (any)
-  karasu-512.png            (any)
-  karasu-maskable-192.png   (maskable; 12.5% padding)
-  karasu-maskable-512.png   (maskable; 12.5% padding)
+  karasu-192.png            (any, 192×192)
+  karasu-512.png            (any, 512×512)
+  karasu-maskable-192.png   (maskable; 12.5% safe-area
+                             padding; 192×192)
+  karasu-maskable-512.png   (maskable; 12.5% safe-area
+                             padding; 512×512)
 
-FALLBACK:
+License continuity: every emitted PNG carries the same
+CC-BY-SA 4.0 chain as the source SVG. The operator's
+additions (legs + eye notch) merge into the file under
+the more-restrictive license per share-alike. The
+THIRD_PARTY_NOTICES.md addition lists OpenMoji + the
+Karasu adaptation chain.
+
+FALLBACK CHAIN (operator-pinned 2026-05-08):
 If the canonical crow at 12.5% safe-area inset crops the
-beak / legs visibly (initial dogfood test), §3-C earns a
-sub-decision:
-  - Re-tightens the crow body (operator-side SVG tweak).
-  - OR adapts a wider OpenMoji silhouette.
-  - OR generates a glyph-only maskable (Karasu wordmark or
-    a simplified bird silhouette tuned for masking).
+beak / legs visibly (initial dogfood test), the chunk
+applies the fallback path in this order:
+
+  1. Re-tighten the canonical crow's SVG body (operator-
+     side adjustment to crow.svg or a sibling crow
+     variant scoped to icon use). PREFERRED.
+  2. Glyph-only maskable (simplified bird silhouette OR
+     Karasu wordmark tuned for the radial mask).
+     LAST RESORT.
+
+ADAPTING A WIDER OPENMOJI SILHOUETTE IS EXPLICITLY
+REJECTED at sign-off — the canonical crow is the
+established identity (UI-5 + UI-8 + UI-12a + UI-13).
+Switching to a different silhouette ONLY for icons would
+introduce a brand split between the surface crow and the
+launcher icon.
 
 The audit artefact is the rendered PNG at 192 px shown
 inside the maskable-test radial mask (Chrome devtools
-provides the visualization; or the public
-maskable.app harness for visual proof).
+provides the visualization; or the public maskable.app
+harness for visual proof). Committed under
+docs/ui/screenshots/UI-14-icons/ alongside the surface
+PNGs.
 ```
 
 Reasoning:
 
 - `feedback_hunt_cc_assets_before_drawing.md` is the
   governing memory: do not draw new icons from scratch
-  before exhausting CC-licensed candidates. Adapting the
-  existing canonical crow (which itself was the result of
-  the UI-5 8-iteration hunt) is the lowest-risk path.
-- License chain: OpenMoji is CC-BY-SA 4.0; Karasu is
-  bound to that license for derivative artefacts of the
-  source. The PNG icons inherit it. The
-  THIRD_PARTY_NOTICES.md was added by PR #94 (`ade1fc3`)
-  for exactly this kind of carry.
-- The pipeline is a **build artefact**, not a runtime
-  dependency. `cairosvg` and `Pillow` are dev-only; the
-  emitted PNGs ship as static files in the package data.
-- The fallback is real. The maskable spec's 80% safe area
-  is brutal for asymmetric silhouettes (a crow with
-  prominent beak is asymmetric). The brief reserves the
-  right to ship a glyph-only maskable if the canonical
-  crow does not fit.
+  before exhausting CC-licensed candidates. The canonical
+  crow itself is the result of the UI-5 8-iteration hunt
+  and remains the source.
+- Operator binding 2026-05-08 rejects cairosvg dev dep.
+  Pre-rendered PNGs in the repo are the simpler path:
+  binaries in `src/karasu/ui/static/assets/icons/` ship as
+  package data, no build step, consistent with UI-0 §4
+  "no build / no bundler" rule applied generously
+  (script-based regen does not violate UI-0; the runtime
+  delivery is static files with or without the helper).
+- License chain unchanged: every committed PNG inherits
+  CC-BY-SA 4.0. THIRD_PARTY_NOTICES.md was added by
+  PR #94 (`ade1fc3`); UI-14 extends with the icon entries.
+- Fallback chain locked to two options (re-tighten →
+  glyph-only). OpenMoji-wider was a third option in the
+  proposal; operator removed it to keep brand identity
+  intact.
 
-[PROPOSAL — NEEDS OPERATOR SIGN-OFF — sub-marker on fallback path]
+[SEALED 2026-05-08 — operator sign-off complete; pre-rendered PNGs, no new dev dep, fallback chain locked]
 
 ### D) Mobile layout audit
 
@@ -548,7 +597,7 @@ Reasoning:
 - 44 px is the WCAG 2.1 minimum touch target. UI-14 does
   not negotiate down from that.
 
-[PROPOSAL — NEEDS OPERATOR SIGN-OFF — sub-marker on whether the new <360 px breakpoint is added by default or only if dogfood demands]
+[SEALED 2026-05-08 — operator sign-off complete; default is "only-if-screenshots-demand", with the audit free to land the breakpoint as part of the chunk if the captures justify it]
 
 ### E) iOS Safari + Android Chrome push compatibility
 
@@ -584,13 +633,13 @@ UI-14 BINDING:
    affordance is independently offered.
 
 4. Documentation is the binding deliverable for this
-   sub-decision. UI-14 ships either:
-     a. A new docs/pwa-install.md (preferred — single
-        page, install + push flow per platform), OR
-     b. An expansion of docs/deploy-runbook.md "Push
-        delivery walkthrough" section.
-   The chunk picks one based on length; the brief
-   reserves the choice.
+   sub-decision. UI-14 ships **docs/pwa-install.md (NEW)**
+   — single page covering install + push flow per
+   platform. Operator-pinned 2026-05-08:
+   *"docs/pwa-install.md nuevo. El deploy-runbook es
+   para server/deploy; PWA install merece doc propia."*
+   docs/deploy-runbook.md is NOT extended for this
+   purpose; it stays focused on server bring-up.
 
 5. UI-14 does NOT add iOS-specific push code. The UI-12c
    server-side emit pipeline is platform-agnostic — VAPID
@@ -639,10 +688,29 @@ new code path]
 
 ### F) Service worker update strategy
 
-**[PROPOSAL — NEEDS OPERATOR SIGN-OFF]** — replace
-`skipWaiting + clients.claim` with **update-on-navigation +
-user-visible refresh affordance** for the deployed PWA
-posture.
+**[SEALED 2026-05-08 — EXPLICIT DEVIATION FROM UI-8
+SHAPE-LOCK]** — replace `skipWaiting + clients.claim` with
+**update-on-navigation + user-visible refresh affordance**
+for the deployed PWA posture.
+
+> **Deviation marker (binding).** This sub-decision is the
+> ONLY explicit revisit of a prior shape-lock in UI-14.
+> UI-8 sealed `self.skipWaiting()` on install +
+> `self.clients.claim()` on activate as the SW lifecycle.
+> UI-14 §3-F supersedes that lifecycle for UPDATE events
+> (a NEW SW activating over an existing one) while
+> preserving UI-8's behavior for the FIRST-LOAD case
+> (no existing SW). The new shape-lock is
+> **`UI-14 §3-F SW Update Lifecycle Lock`** and binds
+> every future chunk that touches sw.js install / activate
+> / message handlers. UI-15+ reopens this lock only via a
+> new chunk-level brief earning a SEALED revisit.
+>
+> Operator pin 2026-05-08: *"Acepto update-on-navigation
+> + refresh affordance. Rechazo mantener skipWaiting +
+> clients.claim agresivo para una PWA instalada. Pero
+> esto tiene que ir muy claramente marcado como desviación
+> ganada de UI-8, con shape-lock nuevo."*
 
 ```text
 CURRENT BEHAVIOUR (UI-8 / UI-12b sealed):
@@ -723,7 +791,7 @@ Reasoning:
   (anticipated pin) so Codex round 1 audits the boundary
   explicitly.
 
-[PROPOSAL — NEEDS OPERATOR SIGN-OFF — UI-8 deviation called out for Codex P0 review]
+[SEALED 2026-05-08 — operator sign-off complete; explicit deviation from UI-8 shape-lock; new shape-lock `UI-14 §3-F SW Update Lifecycle Lock` binding for all future chunks touching sw.js lifecycle handlers]
 
 ### G) Auth interaction (PWA shell + login)
 
@@ -912,21 +980,29 @@ UI-14 does NOT modify:
      footer slot (§3-B).
 
 UI-14 MAY modify:
-  - sw.js install + activate + message handlers (§3-F).
+  - sw.js install + activate + message handlers
+    (§3-F SEALED — UI-14 §3-F SW Update Lifecycle Lock,
+    explicit deviation from UI-8).
   - static/index.html (footer slot for install).
   - static/css/footer.css (or wherever the meta slot
     family lives) — install affordance styling.
   - static/js/install.js (NEW — beforeinstallprompt
     capture, dismiss state, refresh affordance).
   - static/manifest.webmanifest (NEW).
-  - static/assets/icons/* (NEW build artefacts).
-  - scripts/ui_icons.py (NEW build script).
+  - static/assets/icons/* (NEW pre-rendered PNGs checked
+    into the repo per §3-C SEALED — no build pipeline).
+  - scripts/ui_icons.py (OPTIONAL helper; lands ONLY if
+    Pillow alone suffices per §3-C SEALED Path A;
+    otherwise dropped per Path B).
   - tests/test_ui_install.py (NEW).
   - tests/test_ui_icons.py (NEW).
   - tests/test_ui_sw_update.py (NEW).
-  - docs/pwa-install.md OR docs/deploy-runbook.md edit.
-  - THIRD_PARTY_NOTICES.md addendum if maskable adapts
-    new CC-licensed source.
+  - tests/test_ui_manifest.py (NEW).
+  - docs/pwa-install.md (NEW per §3-E SEALED;
+    docs/deploy-runbook.md is NOT extended for PWA
+    install content).
+  - THIRD_PARTY_NOTICES.md addendum for the icon
+    PNG adaptation chain.
 ```
 
 [SEALED 2026-05-08]
@@ -959,10 +1035,19 @@ NEW runtime files:
   src/karasu/ui/static/manifest.webmanifest
   src/karasu/ui/static/assets/icons/karasu-{192,512}.png
   src/karasu/ui/static/assets/icons/karasu-maskable-{192,512}.png
+                                  (PRE-RENDERED PNGs, checked
+                                   into the repo per §3-C
+                                   sealed; NO build pipeline
+                                   ships)
   src/karasu/ui/static/js/install.js
 
-NEW build scripts (NOT runtime):
-  scripts/ui_icons.py
+OPTIONAL helper script (NOT runtime; only if usable
+within existing dev deps):
+  scripts/ui_icons.py            (lands ONLY if Pillow alone
+                                  can rasterise; otherwise
+                                  the operator regenerates
+                                  PNGs by hand per §3-C
+                                  sealed Path B)
 
 MODIFIED runtime files:
   src/karasu/ui/static/sw.js          (§3-F update strategy
@@ -1000,17 +1085,15 @@ NEW docs:
                                 docs/deploy-runbook.md
                                 — chunk picks)
 
-NEW dev deps (build artefact only, NOT runtime):
-  Pillow                       (already pinned for
-                                ui_screenshots.py — confirm
-                                version)
-  cairosvg                     (NEW dev dep; small footprint;
-                                stdlib alternative would be
-                                shipping pre-rendered PNGs
-                                checked into the repo, which
-                                couples icon updates to the
-                                operator's environment —
-                                §3-C reserves the choice)
+NEW dev deps:
+  NONE. Operator-pinned 2026-05-08: pre-rendered PNGs are
+  checked into the repo; UI-14 SHALL NOT introduce a new
+  dev dependency (cairosvg explicitly rejected). The
+  optional `scripts/ui_icons.py` helper, if it lands at
+  all, must use ONLY libraries already pinned (Pillow is
+  already pinned for `scripts/ui_screenshots.py`); if
+  Pillow does not suffice, the helper is dropped and
+  the operator regenerates PNGs by hand per §3-C Path B.
 
 NO new runtime dependencies.
 NO new cryptography use.
@@ -1021,17 +1104,16 @@ NO new system integration (no electron, no tauri, no
 
 Reasoning:
 
-- The build pipeline approach to icons (§3-C) does add a
-  dev dep (`cairosvg`). The brief notes the alternative
-  (pre-rendered PNGs in the repo) and reserves the
-  trade-off for chunk implementation. Either path is
-  acceptable.
+- Operator-pinned 2026-05-08 rejects the cairosvg dev dep.
+  Pre-rendered PNGs in the repo are the simpler path:
+  binaries in `src/karasu/ui/static/assets/icons/` ship as
+  package data, no build step, no rasterisation toolchain
+  in the project surface. The optional helper script is
+  bounded to existing deps.
 - The UI-0 §4 ban on build steps applies to the **runtime
-  delivery pipeline**, not to development artefacts. A
-  dev-only `python scripts/ui_icons.py` invocation that
-  produces PNGs checked into the repo is consistent with
-  UI-0 (the runtime ships static files, no bundler in the
-  delivery path).
+  delivery pipeline**. Pre-rendered PNGs are already
+  static; the optional helper (if it lands) is operator-
+  side regeneration, not a runtime artefact.
 
 ## 5 · Design system delta (vs UI-0..UI-13)
 
@@ -1264,75 +1346,77 @@ D) MERGE DISCIPLINE:
     English; localization is post-Phase-4.
 ```
 
-## 10 · Open questions (operator sign-off needed)
+## 10 · Open questions (operator sign-off complete)
 
-The following sub-decisions are PROPOSAL-level. Operator
-flips each to SEALED (or amends) before Codex audit:
+ALL Q1–Q12 resolved 2026-05-08. The §3 sub-decisions are
+fully sealed. Resolutions ferried into the relevant §3
+subsections; this section preserves the question/answer
+record for audit traceability.
 
 ```text
-[Q1] §3-A theme_color / background_color: "#0a0a0b" inferred
-     from --bg-0. Operator confirms the hex OR specifies the
-     correct token-derived value.
+[Q1] §3-A theme_color / background_color
+     RESOLVED: ok defaults — "#0a0a0b" inferred from
+     --bg-0. Chunk implementation verifies the hex
+     against tokens.css; amends in follow-up commit
+     if the token resolves to a different value.
 
-[Q2] §3-A icons array: 4 entries (192/512 × any/maskable).
-     Operator confirms the file naming convention OR
-     overrides.
+[Q2] §3-A icons array: 4 entries (192/512 × any/maskable)
+     RESOLVED: ok defaults.
 
-[Q3] §3-A optional fields: categories / lang / dir.
-     Operator confirms include OR omits.
+[Q3] §3-A optional fields: categories / lang / dir
+     RESOLVED: ok defaults — include all three with the
+     proposed values (productivity+utilities / en / ltr).
 
-[Q4] §3-B install affordance shape: footer slot ONLY, OR
-     footer slot + iOS modal? Operator picks: A) both as
-     specified, B) footer slot only (iOS modal dropped;
-     iOS users get only "Install: ready" + the inline
-     hint).
+[Q4] §3-B install affordance shape
+     RESOLVED: footer slot ONLY. NO iOS modal. iOS
+     education lives in docs/pwa-install.md, not in
+     chrome-inside-the-app. §3-B SEALED.
 
-[Q5] §3-B dismiss persistence window: 30 days proposed.
-     Operator picks: A) 30 days, B) permanent until SW
-     update, C) other (specify).
+[Q5] §3-B dismiss persistence window
+     RESOLVED: ok defaults — 30 days, plus reset on new
+     SW activation.
 
-[Q6] §3-C maskable fallback: which path if the canonical
-     crow does not fit the 80% safe area? Operator picks:
-     A) re-tighten the SVG body, B) adapt a wider OpenMoji
-     silhouette, C) ship a glyph-only maskable.
-     (Default if no choice: chunk implementation tries A
-     first, falls to B, then C.)
+[Q6] §3-C maskable fallback chain
+     RESOLVED: re-tighten the canonical crow's SVG first;
+     glyph-only maskable as last resort. Adapting a
+     wider OpenMoji silhouette is REJECTED — preserves
+     brand identity (crow stays crow). §3-C SEALED.
 
-[Q7] §3-D <360 px breakpoint: add by default in §3-D
-     audit, OR only if screenshots demand it? Operator
-     picks: A) only-if-needed (default in this brief),
-     B) ship a placeholder block always.
+[Q7] §3-D <360 px breakpoint
+     RESOLVED: ok defaults — only-if-screenshots-demand,
+     audit free to land it.
 
-[Q8] §3-F SW update strategy revisit: any concern about
-     reopening the UI-8 shape-lock? Operator can: A) accept
-     the deviation as proposed, B) reject and keep
-     skipWaiting+claim (UI-14 then loses the user-visible
-     refresh affordance and accepts long-tab reload), C)
-     accept but with a stricter polling cadence
-     (e.g., on-navigation only, no 60-min poll).
+[Q8] §3-F SW update strategy
+     RESOLVED: accept update-on-navigation + user-visible
+     refresh affordance. EXPLICIT DEVIATION FROM UI-8
+     SHAPE-LOCK. New shape-lock
+     `UI-14 §3-F SW Update Lifecycle Lock` binding for
+     all future chunks touching sw.js lifecycle handlers.
+     §3-F SEALED with deviation marker.
 
-[Q9] §6 single chunk vs split: operator can preempt the
-     split decision by choosing A) single chunk
-     (default), B) split UI-14a/14b upfront if comfort
-     with smaller PRs is preferred.
+[Q9] §6 single chunk vs split
+     RESOLVED: ok defaults — single chunk; split only
+     if scope overruns.
 
-[Q10] §4 cairosvg dev dep vs pre-rendered PNGs: A) accept
-      cairosvg (build from canonical SVG, deterministic
-      output), B) ship pre-rendered PNGs in the repo
-      (operator's machine produces the binary; UI-14
-      ships them as-is). Default if no choice: A.
+[Q10] §4 cairosvg dev dep vs pre-rendered PNGs
+      RESOLVED: pre-rendered PNGs checked into the repo.
+      NO new dev dep. Optional `scripts/ui_icons.py`
+      helper lands ONLY if Pillow alone suffices.
+      §3-C + §4 SEALED.
 
-[Q11] §3-E docs target: A) new docs/pwa-install.md, B)
-      expand docs/deploy-runbook.md "Push delivery"
-      section. Default if no choice: A.
+[Q11] §3-E docs target
+      RESOLVED: docs/pwa-install.md (NEW). The
+      deploy-runbook stays focused on server bring-up;
+      PWA install earns its own doc. §3-E SEALED.
 
-[Q12] iOS Safari A2HS modal copy: the brief specifies an
-      informational modal opens on the install affordance
-      click in iOS Safari path. Operator may want the
-      copy preview before the chunk lands. Default if no
-      preview requested: chunk drafts copy + audit
-      catches.
+[Q12] iOS Safari A2HS copy preview
+      OBSOLETE — iOS modal removed by Q4 resolution.
+      Inline hint copy "(Share → Add to Home Screen)"
+      is the entire UI surface; chunk drafts the
+      docs/pwa-install.md walkthrough + audit catches.
 ```
+
+[ALL RESOLVED 2026-05-08 — operator sign-off complete; brief is fully sealed]
 
 ## 11 · §11.6 anticipated pins (Codex audit, pending)
 
@@ -1380,15 +1464,21 @@ merge.
           (UI-13 §3-H pre-auth/post-auth split) is NOT
           modified.
 
-§11.6.7 — sw.js update strategy: NEW SWs install as
-          "waiting"; NEW SWs do NOT call clients.claim on
-          activate. The page surfaces a refresh affordance
-          when registration.waiting is detected. The
-          waiting SW calls skipWaiting ONLY in response to
-          a postMessage({ type: 'SKIP_WAITING' }) sent by
+§11.6.7 — sw.js update strategy [UI-14 §3-F SW Update
+          Lifecycle Lock — EXPLICIT DEVIATION FROM UI-8]:
+          NEW SWs install as "waiting"; NEW SWs do NOT
+          call clients.claim on activate. The page
+          surfaces a refresh affordance when
+          registration.waiting is detected. The waiting
+          SW calls skipWaiting ONLY in response to a
+          postMessage({ type: 'SKIP_WAITING' }) sent by
           the page after USER CLICK on the refresh
-          affordance. The first-load case (no existing SW)
-          retains UI-8 skipWaiting+claim.
+          affordance. The first-load case (no existing
+          SW) retains UI-8 skipWaiting+claim. Future
+          chunks touching sw.js install / activate /
+          message handlers MUST audit against this new
+          lock; UI-15+ reopens it only via a chunk-level
+          brief earning a SEALED revisit.
 
 §11.6.8 — install.js stores ONLY the dismiss state in
           localStorage (key: karasu.install.dismissed_at,
@@ -1403,12 +1493,16 @@ merge.
           editorial calm pin (UI-3 / UI-5) does not allow
           two competing footer affordances.
 
-§11.6.10 — iOS Safari path: the install affordance click
-           opens an INFORMATIONAL modal whose ONLY
-           interactive element is a Close / Got it
-           button. NO JS-driven install trigger (impossible
-           on iOS by platform). NO redirect. NO auto-dismiss
-           timer.
+§11.6.10 — iOS Safari path: NO MODAL ANYWHERE
+           [SEALED 2026-05-08]. The "ready" state in the
+           footer slot renders an inline hint "(Share →
+           Add to Home Screen)" in --fg-2 alongside the
+           "Install: ready" accent text. NO click handler
+           on the iOS path. NO JS-driven install trigger
+           (impossible on iOS by platform anyway). NO
+           redirect. Full educational walk-through lives
+           in docs/pwa-install.md (§3-E sealed
+           deliverable), NEVER as chrome inside the app.
 
 §11.6.11 — display-mode: standalone CSS (body.is-installed
            class) hides ONLY the install affordance. NO
@@ -1486,14 +1580,16 @@ merge.
 ## 12 · Status
 
 ```text
-Brief status:    DRAFT — operator sign-off pending.
-Brief audit:     pending (post sign-off).
+Brief status:    SIGN-OFF COMPLETE 2026-05-08 — all §3
+                 sub-decisions sealed, all §10 questions
+                 resolved. Awaiting Codex audit.
+Brief audit:     pending (round 1 not started).
 Brief loop budget: 5 (round 1 not started).
 
-Brief PR:        (this PR — assigned on push)
+Brief PR:        #113
 Brief base:      main
 Brief HEAD:      docs/ui-14-brief
-Brief diff:      doc-only; 1 file added.
+Brief diff:      doc-only.
 
 Code chunk PR:   not opened. Earns its own brief-before-
                  code lifecycle gate (UI-9 audit pin #1):
@@ -1501,7 +1597,16 @@ Code chunk PR:   not opened. Earns its own brief-before-
 
 Phase 4 status:  FIRST CHUNK CLOSED (UI-13 PR #109,
                  6e283a8); UI-14 is SECOND CHUNK,
-                 currently at brief-stage.
+                 currently at brief-stage with sign-off
+                 complete.
+
+Sealed deviations from prior shape-locks:
+  - UI-8 SW lifecycle (§3-F): NEW shape-lock
+    `UI-14 §3-F SW Update Lifecycle Lock` binding for
+    every future chunk that touches sw.js install /
+    activate / message handlers. UI-15+ reopens only
+    via a SEALED revisit. This is the ONLY deviation
+    in UI-14.
 
 Inherited pins:  165 binding (52 base + 6 UI-10 §0.5 + 12
                  UI-11 §11.6 + 16 UI-12 §11.6 + 16 UI-12b
@@ -1522,16 +1627,15 @@ Lighthouse:      UI-9.1 baseline holds. UI-14 anticipates
                  installability score) without perf
                  regression.
 
-Next step:       Operator reviews §3 SEALED + PROPOSAL
-                 items. Operator flips PROPOSAL items to
-                 SEALED (or amends with marker) per the
-                 §10 question list. Implementer entrega the
-                 audit prompt to operator immediately on
-                 sign-off (per
-                 feedback_audit_prompt_automatic.md).
-                 Codex audits; verdict ferried back via the
-                 operator. In-branch follow-ups; brief PR
-                 merges BEFORE the UI-14 code branch opens.
+Next step:       Implementer (Claude Code) entrega the
+                 Codex audit prompt copy-paste to the
+                 operator immediately after this commit
+                 (per feedback_audit_prompt_automatic.md).
+                 Codex audits; verdict ferried back via
+                 the operator. In-branch follow-ups;
+                 re-audit if round 1 returns CHANGES-
+                 REQUIRED with P0. Brief PR merges
+                 BEFORE the UI-14 code branch opens.
 ```
 
 ---

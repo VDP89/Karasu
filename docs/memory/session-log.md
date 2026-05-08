@@ -1397,3 +1397,76 @@ Next step:
   doc-only PR with [NEEDS OPERATOR SIGN-OFF] markers → Codex
   audit → in-branch follow-ups → merge BEFORE the code branch
   opens.
+
+## 2026-05-08 (later) — memory hygiene before UI-14 brief opens
+
+Two small docs-only PRs caught and corrected drift in
+`docs/memory` before opening the next chunk-level brief.
+No code change; no Codex audit (housekeeping per operator
+agreement).
+
+PR #111 — F9/F10/F11 marked resolved. The Phase 3 dogfood
+findings (F9 missing `[job-queue]` extra, F10 drain skip
+warnings, F11 Notepad atomic-write tmp) all merged on
+2026-05-02 as PRs #40/#41/#42 (commits `0010fed` /
+`dd4995c` / `56a7d7b`) on the same day they were filed.
+Subsequent memory syncs (UI-12a → UI-13) preserved the
+original `filed` status against `docs/memory`, so post-UI-13
+`next-session.md` still listed F9-F11 under "Open issues"
+when the actual repo state had them closed for six days.
+PR #111 flips the findings-table rows to `resolved
+(<merge-commit>, 2026-05-02)` and clears the open-issues
+block. Discovered while picking the Phase 4 second chunk —
+verifying scope of the proposed "Path B (operational
+hardening)" against the repo (`gh pr view 40/41/42`)
+revealed all three were already merged.
+
+PR #112 (this PR) — UI-14 numbering correction. Discovered
+while drafting the chunk-level brief: the post-UI-13
+`next-session.md` named "Path A — Multi-operator
+authorization (UI-14)" as a candidate next chunk, but the
+Phase 4 macro brief PR #107 §3-D binds the chunk sequence
+as UI-13 → **UI-14 PWA installable** → UI-15+ native
+(conditional), and §3-B last paragraph defers
+multi-operator collaboration / per-user trust gradient
+filtering / operator-scoped audit log explicitly to Phase
+4.y or later. The post-UI-13 sync was a sync-drift overlook
+against the macro brief, not a conscious decision to amend
+the binding sequence. PR #112 corrects `next-session.md`
+to reflect:
+
+- UI-14 = PWA installable (binding next chunk per macro
+  §3-D).
+- Multi-operator authorization moved to a Phase 4.y /
+  later "deferred bucket" alongside multi-host writer
+  concurrency, A2A peer push fan-out, push enhancements,
+  per-category debounce env override, and direct-TLS in
+  karasu.
+- "Recommended next move" rewritten: open the UI-14 PWA
+  installable chunk-level brief (no Path A / Path B
+  choice; the macro binds the order).
+
+This entry's predecessor (above, "2026-05-08 — UI-13
+closed") still names "Path A (multi-operator auth, UI-14)"
+in its Next-step bullet. That language is preserved verbatim
+as a historical record of what was written; this corrigendum
+notes the drift and supersedes the forward-looking
+recommendation. The macro binding sequence (UI-13 → UI-14
+PWA → UI-15+ native conditional, multi-operator deferred
+to Phase 4.y) is the authoritative roadmap.
+
+Impact:
+
+- main HEAD: `46fd88d` (PR #111) → `<PR #112 squash hash>`.
+- 0 PRs open. 0 branches open after PR #112 merges.
+- `docs/memory/next-session.md` is now consistent with
+  Phase 4 macro brief §3-D + §3-B.
+- 985 tests pass on Windows (no code change).
+
+Next step:
+
+- Open the UI-14 PWA installable chunk-level brief PR
+  (`docs(ui-14): chunk-level brief — PWA installable
+  surface (DRAFT)`). Inherits 165 binding pins from
+  UI-0..UI-13 + Phase 4 macro. Earns its own
+  brief-before-code lifecycle (UI-9 audit pin #1).

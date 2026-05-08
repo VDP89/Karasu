@@ -78,73 +78,87 @@ deploy-runbook) is ready for deployed dogfood.
 
 ## Entry point for THIS session
 
-**Phase 4 — second chunk to be picked.** UI-13 closed the
-auth foundation. The remaining anticipated Phase 4 scope
-from the macro brief PR #107:
+**Phase 4 — second chunk: UI-14 PWA installable.** UI-13
+closed the auth foundation. Per Phase 4 macro brief PR #107
+§3-D the binding chunk sequence is:
 
 ```text
-1. Multi-operator authorization — login, session
-   management, per-operator audit log filtering, trust
-   tier scoping. UI-13 ships single-operator
-   credentials; multi-operator extends the
-   karasu-auth.json shape to a list-of-users + per-user
-   trust scoping.
+UI-13 — Remote operator surface             ✔ closed 2026-05-08
+UI-14 — PWA installable                     ← next chunk
+UI-15+ — Native packaging (CONDITIONAL)     deferred unless
+                                            UI-14 dogfood
+                                            surfaces a concrete
+                                            platform need
+```
 
-2. Multi-host writer concurrency — the UI-12c §3-G file
-   lock is single-filesystem only (fcntl.flock /
-   msvcrt.locking semantics over network filesystems
-   are not portable). Deployed surfaces with shared
-   storage (NFS / multi-instance deployment) need
-   their own concurrency contract.
+UI-14 earns "app-like" — web app manifest with proper
+icons / theme color / display mode; install prompt posture
+(footer affordance, no nag banners per UI-8 audit pin #5);
+mobile layout pass; iOS Safari + Android Chrome push
+compatibility audit (UI-12c shipped against desktop Chrome
+headless); SW update strategy on a deployed surface (the
+current `skipWaiting + clients.claim` from UI-8 may need
+adjustment when long-running tabs hold the operator's
+session). Estimated scope: ~800-1500 LOC including tests
++ docs.
 
-3. A2A peer push fan-out — Karasu instance pushing to
-   another Karasu instance (vs the UI-12c per-browser
-   push).
+Phase 4.y / later deferred bucket (NOT next-chunk scope):
 
-4. Push enhancements (post-UI-12c):
-   - Per-event push opt-in beyond the closed enum
-     {attention, errors, corrections}.
-   - Scheduled / quiet-hours / DND beyond OS-level DND.
-   - VAPID auto-rotation (operator-driven today).
+```text
+- Multi-operator authorization — login, session
+  management, per-operator audit log filtering, role /
+  permission tiers per-user. Phase 4 macro brief §3-B
+  last paragraph defers this explicitly to Phase 4.y or
+  later: "Multi-operator collaboration / per-user trust
+  gradient filtering / operator-scoped audit log is
+  explicitly DEFERRED to Phase 4.y or later." UI-13 ships
+  single-operator credentials and is intentionally the
+  end of single-operator scope.
 
-5. Per-category push debounce override via env var.
-   Deferred from UI-12c per brief §10.5.
+- Multi-host writer concurrency — the UI-12c §3-G file
+  lock is single-filesystem only (fcntl.flock /
+  msvcrt.locking semantics over network filesystems are
+  not portable). Deployed surfaces with shared storage
+  (NFS / multi-instance deployment) need their own
+  concurrency contract.
 
-6. ~~Operational hardening from Phase 3 dogfood:~~
-   ~~- F9 missing [job-queue] extra (issue #40).~~
-   ~~- F10 drain skip warnings (issue #41).~~
-   ~~- F11 Notepad atomic-write tmp (issue #42).~~
-   RESOLVED 2026-05-02 — all three landed in main on
-   the same day they were filed (PRs #40/#41/#42, merge
-   commits `0010fed`/`dd4995c`/`56a7d7b`). The status
-   table at the bottom of `current-state.md` reflects
-   the current state. Phase 3 dogfood findings closed.
+- A2A peer push fan-out — Karasu instance pushing to
+  another Karasu instance (vs the UI-12c per-browser
+  push).
 
-7. Direct-TLS in karasu (--tls-cert / --tls-key) —
-   intentionally deferred from UI-13. Sealed UI-13
-   production shape is reverse-proxy TLS termination;
-   reopens for UI-14+ if dogfood demands it (per
-   docs/deploy-runbook.md preamble).
+- Push enhancements (post-UI-12c):
+    * Per-event push opt-in beyond the closed enum
+      {attention, errors, corrections}.
+    * Scheduled / quiet-hours / DND beyond OS-level DND.
+    * VAPID auto-rotation (operator-driven today).
+
+- Per-category push debounce override via env var.
+  Deferred from UI-12c per brief §10.5.
+
+- Direct-TLS in karasu (--tls-cert / --tls-key) —
+  intentionally deferred from UI-13. Sealed UI-13
+  production shape is reverse-proxy TLS termination;
+  reopens for UI-15+ if dogfood demands it (per
+  docs/deploy-runbook.md preamble).
 ```
 
 ### Recommended next move
 
-Operator decides between two paths:
+Open the UI-14 PWA installable chunk-level brief
+(doc-only PR, `[NEEDS OPERATOR SIGN-OFF]` markers per
+the §3 sub-decision pattern UI-12..UI-13 used). Macro
+brief §3-D anchors UI-14 = PWA installable as the binding
+next chunk; this brief earns the visual / manifest /
+install-posture / mobile-compat / SW-update decisions
+that the macro brief defers to chunk level.
 
-**Path A — Multi-operator authorization (UI-14).**
-Natural follow-up to UI-13 — extends karasu-auth.json
-from single-user to multi-user + adds per-user trust
-scoping. Earns its own chunk-level brief.
+Multi-operator authorization is NOT UI-14. The post-UI-13
+sync mistakenly named it as such; the 2026-05-08
+correction PR (this one) restores the macro binding.
+Multi-operator stays in the Phase 4.y deferred bucket
+above until dogfood surfaces a concrete need.
 
-**Path B — Operational hardening (issues #40-#42).**
-Smaller surface; closes Phase 3 dogfood findings before
-opening more Phase 4 surface.
-
-Path A is the established roadmap path (Phase 4 macro
-brief §3-C item 2). Path B is the cleanup path. Operator's
-call.
-
-### Phase 4 chunk lifecycle (whichever path)
+### Phase 4 chunk lifecycle
 
 Per the brief-before-code pattern (UI-9 audit pin #1,
 reaffirmed UI-10..UI-13):

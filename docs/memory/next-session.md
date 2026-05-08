@@ -1,202 +1,189 @@
 # Next Session Entry Point
 
-## Status: Phase 4 (deployed surfaces) — UNSCOPED
+## Status: Phase 4 (deployed surfaces) — FIRST CHUNK CLOSED
 
-main HEAD: `e5c89a7` (UI-12c code chunk merged, 2026-05-07).
-0 PRs open. 0 branches open.
+main HEAD: `6e283a8` (UI-13 code chunk merged, 2026-05-08).
+0 PRs open. 0 branches open (working chunks all merged).
 
-UI-12c code closed cleanly: 6 logical commits + 2 round-1
-follow-up commits + 1 visuals commit = 9 commits squash-
-merged into `e5c89a7`. ~5500 LOC code + tests + docs. Codex
-audit closed at round 2 of 5 (round 1 CHANGES-REQ 2 P1 +
-visuals binding → all closed in-branch; round 2 APPROVED
-clean). The 20 §11.6 pins from the UI-12c brief (`0c2291d`,
-PR #104) are now binding implementation contracts in `main`.
+UI-13 code closed cleanly: 9 chunked feat commits + 4
+audit-round follow-up fix commits = 13 commits squash-
+merged into `6e283a8`. +6982 / -89 LOC across 26 files.
+Codex audit closed at round 5 of 5 (rounds 1-4 each
+CHANGES-REQ with in-branch follow-ups; round 5 APPROVED
+clean). The 20 §11.6 pins from the UI-13 brief
+(`ad003db`, PR #108) are now binding implementation
+contracts in `main`.
 
-**Phase 3 EXIT CRITERIA CLOSED.** Telegram is no longer the
-only push channel; the PWA push delivery surface (footer
-affordance + modal + VAPID-signed RFC 8291 aes128gcm POSTs
-to FCM/APNs/Mozilla autopush) is the operator-facing
-notification path. The prototype is complete.
+**Phase 4 FIRST CHUNK CLOSED.** The auth surface (scrypt
+credentials store + signed-cookie sessions + signed
+double-submit CSRF + three-layer trusted-IP derivation +
+per-IP/per-cred rate-limit + anonymous-path perimeter +
+login surface + SW pre-auth/post-auth cache split + CLI
+bootstrap + frontend CSRF auto-attach + caddy/nginx
+deploy-runbook) is ready for deployed dogfood.
 
-## Context recap (UI-12c code session 2026-05-06 → 2026-05-07)
+## Context recap (UI-13 code session 2026-05-07 → 2026-05-08)
 
-1. **PR #105** — UI-12c code chunk. 9 commits squash-merged:
-   1. `8a534f3` feat(ui-12c): classifier + cross-process
-      lockfile + seed_vapid (877 LOC, 31 tests)
-   2. `8cdf268` feat(ui-12c): cryptography modules — VAPID
-      keygen + JWT + RFC 8291 enc (1337 LOC, 44 tests)
-   3. `e9c649f` feat(ui-12c): three-layer rate limit + race
-      protection (815 LOC, 17 tests)
-   4. `c8ee243` feat(ui-12c): HTTP delivery + 410/404 prune
-      + transport privacy (1133 LOC, 19 tests)
-   5. `9ac53b4` feat(ui-12c): PushEmit TriggerSource — bus
-      subscriber + fan-out (734 LOC, 11 tests)
-   6. `6697c81` feat(ui-12c): wire cmd_watch + import scope
-      guard + cross-process test + docs (534 LOC, 6 tests)
-   7. `92353b0` fix(ui-12c): round-1 audit follow-ups —
-      2 P1 closed in-branch (5 regression tests)
-   8. `6389b77` docs(ui-12c): visual artefacts — 3 PNGs +
-      1 .webm (193 KB)
-   9. (squash merge commit `e5c89a7`)
+1. **PR #109** — UI-13 code chunk. 13 commits squash-merged:
+   1. `aec3c33` feat(ui-13): _auth module — credentials
+      store + scrypt + primitives (chunk 1, ~830 LOC, 19
+      tests)
+   2. `00e2b68` feat(ui-13): session + CSRF + Origin
+      tests (chunk 2, 28 tests)
+   3. `1cc0cb3` feat(ui-13): trusted-IP + rate-limit +
+      anonymous path tests (chunk 3, 119 tests)
+   4. `2a24ef1` feat(ui-13): server.py wiring — auth
+      middleware + login/logout + cookies (chunk 4, 36 tests)
+   5. `16cdff5` fix(ui-13): Codex round 1 audit — P0 +
+      3xP1 + P2 closed in-branch (10 regression tests)
+   6. `79562ab` fix(ui-13): Codex round 2 audit — P1 +
+      P2 closed in-branch (3 regression tests)
+   7. `ccfb2f2` feat(ui-13): chunk 5 — login visual
+      primitive + asset routing fix
+   8. `48576c9` feat(ui-13): chunk 6 — sw.js cache split
+      + auth:granted/revoked hooks
+   9. `4853de7` feat(ui-13): chunk 7 — CLI bootstrap +
+      fail-closed startup (16 CLI tests)
+   10. `c171724` feat(ui-13): chunk 8 — frontend CSRF
+       header attach (1 structural test)
+   11. `4b5a71b` feat(ui-13): chunk 9 — deploy-runbook +
+       visual artefacts (2 PNGs + Playwright capture)
+   12. `a93183b` fix(ui-13): Codex round 3 audit — P0 +
+       2xP1 + P2 closed in-branch (11 regression tests)
+   13. `253e61e` fix(ui-13): Codex round 4 audit — P0
+       closed in-branch (2 regression tests)
+   14. (squash merge commit `6e283a8`)
 
-   - Round 1 audit: CHANGES-REQ (2 P1 + 1 P1 visuals
-     binding). All 3 closed in-branch.
-   - Round 2 audit: APPROVED clean.
-   - Loop budget: 2/5.
+   - Round 1 audit: CHANGES-REQ (1 P0 + 3 P1 + 2 P2).
+     P0+3xP1+1xP2 closed in-branch; asset-routing P2
+     deferred per Codex's framing → landed in chunk 5.
+   - Round 2 audit: CHANGES-REQ (1 P1 + 1 P2). Both closed.
+   - Round 3 audit: CHANGES-REQ (1 P0 + 2 P1 + 1 P2). All
+     closed (--session-ttl-days implemented; --tls-*
+     deferred with runbook rationale).
+   - Round 4 audit: CHANGES-REQ (1 P0 — non-loopback bind
+     + empty expected_origins refused at startup).
+   - Round 5 audit: APPROVED clean.
+   - Loop budget: 4/5.
    - Merge: Claude Code lands the merge per
      `feedback_karasu_merge_es_implementer.md`
-     (`gh pr merge 105 --squash --delete-branch`).
+     (`gh pr merge 109 --squash --delete-branch`).
+   - Final test surface: 985 passed + 7 skipped + 2
+     pre-existing Windows quirks (CRLF + cwd path;
+     documented; NOT regressions). UI-13 contributes
+     ~250 new tests across 6 new test files.
 
-2. **PR #106** (this PR) — docs/memory sync after UI-12c
+2. **PR #110** (this PR) — docs/memory sync after UI-13
    code merge.
 
 ## Entry point for THIS session
 
-**Phase 4 — DEPLOYED SURFACES.** The macro brief is unwritten.
-Phase 4 lifts the surface from local-only / single-operator
-to deployed / multi-operator. References are dispersed
-across the UI-10..UI-12c briefs (every "UI-13+" mention)
-and need to be consolidated into a Phase 4 macro brief
-BEFORE any Phase 4 chunk opens.
-
-### Anticipated Phase 4 scope (non-binding, source citations)
+**Phase 4 — second chunk to be picked.** UI-13 closed the
+auth foundation. The remaining anticipated Phase 4 scope
+from the macro brief PR #107:
 
 ```text
-1. Deployed surface — TLS termination, certificate
-   provisioning, public hostname, deployment topology.
-   Source: docs/local-dogfood.md "UI-13+ deployed surfaces
-   earn their own brief covering certificate provisioning
-   + auth + multi-operator push fan-out".
-
-2. Multi-operator authorization — login, session
+1. Multi-operator authorization — login, session
    management, per-operator audit log filtering, trust
-   tier scoping.
-   Sources:
-   - ui-10-design-brief.md §6 "UI-13+: Multi-operator
-     surfaces (deployed Karasu, login, authorization
-     tiers, audit log filtering). Earns its own brief; out
-     of scope here."
-   - ui-11-design-brief.md §9 "Multi-operator
-     collaboration / per-user trust. UI-13+."
+   tier scoping. UI-13 ships single-operator
+   credentials; multi-operator extends the
+   karasu-auth.json shape to a list-of-users + per-user
+   trust scoping.
 
-3. Multi-host writer concurrency — the UI-12c §3-G file
+2. Multi-host writer concurrency — the UI-12c §3-G file
    lock is single-filesystem only (fcntl.flock /
-   msvcrt.locking semantics over network filesystems are
-   not portable). Deployed surfaces with shared storage
-   (NFS / multi-instance deployment) need their own
-   concurrency contract.
-   Source: ui-12c-design-brief.md §9 "Multi-host /
-   multi-machine writer concurrency. ... Phase 4 will
-   earn its own concurrency contract."
+   msvcrt.locking semantics over network filesystems
+   are not portable). Deployed surfaces with shared
+   storage (NFS / multi-instance deployment) need
+   their own concurrency contract.
 
-4. A2A peer push fan-out — Karasu instance pushing to
-   another Karasu instance (vs the current FCM/APNs/
-   Mozilla autopush per-browser push).
-   Source: ui-12c-design-brief.md §9 "A2A peer push
-   fan-out (Karasu instance pushing to another Karasu
-   instance). UI-13+."
+3. A2A peer push fan-out — Karasu instance pushing to
+   another Karasu instance (vs the UI-12c per-browser
+   push).
 
-5. Push enhancements (post-UI-12c):
+4. Push enhancements (post-UI-12c):
    - Per-event push opt-in beyond the closed enum
      {attention, errors, corrections}.
    - Scheduled / quiet-hours / DND beyond OS-level DND.
-   - Push body content beyond the editorial title (richer
-     payloads after dogfood validates the editorial-line
-     discipline).
-   - VAPID auto-rotation (operator-driven today; UI-12
-     §10.4 "Auto-rotation is a UI-13+ concern").
-   Source: ui-12c-design-brief.md §9 + ui-12-design-brief.md
-   §10.4.
+   - VAPID auto-rotation (operator-driven today).
 
-6. Per-category push debounce override via env var
-   (KARASU_PUSH_DEBOUNCE_<CATEGORY>_MS). Deferred from
-   UI-12c per brief §10.5.
+5. Per-category push debounce override via env var.
+   Deferred from UI-12c per brief §10.5.
 
-7. Operational hardening from Phase 3 dogfood:
-   - F9 missing [job-queue] extra (issue #40) — possible
-     fix landed; verify status.
+6. Operational hardening from Phase 3 dogfood:
+   - F9 missing [job-queue] extra (issue #40).
    - F10 drain skip warnings (issue #41).
    - F11 Notepad atomic-write tmp (issue #42).
    These were filed during Phase 3 dogfood but not
-   formally closed in the UI-N family. Phase 4 may absorb
-   them or split a parallel "Phase 3 hardening" PR.
+   formally closed; Phase 4 may absorb them or split a
+   parallel "Phase 3 hardening" PR.
+
+7. Direct-TLS in karasu (--tls-cert / --tls-key) —
+   intentionally deferred from UI-13. Sealed UI-13
+   production shape is reverse-proxy TLS termination;
+   reopens for UI-14+ if dogfood demands it (per
+   docs/deploy-runbook.md preamble).
 ```
 
 ### Recommended next move
 
 Operator decides between two paths:
 
-**Path A — Phase 4 macro brief first (mirrors UI-0).**
-A doc-only PR consolidating the references above into a
-roadmap, locking in §11.6 pins for the family, picking the
-FIRST chunk. Audited by Codex out-of-band per the brief-
-before-code lifecycle. Macro briefs typically take 2-4
-audit rounds; the family that follows is then sealed.
+**Path A — Multi-operator authorization (UI-14).**
+Natural follow-up to UI-13 — extends karasu-auth.json
+from single-user to multi-user + adds per-user trust
+scoping. Earns its own chunk-level brief.
 
-**Path B — Pick one chunk and earn its chunk brief now.**
-e.g. "UI-13: deployed surface TLS + auth scaffolding" or
-"UI-13: multi-host file lock (NFS-safe primitive)". The
-chunk-level brief earns its own audit; the macro brief
-follows later as a retroactive consolidation.
+**Path B — Operational hardening (issues #40-#42).**
+Smaller surface; closes Phase 3 dogfood findings before
+opening more Phase 4 surface.
 
-Path A is the established pattern (UI-0 macro brief opened
-the UI-1..UI-12c family). Path B trades architectural
-seal-up-front for faster first-merge. Operator's call.
+Path A is the established roadmap path (Phase 4 macro
+brief §3-C item 2). Path B is the cleanup path. Operator's
+call.
 
-### Phase 4 brief lifecycle (whichever path)
+### Phase 4 chunk lifecycle (whichever path)
 
 Per the brief-before-code pattern (UI-9 audit pin #1,
-reaffirmed UI-10 / UI-11 / UI-12 / UI-12b / UI-12c):
+reaffirmed UI-10..UI-13):
 
 ```text
-1. Implementer drafts the brief as a doc-only PR with
-   [NEEDS OPERATOR SIGN-OFF] markers. Inherits the 126
-   binding pins from UI-0..UI-12c (52 base + 6 UI-10 +
-   12 UI-11 + 16 UI-12 + 16 UI-12b + 4 PR #102 round-2
-   forward-carry + 20 UI-12c §11.6) plus any new pins
-   carried forward from UI-12c round 1 audit (none — the
-   UI-12c P1 fixes were privacy + bootstrap fatal, both
-   already covered by the existing pins).
+1. Implementer drafts the chunk-level brief as a
+   doc-only PR with [NEEDS OPERATOR SIGN-OFF] markers.
+   Inherits the 165 binding pins from UI-0..UI-13
+   (126 inherited + 19 Phase 4 macro + 20 UI-13 §11.6).
 2. Operator reviews + confirms ("avanzar" or per-marker).
 3. Implementer entrega the audit prompt copy-paste to the
    operator immediately.
 4. Codex audits; verdict ferried back via the operator.
 5. In-branch follow-ups; re-audit if round 1 was
    CHANGES-REQUIRED with P0.
-6. Brief PR merges BEFORE the first Phase 4 code branch
-   opens. Claude Code lands the merge per
+6. Brief PR merges BEFORE the first code branch opens.
+   Claude Code lands the merge per
    feedback_karasu_merge_es_implementer.md.
 ```
 
 ## Accumulated state
 
-- **126 binding pins inherited** (52 base + 6 UI-10 §0.5 +
+- **165 binding pins inherited** (52 base + 6 UI-10 §0.5 +
   12 UI-11 §11.6 + 16 UI-12 §11.6 + 16 UI-12b §11.6 + 4
-  PR #102 round-2 forward-carry + 20 UI-12c §11.6).
-- **Test suite on main**: 731 passed + 5 skipped + 2
+  PR #102 round-2 forward-carry + 20 UI-12c §11.6 +
+  20 UI-13 §11.6 + 19 Phase 4 macro).
+- **Test suite on main**: 985 passed + 7 skipped + 2
   pre-existing Windows quirks (CRLF + cwd path; documented
-  as NOT regressions; verified via stash + retest on main
-  during UI-12c work).
+  as NOT regressions; verified across UI-13 audit rounds).
 - **Lighthouse contract** unchanged from UI-9.1 baseline.
 - **Loop budget tracker (last 3 chunks)**:
-  - UI-12 brief: 4/5 consumed.
-  - UI-12a: 2/5 consumed.
-  - UI-12b brief: 3/5 consumed; UI-12b code: 1/5 consumed.
-  - UI-12c brief: 4/5 consumed; UI-12c code: 2/5 consumed.
+  - UI-12c brief: 4/5; UI-12c code: 2/5.
+  - UI-13 brief: 4/5; UI-13 code: 4/5.
 
 ## Open issues
 
 ```text
 F9  missing [job-queue] extra        (#40, Phase 3 dogfood)
 F10 drain skip warnings              (#41, Phase 3 dogfood)
-F11 Notepad atomic-write tmp         (#42, Phase 3 dogfood)
+F11 Notepad atomic-work tmp          (#42, Phase 3 dogfood)
 ```
-
-These three were filed during the Phase 3 live dogfood
-(2026-05-02) and are NOT regressions from Phase 3 chunks
-3a/3b/3c. They are operational hardening candidates for
-Phase 4.
 
 ## Operator-side TODOs
 
@@ -206,6 +193,11 @@ Phase 4.
 - Uninstall ChatGPT Codex Connector App from repo if still
   installed (PR #67 retired working agreement; physical
   uninstall closes the loop).
+- Production dogfood: bring up a real reverse-proxy + TLS
+  cert + run `karasu auth set-credentials` against a
+  configured `auth.expected_origins` so the deployed
+  posture (Secure cookies + Origin/Referer enforcement)
+  exercises end-to-end.
 ```
 
 ## Phase / prototype status
@@ -214,17 +206,13 @@ Phase 4.
 Phase 1 — Local daemon + Telegram         ✔ CLOSED.
 Phase 2 — Git-aware + A2A                 ✔ CLOSED.
 Phase 3 — PWA + Advanced                  ✔ CLOSED.
-                                            UI-0..UI-12c all
-                                            merged. Exit
-                                            criteria CLOSED
-                                            2026-05-07 by
-                                            UI-12c PR #105.
-                                            The prototype is
-                                            complete.
-Phase 4 — Deployed surfaces               ⚠ UNSCOPED.
-                                            Macro brief
-                                            pending. See
-                                            "Entry point for
-                                            THIS session"
-                                            above.
+Phase 4 — Deployed surfaces               ⚙ FIRST CHUNK
+                                           CLOSED 2026-05-08
+                                           by UI-13 PR #109.
+                                           Auth surface ready
+                                           for deployed
+                                           dogfood. Remaining
+                                           chunks per "Entry
+                                           point for THIS
+                                           session" above.
 ```

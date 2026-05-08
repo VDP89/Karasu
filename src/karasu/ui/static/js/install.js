@@ -263,17 +263,31 @@
         }
 
         /* The state label gets a click handler + keyboard
-         * activation ONLY in "available". iOS "ready" is read-
-         * only — UI-14 §3-B SEALED: the install gesture is
-         * browser-native, the inline hint is the affordance.
+         * activation ONLY in the actionable "available" sub-
+         * state — i.e. state === 'available' AND the dismiss
+         * key is OUTSIDE its 30-day window. iOS "ready" is
+         * read-only (UI-14 §3-B SEALED — the install gesture is
+         * browser-native, the inline hint is the affordance).
          * "update" routes activation through the dedicated
          * Refresh button, not the label.
+         *
+         * Codex round-2 P2 (2026-05-08): the dismiss-within-
+         * window beat keeps state === 'available' (truthful
+         * platform capability per §11.6.14) but onLabelClick
+         * short-circuits via readDismissed(). Exposing
+         * role="button" + tabindex="0" + pointer cursor on a
+         * label whose click is no-op misleads keyboard /
+         * screen-reader users. Strip the button affordance in
+         * the dismissed sub-state — the visual signal lives in
+         * the is-dismissed CSS modifier, the procedural signal
+         * lives here.
          *
          * A <span> is not focusable by default, so flip
          * role="button" + tabindex dynamically; without these
          * the keydown listener never receives Tab+Enter. */
         if (labelEl) {
-            if (state === 'available') {
+            const labelActionable = state === 'available' && !readDismissed();
+            if (labelActionable) {
                 labelEl.setAttribute('role', 'button');
                 labelEl.setAttribute('tabindex', '0');
                 labelEl.style.cursor = 'pointer';

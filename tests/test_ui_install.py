@@ -253,6 +253,31 @@ def test_is_dismissed_modifier_class_applied(install_js_code: str) -> None:
     )
 
 
+def test_label_button_affordance_gated_on_dismiss(
+    install_js_code: str,
+) -> None:
+    """Codex round-2 P2 SEALED — when the slot is "available"
+    but inside the 30-day dismiss window, the label's
+    role=button + tabindex=0 + pointer cursor MUST be stripped
+    so keyboard / screen-reader users do not encounter an
+    interactive element whose click is silently no-op.
+
+    The implementation gates the button affordance on
+    ``state === 'available' && !readDismissed()`` (a single
+    expression we lock here so a future refactor cannot
+    silently re-expose the misleading button shape)."""
+    pattern = re.compile(
+        r"state\s*===\s*['\"]available['\"]\s*&&\s*!\s*readDismissed\s*\(\s*\)"
+    )
+    assert pattern.search(install_js_code), (
+        "install.js does not gate the label's role=button + "
+        "tabindex affordance on `state === 'available' && "
+        "!readDismissed()`. Codex round-2 P2: the dismissed "
+        "label keeps button affordance but the click is no-op, "
+        "misleading keyboard / screen-reader users."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Layer 5 — SW message contract
 # ---------------------------------------------------------------------------

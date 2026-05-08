@@ -1,7 +1,8 @@
 # Karasu UI — UI-14 Design Brief (PWA installable surface)
 
 > Status: **SIGN-OFF COMPLETE 2026-05-08 — Codex audit
-> pending.**
+> APPROVED-with-observations 2026-05-08 (3 rounds). Brief
+> ready for merge.**
 >
 > Estimated scope: ~800–1500 LOC including tests + docs (per
 > Phase 4 macro brief §3-D estimate).
@@ -1756,14 +1757,29 @@ merge.
 ```text
 Brief status:    SIGN-OFF COMPLETE 2026-05-08 — all §3
                  sub-decisions sealed, all §10 questions
-                 resolved. Awaiting Codex audit.
-Brief audit:     pending (round 1 not started).
-Brief loop budget: 5 (round 1 not started).
+                 resolved. Codex audit
+                 APPROVED-with-observations 2026-05-08
+                 across 3 rounds; ready for merge.
+Brief audit:     APPROVED-with-observations
+                   round 1: CHANGES-REQUIRED (1 P0 + 2 P1
+                            + 1 P2) → all 4 closed
+                            in-branch (commit ad37688).
+                   round 2: CHANGES-REQUIRED (1 P1 + 1 P2,
+                            no P0; round-1 blockers
+                            confirmed closed) → both
+                            closed in-branch (commit
+                            a5ab864).
+                   round 3: APPROVED-with-observations
+                            (1 P2: refresh audit status
+                            in header + §12 + footer
+                            before merge) → applied in
+                            this commit.
+Brief loop budget: 3/5 consumed.
 
 Brief PR:        #113
 Brief base:      main
 Brief HEAD:      docs/ui-14-brief
-Brief diff:      doc-only.
+Brief diff:      doc-only; 1 file added (1818 LOC).
 
 Code chunk PR:   not opened. Earns its own brief-before-
                  code lifecycle gate (UI-9 audit pin #1):
@@ -1801,18 +1817,19 @@ Lighthouse:      UI-9.1 baseline holds. UI-14 anticipates
                  installability score) without perf
                  regression.
 
-Next step:       Implementer (Claude Code) entrega the
-                 Codex audit prompt copy-paste to the
-                 operator immediately after this commit
-                 (per feedback_audit_prompt_automatic.md).
-                 Codex audits; verdict ferried back via
-                 the operator. In-branch follow-ups;
-                 re-audit if round 1 returns CHANGES-
-                 REQUIRED with P0. Brief PR merges
-                 BEFORE the UI-14 code branch opens.
+Next step:       Brief PR merges (--squash
+                 --delete-branch; leaf-on-main; per
+                 feedback_karasu_merge_es_implementer.md
+                 the implementer lands the merge after
+                 APPROVED). UI-14 code chunk branch
+                 opens against main post-merge; the
+                 165 inherited pins + the 20 UI-14
+                 §11.6 pins from this brief are binding
+                 implementation contracts on the code
+                 chunk.
 ```
 
 ---
 
 > **Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>**
-> **Co-Audited-By: Codex (via ChatGPT, operator-mediated) — pending**
+> **Co-Audited-By: Codex (via ChatGPT, operator-mediated) — APPROVED-with-observations 2026-05-08 (3 rounds; all observations applied in-branch before merge)**

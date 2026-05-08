@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import logging
 import re
 import yaml
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -40,6 +41,31 @@ from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote
+
+from karasu.ui._auth import (
+    AuthCredentials,
+    AuthCredentialsError,
+    AuthSessionError,
+    CSRF_COOKIE_NAME,
+    CSRF_HEADER_NAME,
+    LoginRateLimit,
+    SESSION_COOKIE_NAME,
+    UNTRUSTED_FORWARDED,
+    derive_client_ip,
+    dummy_password_verify,
+    is_anonymous_path,
+    is_loopback_ip,
+    issue_csrf_token,
+    issue_session_token,
+    load_credentials,
+    origin_matches,
+    parse_forwarded_chain,
+    verify_csrf,
+    verify_password,
+    verify_session_token,
+)
+
+_auth_log = logging.getLogger("karasu.ui.auth")
 
 # UI-9 follow-up — content types worth compressing on the wire.
 # woff2 fonts and PNG icons are already compressed; gzip-ing
@@ -97,6 +123,40 @@ CONFIG_PATH = Path("karasu.yaml")
 # subscribe / unsubscribe writers, UI-12c earns VAPID
 # generation behind the ``cryptography`` exception (§11.6.13).
 PUSH_STORE_PATH = Path("karasu-push.json")
+
+# UI-13 — auth state. Set by ``configure_auth()``; the default
+# is ``AUTH_NO_AUTH=True`` so UI tests that pre-date UI-13 (and
+# the local --no-auth dev posture) keep working without
+# threading credentials through every fixture. ``cmd_ui``
+# enables auth by calling ``configure_auth(no_auth=False, ...)``
+# at startup; the brief §3-B fail-closed contract refuses to
+# bind the listener if creds are missing.
+AUTH_NO_AUTH: bool = True
+AUTH_DEPLOYED: bool = False
+AUTH_TRUSTED_PROXIES: frozenset[str] = frozenset({"127.0.0.1", "::1"})
+AUTH_EXPECTED_ORIGINS: tuple[str, ...] = ()
+# Brief §3-C session TTL range. Default 14d; operator can
+# override via ``karasu ui --session-ttl-days N`` (1..30
+# range enforced at the CLI parse step).
+from karasu.ui._auth import DEFAULT_SESSION_TTL_SECONDS as _DEFAULT_TTL_S
+AUTH_SESSION_TTL_SECONDS: int = _DEFAULT_TTL_S
+AUTH_CREDENTIALS_PATH: Path | None = None
+_AUTH_CREDS_CACHE: AuthCredentials | None = None
+_AUTH_CREDS_MTIME: float | None = None
+_AUTH_RATE_LIMIT: LoginRateLimit | None = None
+
+# Login JSON body cap. Real bodies are ~200 bytes (username +
+# password); 4 KiB matches the existing per-POST cap parity from
+# UI-10 / UI-11b / UI-12b.
+_LOGIN_BODY_MAX_BYTES = 4096
+
+# Sentinels for login body parsing — same shape as the UI-10
+# revoke / UI-12b push sentinels so the handler maps cleanly to
+# distinct HTTP statuses without raising.
+_LOGIN_MALFORMED_JSON = object()
+_LOGIN_BODY_NOT_OBJECT = object()
+_LOGIN_BODY_TOO_LARGE = object()
+_LOGIN_INVALID_FIELDS = object()
 
 # UI-10 — bound on the POST body for /api/scars/{id}/revoke.
 # Modal textarea caps the operator's reason on the client; the
@@ -620,7 +680,174 @@ class UIHandler(BaseHTTPRequestHandler):
     ScarEngine for ``/api/scars``). The POST routes added in
     UI-10 / UI-11b are local-only, drawer-earned, network-only
     (the SW handler from UI-8 already pins ``/api/*`` to
-    network-only), 204 on success."""
+    network-only), 204 on success.
+
+    UI-13 wraps every request behind an auth perimeter: the
+    anonymous whitelist (§3-D) bypasses session checks; every
+    other path requires a valid session cookie + (for mutating
+    methods) a valid CSRF double-submit token. The default
+    posture is ``AUTH_NO_AUTH=True`` so tests that pre-date
+    UI-13 keep passing; ``configure_auth(no_auth=False, ...)``
+    flips into the deployed posture."""
+
+    # Stash for the authenticated user resolved by
+    # ``_authorize_request``; consulted by handlers that emit
+    # human_decision events so the operator's username can
+    # land on the bus alongside the action.
+    _authenticated_user: str | None = None
+
+    # ---- UI-13 auth helpers --------------------------------------
+
+    def _parse_cookies(self) -> dict[str, str]:
+        """Parse the ``Cookie`` request header into a dict.
+
+        Multiple cookies with the same name → last wins (matches
+        browser behaviour). Quoted values keep their quotes; the
+        verifiers don't care about the framing."""
+        raw = self.headers.get("Cookie", "")
+        out: dict[str, str] = {}
+        for piece in raw.split(";"):
+            piece = piece.strip()
+            if not piece or "=" not in piece:
+                continue
+            name, _, value = piece.partition("=")
+            out[name.strip()] = value.strip()
+        return out
+
+    def _derive_client_ip(self) -> str | object:
+        """Apply §3-G three-layer derivation against this
+        request. Returns either an IP string,
+        ``UNTRUSTED_FORWARDED`` sentinel, or ``None`` (all-
+        trusted chain — caller fail-closes)."""
+        peer_addr = self.client_address[0]
+        chain = parse_forwarded_chain(
+            forwarded_header=self.headers.get("Forwarded"),
+            xff_header=self.headers.get("X-Forwarded-For"),
+        )
+        return derive_client_ip(
+            peer_addr=peer_addr,
+            forwarded_chain=chain,
+            trusted_proxies=AUTH_TRUSTED_PROXIES,
+        )
+
+    def _ip_for_rate_limit(self) -> str:
+        """Resolve a concrete IP key for the rate-limit slot.
+
+        Codex P0 round 1 audit binding 2026-05-08: when
+        derive_client_ip returns UNTRUSTED_FORWARDED or None,
+        the slot key MUST NOT be a loopback IP — otherwise
+        ``LoginRateLimit.check`` short-circuits via
+        ``is_loopback_ip`` and the public-guessing bypass
+        that round 3 P1 closed at the primitive level
+        re-opens at the server layer.
+
+        Resolution per §3-G post-derivation rules:
+          * IP string from derive_client_ip → use verbatim.
+          * UNTRUSTED_FORWARDED → synthetic key
+            ``"!untrusted:<peer_addr>"``. Bucket is still
+            per-peer (so a flood from one untrusted peer is
+            bounded), but the prefix guarantees the string
+            never matches ``is_loopback_ip``'s 127.0.0.0/8 +
+            ::1 set, so the bypass cannot fire.
+          * None (all-trusted chain — impossible for
+            external traffic) → synthetic key
+            ``"!unknown:<peer_addr>"``. Same fail-closed
+            shape: fresh slot keyed by peer, never loopback.
+        """
+        peer_addr = self.client_address[0]
+        derived = self._derive_client_ip()
+        if isinstance(derived, str):
+            return derived
+        if derived is UNTRUSTED_FORWARDED:
+            return f"!untrusted:{peer_addr}"
+        return f"!unknown:{peer_addr}"
+
+    def _session_payload(self) -> dict[str, Any] | None:
+        """Verify the session cookie and return the payload, or
+        None when no valid session is present. Returns None in
+        no-auth posture; the caller decides what that means.
+
+        Refreshes the credentials cache via mtime check before
+        verifying so a credential rotation (Codex round 3 P1
+        audit binding 2026-05-08) invalidates live sessions
+        without a process restart."""
+        if AUTH_NO_AUTH:
+            return None
+        creds = _refresh_creds_cache()
+        if creds is None:
+            return None
+        token = self._parse_cookies().get(SESSION_COOKIE_NAME)
+        if not token:
+            return None
+        try:
+            return verify_session_token(token, creds=creds)
+        except AuthSessionError:
+            return None
+
+    def _verify_csrf_for_request(self, payload: dict[str, Any]) -> bool:
+        """Constant-time CSRF double-submit check using the
+        verified session payload (§3-F). Reads through the
+        refreshed cache so a rotation that lands between the
+        session check and the CSRF check does not race."""
+        creds = _refresh_creds_cache()
+        if creds is None:
+            return False
+        cookies = self._parse_cookies()
+        return verify_csrf(
+            cookie_value=cookies.get(CSRF_COOKIE_NAME),
+            header_value=self.headers.get(CSRF_HEADER_NAME),
+            creds=creds,
+            username=payload["user"],
+            gen=payload["gen"],
+        )
+
+    def _authorize_request(self, method: str, path: str) -> bool:
+        """Run the auth perimeter (§3-D). Returns True if the
+        handler should proceed; False if a response was already
+        written.
+
+        no-auth posture → unconditionally True.
+        Anonymous path  → True (handler may still apply route-
+                           specific Origin checks, e.g. /auth/login
+                           and GET /auth/logout in deployed posture).
+        Auth-required path:
+          GET without session  → 302 redirect to /
+          POST without session → 401
+          POST with session but bad CSRF → 403
+          Otherwise           → True
+        """
+        if AUTH_NO_AUTH:
+            return True
+        if is_anonymous_path(method, path):
+            return True
+        payload = self._session_payload()
+        if payload is None:
+            if method == "GET":
+                self._send(
+                    302,
+                    b"",
+                    "text/plain",
+                    extra_headers=(("Location", "/"),),
+                )
+            else:
+                self._send(
+                    401,
+                    b'{"error":"unauthorized"}',
+                    "application/json",
+                )
+            return False
+        if method != "GET":
+            if not self._verify_csrf_for_request(payload):
+                self._send(
+                    403,
+                    b'{"error":"forbidden"}',
+                    "application/json",
+                )
+                return False
+        self._authenticated_user = payload["user"]
+        return True
+
+    # ---- end UI-13 auth helpers ----------------------------------
 
     def _send(
         self,
@@ -676,6 +903,19 @@ class UIHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 — BaseHTTPRequestHandler API
         path, _, query = self.path.partition("?")
+
+        if not self._authorize_request("GET", path):
+            return
+
+        # UI-13 — GET /auth/logout (anonymous + idempotent
+        # recovery shape per §3-D logout split). Same-origin
+        # Referer/Origin check enforced in deployed posture
+        # (Codex round 2 P2 binding); cookies cleared on
+        # success; cross-site forced-logout produces 403 + NO
+        # cookie mutation.
+        if path == "/auth/logout":
+            self._handle_logout_get()
+            return
 
         if path == "/api/events":
             events = _read_events(_parse_limit(query))
@@ -760,7 +1000,16 @@ class UIHandler(BaseHTTPRequestHandler):
             return
 
         if path in ("/", "/index.html"):
-            html = (STATIC_DIR / "index.html").read_bytes()
+            # UI-13 §3-D: GET / renders the login surface when
+            # there is no session (and auth is enabled); the
+            # PWA shell otherwise. /index.html stays an alias.
+            if (
+                AUTH_NO_AUTH
+                or self._session_payload() is not None
+            ):
+                html = (STATIC_DIR / "index.html").read_bytes()
+            else:
+                html = (STATIC_DIR / "login.html").read_bytes()
             self._send(200, html, "text/html; charset=utf-8")
             return
 
@@ -851,11 +1100,26 @@ class UIHandler(BaseHTTPRequestHandler):
         """Write paths.
 
         UI-10 ships scar revoke. UI-11b adds trust adjust.
-        UI-12b adds push subscribe + unsubscribe. All four
-        return 204 with no body on success and emit auditable
-        ``human_decision`` events.
+        UI-12b adds push subscribe + unsubscribe. UI-13 adds
+        POST /auth/login (anonymous, CSRF-cookie-exempt) +
+        POST /auth/logout (auth+CSRF-required, JS-driven from
+        the PWA shell). All five return 204 with no body on
+        success and emit auditable ``human_decision`` events
+        where applicable.
         """
         path, _, _ = self.path.partition("?")
+
+        if not self._authorize_request("POST", path):
+            return
+
+        # UI-13 login + logout split (§3-D + §3-F).
+        if path == "/auth/login":
+            self._handle_login_post()
+            return
+        if path == "/auth/logout":
+            self._handle_logout_post()
+            return
+
         revoke = _REVOKE_PATH_RE.match(path)
         trust = _TRUST_PATH_RE.match(path)
         push_subscribe = path == _PUSH_SUBSCRIBE_PATH
@@ -883,6 +1147,15 @@ class UIHandler(BaseHTTPRequestHandler):
                 "/api/scars",
                 "/api/push",
             ):
+                self._send(405, b"method not allowed", "text/plain")
+                return
+            if path == "/auth/logout":
+                # GET /auth/logout exists; POST /auth/logout
+                # is reached above when authorized. A POST that
+                # reached here means authorization rejected it
+                # (in no-auth posture there's nothing to log out
+                # on the POST side either) — 405 is the honest
+                # answer rather than 404.
                 self._send(405, b"method not allowed", "text/plain")
                 return
             self._send(404, b"not found", "text/plain")
@@ -1310,6 +1583,364 @@ class UIHandler(BaseHTTPRequestHandler):
 
         return {"endpoint": endpoint}
 
+    # ---- UI-13 login / logout handlers ---------------------------
+
+    def _handle_login_post(self) -> None:
+        """POST /auth/login per §3-B + §3-F.
+
+        Anonymous endpoint (CSRF-cookie-exempt — the cookie
+        does not exist pre-login). Origin/Referer match
+        enforced in deployed posture. Validation order:
+
+          400 — body NOT valid JSON.
+          413 — body > 4 KiB.
+          422 — non-object body OR missing/wrong-shape username
+                / password fields.
+          403 — Origin/Referer mismatch (deployed posture).
+          429 — per-IP OR per-credentials burst tripped.
+          401 — credentials don't verify. Generic body
+                ``{"error":"could not sign in"}``; no
+                "username unknown" branch (timing parity via
+                dummy_password_verify).
+          200 — success. Body ``{"ok": true}`` + Set-Cookie
+                session + Set-Cookie csrf.
+          503 — auth not configured (defensive; cmd_ui only
+                reaches this branch when configure_auth is
+                inconsistent).
+        """
+        if AUTH_NO_AUTH:
+            self._send(
+                503,
+                b'{"error":"auth not configured"}',
+                "application/json",
+            )
+            return
+        creds = _refresh_creds_cache()
+        if creds is None:
+            self._send(
+                503,
+                b'{"error":"auth not configured"}',
+                "application/json",
+            )
+            return
+
+        if not origin_matches(
+            request_origin=self.headers.get("Origin"),
+            request_referer=self.headers.get("Referer"),
+            expected_origins=AUTH_EXPECTED_ORIGINS,
+            deployed=AUTH_DEPLOYED,
+        ):
+            self._send(
+                403,
+                b'{"error":"forbidden"}',
+                "application/json",
+            )
+            return
+
+        result = self._read_login_body()
+        if result is _LOGIN_BODY_TOO_LARGE:
+            self._send(413, b"payload too large", "text/plain")
+            return
+        if result is _LOGIN_MALFORMED_JSON:
+            self._send(
+                400,
+                b'{"error":"invalid request"}',
+                "application/json",
+            )
+            return
+        if result is _LOGIN_BODY_NOT_OBJECT:
+            self._send(
+                422,
+                b'{"error":"request body must be an object"}',
+                "application/json",
+            )
+            return
+        if result is _LOGIN_INVALID_FIELDS:
+            self._send(
+                422,
+                b'{"error":"invalid credentials shape"}',
+                "application/json",
+            )
+            return
+
+        assert isinstance(result, tuple)
+        body, is_form = result
+        username = body["username"]
+        password = body["password"]
+
+        client_ip = self._ip_for_rate_limit()
+        rl = _AUTH_RATE_LIMIT
+        if rl is not None and not rl.check(
+            client_ip=client_ip, username_attempted=username
+        ):
+            self._send(
+                429,
+                b'{"error":"too many attempts"}',
+                "application/json",
+            )
+            return
+
+        auth_ok = False
+        if username != creds.username:
+            # Timing parity: pay a scrypt cost on the no-username
+            # branch so wrong-username and wrong-password requests
+            # take comparable time (§3-G + pin §11.6.7).
+            dummy_password_verify()
+        elif verify_password(creds.password_hash, password):
+            auth_ok = True
+
+        if not auth_ok:
+            if rl is not None:
+                rl.record_failure(
+                    client_ip=client_ip, username_attempted=username
+                )
+            _auth_log.warning("login failed (ip=%s)", client_ip)
+            # Brief §3-E lines 644-648 + Codex P1 round 1
+            # binding: form mode re-renders login.html with
+            # the error slot visible; JSON mode returns the
+            # generic 401 body the JS fetch path consumes.
+            if is_form:
+                self._send_login_rerender()
+            else:
+                self._send(
+                    401,
+                    b'{"error":"could not sign in"}',
+                    "application/json",
+                )
+            return
+
+        # Success path.
+        if rl is not None:
+            rl.record_success(client_ip=client_ip, username=username)
+        _auth_log.info(
+            "login ok (user=%s, ip=%s)", creds.username, client_ip
+        )
+
+        session_token = issue_session_token(
+            creds=creds, ttl_seconds=AUTH_SESSION_TTL_SECONDS
+        )
+        csrf_token = issue_csrf_token(
+            creds=creds,
+            username=creds.username,
+            gen=creds.credentials_generation,
+        )
+        cookies = self._build_session_cookies(session_token, csrf_token)
+        if is_form:
+            # Brief §3-E: form success → 302 + cookies +
+            # Location: /. The browser follows; the GET to /
+            # then sees a valid session and serves the PWA
+            # shell (index.html).
+            self._send(
+                302,
+                b"",
+                "text/plain",
+                extra_headers=(("Location", "/"),) + cookies,
+            )
+        else:
+            self._send(
+                200,
+                b'{"ok":true}',
+                "application/json",
+                extra_headers=cookies,
+            )
+
+    def _handle_logout_get(self) -> None:
+        """GET /auth/logout — anonymous + idempotent (§3-D).
+
+        Same-origin Origin/Referer check enforced in deployed
+        posture (Codex round 2 P2 binding): cross-site forced-
+        logout via image tags / prefetch / third-party
+        redirects must not log Victor out. On 403 the cookies
+        are NOT cleared. On success the session + csrf cookies
+        are cleared via Max-Age=0 and the response redirects
+        to /."""
+        if AUTH_NO_AUTH:
+            # No-auth posture: nothing to clear; redirect home.
+            self._send(
+                302,
+                b"",
+                "text/plain",
+                extra_headers=(("Location", "/"),),
+            )
+            return
+
+        if not origin_matches(
+            request_origin=self.headers.get("Origin"),
+            request_referer=self.headers.get("Referer"),
+            expected_origins=AUTH_EXPECTED_ORIGINS,
+            deployed=AUTH_DEPLOYED,
+        ):
+            self._send(
+                403,
+                b'{"error":"forbidden"}',
+                "application/json",
+            )
+            return
+
+        cookies = self._build_clear_cookies()
+        self._send(
+            302,
+            b"",
+            "text/plain",
+            extra_headers=(("Location", "/"),) + cookies,
+        )
+
+    def _handle_logout_post(self) -> None:
+        """POST /auth/logout — auth+CSRF required (§3-D).
+
+        Reached only when ``_authorize_request`` already
+        accepted the session + CSRF token. Clears cookies and
+        returns 204 (the JS-driven affordance from the PWA
+        shell consumes the empty body and reloads ``/``)."""
+        cookies = self._build_clear_cookies()
+        self._send(
+            204,
+            b"",
+            "application/octet-stream",
+            extra_headers=cookies,
+        )
+
+    def _read_login_body(
+        self,
+    ) -> "tuple[dict[str, str], bool] | object":
+        """Parse + validate the login body.
+
+        Codex P1 round 1 audit binding 2026-05-08 + brief §3-E
+        lines 644-648: the form MUST work with JS disabled.
+        Two transport shapes are accepted, picked by request
+        Content-Type:
+
+          * ``application/x-www-form-urlencoded`` — form
+            submission; success returns 302 + Set-Cookie +
+            Location:/ ; auth failure returns 200 + login.html
+            re-rendered with the error slot visible.
+          * ``application/json`` (default fallback) — fetch()
+            transport from the JS layer; success returns 200
+            ``{"ok": true}`` + Set-Cookie ; auth failure
+            returns 401 + generic JSON.
+
+        Returns ``(parsed_dict, is_form_submission)`` on
+        success or one of the LOGIN sentinels.
+        """
+        content_type = self.headers.get("Content-Type", "").lower()
+        is_form = content_type.startswith("application/x-www-form-urlencoded")
+
+        try:
+            declared = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            declared = 0
+        if declared > _LOGIN_BODY_MAX_BYTES:
+            return _LOGIN_BODY_TOO_LARGE
+        if declared == 0:
+            return _LOGIN_MALFORMED_JSON
+        body = self.rfile.read(declared)
+        if not body:
+            return _LOGIN_MALFORMED_JSON
+
+        if is_form:
+            try:
+                parsed = parse_qs(
+                    body.decode("utf-8"), keep_blank_values=True
+                )
+            except (UnicodeDecodeError, ValueError):
+                return _LOGIN_MALFORMED_JSON
+            u_list = parsed.get("username") or []
+            p_list = parsed.get("password") or []
+            # Codex P2 round 2 audit binding 2026-05-08:
+            # login parsing at the remote boundary must be
+            # unambiguous. Repeated ``username`` or
+            # ``password`` parameters get the generic 422
+            # rather than silently authenticating against
+            # the first value.
+            if len(u_list) != 1 or len(p_list) != 1:
+                return _LOGIN_INVALID_FIELDS
+            username = u_list[0]
+            password = p_list[0]
+            if not username or not password:
+                return _LOGIN_INVALID_FIELDS
+            return ({"username": username, "password": password}, True)
+
+        # JSON path (default).
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return _LOGIN_MALFORMED_JSON
+        if not isinstance(payload, dict):
+            return _LOGIN_BODY_NOT_OBJECT
+        username = payload.get("username")
+        password = payload.get("password")
+        if not isinstance(username, str) or not username:
+            return _LOGIN_INVALID_FIELDS
+        if not isinstance(password, str) or not password:
+            return _LOGIN_INVALID_FIELDS
+        return ({"username": username, "password": password}, False)
+
+    def _send_login_rerender(self) -> None:
+        """Form-mode auth-failure path per brief §3-E:
+        200 + login.html re-render with the error slot
+        populated. Strips the standalone ``hidden`` boolean
+        attribute from the ``id="login-error"`` element via
+        regex so the chunk-5 multi-line attribute layout
+        (and any future re-formatting) keeps working without
+        a templating engine."""
+        html = (STATIC_DIR / "login.html").read_bytes()
+        html = re.sub(
+            rb'(id="login-error"[^>]*?)\s+hidden(\s|>)',
+            rb"\1\2",
+            html,
+            count=1,
+        )
+        self._send(200, html, "text/html; charset=utf-8")
+
+    def _build_session_cookies(
+        self, session_token: str, csrf_token: str
+    ) -> tuple[tuple[str, str], ...]:
+        """Compose Set-Cookie headers for a fresh login.
+
+        Brief §3-C session cookie attributes (lines 402-407
+        + 1520-1522 verbatim binding; Codex P1 round 1 audit
+        2026-05-08 caught the prior SameSite=Lax drift):
+          HttpOnly + SameSite=Strict + Path=/
+          Max-Age = DEFAULT_SESSION_TTL_SECONDS (14d)
+          Secure when AUTH_DEPLOYED (HTTPS posture)
+
+        Brief §3-F CSRF cookie attributes:
+          NOT HttpOnly (the JS reads it for double-submit)
+          SameSite=Strict + Path=/
+          Max-Age = same as session
+          Secure when AUTH_DEPLOYED
+        """
+        secure = "; Secure" if AUTH_DEPLOYED else ""
+        max_age = AUTH_SESSION_TTL_SECONDS
+        session = (
+            f"{SESSION_COOKIE_NAME}={session_token}; "
+            f"Max-Age={max_age}; Path=/; HttpOnly; "
+            f"SameSite=Strict{secure}"
+        )
+        csrf = (
+            f"{CSRF_COOKIE_NAME}={csrf_token}; "
+            f"Max-Age={max_age}; Path=/; SameSite=Strict{secure}"
+        )
+        return (("Set-Cookie", session), ("Set-Cookie", csrf))
+
+    def _build_clear_cookies(self) -> tuple[tuple[str, str], ...]:
+        """Set-Cookie headers that delete the session + csrf
+        cookies via Max-Age=0 (browser drops them immediately).
+        Attributes mirror the issue path so the browser matches
+        the cookie identity for deletion."""
+        secure = "; Secure" if AUTH_DEPLOYED else ""
+        session = (
+            f"{SESSION_COOKIE_NAME}=; Max-Age=0; Path=/; "
+            f"HttpOnly; SameSite=Strict{secure}"
+        )
+        csrf = (
+            f"{CSRF_COOKIE_NAME}=; Max-Age=0; Path=/; "
+            f"SameSite=Strict{secure}"
+        )
+        return (("Set-Cookie", session), ("Set-Cookie", csrf))
+
+    # ---- end UI-13 handlers --------------------------------------
+
     def _read_revoke_reason(self) -> "str | None | object":
         """Read + validate the optional ``{reason}`` body.
 
@@ -1435,6 +2066,137 @@ def configure(
         PUSH_STORE_PATH = push_store_path
 
 
+def configure_auth(
+    *,
+    credentials_path: Path | None = None,
+    no_auth: bool = False,
+    deployed: bool = False,
+    trusted_proxies: frozenset[str] | None = None,
+    expected_origins: tuple[str, ...] = (),
+    session_ttl_seconds: int | None = None,
+) -> None:
+    """Wire the UI-13 auth surface.
+
+    Called by ``cmd_ui`` at startup AFTER credentials have been
+    bootstrapped (or the ``--no-auth`` dev flag was passed); also
+    called by tests to set up a controlled posture.
+
+    Default ``configure()`` does NOT touch the auth state, so
+    pre-UI-13 tests and the legacy ``karasu ui`` invocation
+    keep working with ``AUTH_NO_AUTH=True``. UI-13 makes
+    ``cmd_ui`` flip ``no_auth=False`` + supply
+    ``credentials_path`` so the deployed posture loads creds
+    eagerly.
+
+    Brief §3-B fail-closed contract: when ``no_auth=False`` and
+    ``credentials_path`` is supplied, this function raises
+    ``AuthCredentialsError`` if the file is absent / malformed
+    / wrong-mode / missing-fields. The caller (cmd_ui) catches
+    and exits 2; tests want the exception surfaced too so a
+    fixture mistake produces a loud failure rather than silent
+    no-auth fallback.
+    """
+    global AUTH_NO_AUTH, AUTH_DEPLOYED, AUTH_TRUSTED_PROXIES
+    global AUTH_EXPECTED_ORIGINS, AUTH_CREDENTIALS_PATH
+    global AUTH_SESSION_TTL_SECONDS
+    global _AUTH_CREDS_CACHE, _AUTH_RATE_LIMIT
+    AUTH_NO_AUTH = no_auth
+    AUTH_DEPLOYED = deployed
+    if trusted_proxies is not None:
+        AUTH_TRUSTED_PROXIES = trusted_proxies
+    AUTH_EXPECTED_ORIGINS = expected_origins
+    if session_ttl_seconds is not None:
+        AUTH_SESSION_TTL_SECONDS = session_ttl_seconds
+    global _AUTH_CREDS_MTIME
+    AUTH_CREDENTIALS_PATH = credentials_path
+    _AUTH_RATE_LIMIT = LoginRateLimit() if not no_auth else None
+    if no_auth:
+        _AUTH_CREDS_CACHE = None
+        _AUTH_CREDS_MTIME = None
+        return
+    # Codex P1 round 2 audit binding 2026-05-08: auth-
+    # enabled startup with no credentials_path is a fail-
+    # closed violation per §3-B — silently clearing the
+    # cache would leave the listener up but every request
+    # would 401 / redirect, hiding the misconfiguration
+    # behind an opaque user-facing error. Raise so cmd_ui
+    # exits 2 with the same generic stderr line as the
+    # missing-file branch.
+    if credentials_path is None:
+        raise AuthCredentialsError("auth enabled but credentials_path missing")
+    _AUTH_CREDS_CACHE = load_credentials(credentials_path)
+    try:
+        _AUTH_CREDS_MTIME = credentials_path.stat().st_mtime
+    except OSError:
+        _AUTH_CREDS_MTIME = None
+
+
+def _reset_auth_state() -> None:
+    """Test helper — restore the pre-UI-13 default. Called by
+    fixtures in their teardown so a configure_auth() in one
+    test does not leak into the next. NOT part of the public
+    surface."""
+    global AUTH_NO_AUTH, AUTH_DEPLOYED, AUTH_TRUSTED_PROXIES
+    global AUTH_EXPECTED_ORIGINS, AUTH_CREDENTIALS_PATH
+    global _AUTH_CREDS_CACHE, _AUTH_CREDS_MTIME, _AUTH_RATE_LIMIT
+    AUTH_NO_AUTH = True
+    AUTH_DEPLOYED = False
+    AUTH_TRUSTED_PROXIES = frozenset({"127.0.0.1", "::1"})
+    AUTH_EXPECTED_ORIGINS = ()
+    AUTH_CREDENTIALS_PATH = None
+    _AUTH_CREDS_CACHE = None
+    _AUTH_CREDS_MTIME = None
+    _AUTH_RATE_LIMIT = None
+    global AUTH_SESSION_TTL_SECONDS
+    AUTH_SESSION_TTL_SECONDS = _DEFAULT_TTL_S
+
+
+def _refresh_creds_cache() -> AuthCredentials | None:
+    """Re-read karasu-auth.json when its mtime changed since
+    the last load. Codex round 3 P1 audit binding 2026-05-08:
+    the runbook's "no restart needed" rotation contract
+    requires the live process to pick up the new
+    credentials_generation + signing secret before the next
+    auth check fires.
+
+    Per-request hot-reload. Cheap on the happy path (one
+    ``stat`` syscall when mtime is unchanged); reload only
+    when the file actually changed.
+
+    Returns the (possibly refreshed) cached credentials.
+    Defensive when:
+      * AUTH_NO_AUTH is True       → returns None.
+      * file vanished post-startup → returns the prior cache
+                                     (caller treats as no
+                                     valid session).
+      * malformed reload           → keeps the prior cache;
+                                     deployed posture continues
+                                     verifying against the
+                                     last good shape rather
+                                     than locking the operator
+                                     out on a transient corrupt
+                                     write.
+    """
+    global _AUTH_CREDS_CACHE, _AUTH_CREDS_MTIME
+    if AUTH_NO_AUTH or AUTH_CREDENTIALS_PATH is None:
+        return _AUTH_CREDS_CACHE
+    try:
+        current_mtime = AUTH_CREDENTIALS_PATH.stat().st_mtime
+    except OSError:
+        return _AUTH_CREDS_CACHE
+    if current_mtime == _AUTH_CREDS_MTIME:
+        return _AUTH_CREDS_CACHE
+    try:
+        _AUTH_CREDS_CACHE = load_credentials(AUTH_CREDENTIALS_PATH)
+        _AUTH_CREDS_MTIME = current_mtime
+    except AuthCredentialsError:
+        # Keep the prior good cache so a transient malformed
+        # write (e.g. mid-rotation interrupted) does not lock
+        # the operator out. The next stat will retry.
+        pass
+    return _AUTH_CREDS_CACHE
+
+
 def run_ui_server(
     host: str = "127.0.0.1",
     port: int = 8787,
@@ -1467,7 +2229,12 @@ def run_ui_server(
             push_store_path=push_store_path,
         )
     server = ThreadingHTTPServer((host, port), UIHandler)
-    print(f"karasu ui → http://{host}:{port}")
+    # ASCII arrow + UTF-8 stdout reconfigure: Windows console
+    # default cp1252 cannot encode the U+2192 right-arrow, so a
+    # plain operator running ``karasu ui`` on a stock terminal
+    # crashed at startup. Same scar shape as
+    # feedback_subprocess_text_utf8 from the Karasu UI-9.1 work.
+    print(f"karasu ui -> http://{host}:{port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

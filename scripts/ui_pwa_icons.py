@@ -18,8 +18,8 @@ Run from the repo root:
 
 Outputs:
 
-    src/karasu/ui/static/assets/icons/karasu-192.png
-    src/karasu/ui/static/assets/icons/karasu-512.png
+    src/karasu/ui/static/icons/karasu-192.png
+    src/karasu/ui/static/icons/karasu-512.png
 
 The PNGs are committed as static assets so the SW pre-cache list
 references stable files; re-running the script is reproducible
@@ -33,8 +33,8 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-ICONS_DIR = REPO_ROOT / "src" / "karasu" / "ui" / "static" / "assets" / "icons"
-CROW_SVG = REPO_ROOT / "src" / "karasu" / "ui" / "static" / "assets" / "crow" / "crow.svg"
+ICONS_DIR = REPO_ROOT / "src" / "karasu" / "ui" / "static" / "icons"
+CROW_SVG = REPO_ROOT / "src" / "karasu" / "ui" / "static" / "crow" / "crow.svg"
 
 # Literal hex matching tokens.css exactly. P2 binding from the
 # UI-8 design review: an off-by-one channel is a regression.

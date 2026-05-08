@@ -1,0 +1,137 @@
+/* UI-13 §3-E — login screen visual primitive.
+ *
+ * Visual constraints (binding per brief lines 627-641):
+ *   * NO marketing copy
+ *   * NO create-account / forgot-password / third-party auth
+ *   * NO theme switcher / password-strength meter / show-password toggle
+ *   * Crow stays idle — the shake-on-error from UI-5 is for system
+ *     errors, NOT operator typos. The login surface deliberately
+ *     does NOT import crow.css; the static SVG renders without
+ *     the .crow base ambient breathing.
+ *
+ * Layout: centred 320px form column; 96px hero crow above.
+ * Tokens consumed verbatim from tokens.css; no hardcoded
+ * colours / spacing / typography here.
+ */
+
+.login {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    gap: var(--space-6);
+    padding: var(--space-6);
+    background: var(--bg-0);
+    color: var(--fg-1);
+    font-family: var(--font-display);
+}
+
+.login-crow {
+    width: 96px;
+    height: 96px;
+    color: var(--fg-1);   /* SVG uses currentColor for body fill */
+    flex-shrink: 0;
+}
+
+.login-form {
+    display: flex;
+    flex-direction: column;
+    width: 320px;
+    max-width: 100%;
+    gap: var(--space-2);
+}
+
+.login-label {
+    font-size: var(--fs-12);
+    font-weight: 500;
+    color: var(--fg-2);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-top: var(--space-3);
+}
+
+.login-label:first-of-type {
+    margin-top: 0;
+}
+
+.login-input {
+    height: 40px;
+    padding: 0 var(--space-3);
+    border: 1px solid var(--fg-3);
+    border-radius: var(--radius-2);
+    background: var(--bg-1);
+    color: var(--fg-1);
+    font-family: var(--font-display);
+    font-size: var(--fs-16);
+    transition: border-color 120ms ease;
+}
+
+.login-input::placeholder {
+    color: var(--fg-3);
+}
+
+.login-input:hover {
+    border-color: var(--fg-2);
+}
+
+.login-input:focus {
+    outline: none;
+    box-shadow: var(--focus-ring);
+    border-color: var(--accent);
+}
+
+.login-submit {
+    height: 40px;
+    margin-top: var(--space-4);
+    padding: 0 var(--space-4);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-2);
+    background: var(--accent);
+    color: var(--bg-0);
+    font-family: var(--font-display);
+    font-size: var(--fs-16);
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    transition: filter 120ms ease;
+}
+
+.login-submit:hover {
+    filter: brightness(1.08);
+}
+
+.login-submit:focus {
+    outline: none;
+    box-shadow: var(--focus-ring);
+}
+
+.login-submit:active {
+    filter: brightness(0.94);
+}
+
+.login-error {
+    margin-top: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-2);
+    background: var(--bg-1);
+    color: var(--warn);
+    font-size: var(--fs-14);
+    text-align: center;
+    border: 1px solid var(--fg-3);
+}
+
+/* Mobile: keep the form column tight to the viewport edge. */
+@media (max-width: 360px) {
+    .login {
+        padding: var(--space-4);
+    }
+    .login-form {
+        width: 100%;
+    }
+}
+
+/* prefers-reduced-motion is honoured at the global level via
+ * reset.css's transition-property whitelist; no login-specific
+ * animations to clamp here (the login surface is intentionally
+ * static per §3-E "Crow stays idle"). */

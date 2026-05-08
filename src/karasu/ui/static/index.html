@@ -224,7 +224,7 @@
                  (static/css/crow.css) binds color, ambient
                  breathing and the four state animations
                  (idle / processing / waiting / error).
-                 Source of truth: static/assets/crow/crow.svg —
+                 Source of truth: static/crow/crow.svg —
                  see that file for the per-row pixel layout
                  documentation. -->
             <svg class="crow crow-glyph" id="crow-glyph"
@@ -332,7 +332,7 @@
                      reference. Hidden by default; the JS layer
                      un-hides on the first /api/health response
                      that returns a non-null flight projection.
-                     Source of truth: static/assets/crow/crow-flight.svg. -->
+                     Source of truth: static/crow/crow-flight.svg. -->
                 <svg class="crow-flight" id="crow-flight" hidden
                      viewBox="0 0 512 512"
                      fill="currentColor"
@@ -540,6 +540,121 @@
 <script src="/assets/js/push.js"></script>
 <script>
 const REFRESH_MS = 3000;
+
+/* UI-13 §3-H auth-failure revocation hook. Wraps window.fetch
+ * once at script load so every /api/* call (whether from this
+ * file or push.js or any future module) gets intercepted. When
+ * the server signals "your session is no longer valid" via
+ * 401 OR a redirect to / from an /api/* call (cookie expired,
+ * credentials_generation rotated, ops-side credential rewrite),
+ * the hook posts {type:"auth:revoked"} to the SW so the post-
+ * auth cache is dropped, then reloads to / which now renders
+ * login. Pin §3-H test surface: "Cookie present + gen mismatch
+ * → next /api/* call returns 401; page postMessages
+ * auth:revoked; cache clears."
+ *
+ * Best-effort: any error in the interception path falls through
+ * to the original response so the live surface keeps working
+ * even if the SW is unavailable. */
+(function () {
+    const origFetch = window.fetch.bind(window);
+    let revokedOnce = false;   /* coalesce multiple in-flight 401s */
+
+    function isApiPath(input) {
+        try {
+            const url = typeof input === 'string'
+                ? new URL(input, window.location.href)
+                : new URL(input.url, window.location.href);
+            return url.pathname.startsWith('/api/');
+        } catch {
+            return false;
+        }
+    }
+
+    function isRedirectToRoot(response) {
+        if (!response.redirected) return false;
+        try {
+            return new URL(response.url).pathname === '/';
+        } catch {
+            return false;
+        }
+    }
+
+    function emitRevoked() {
+        if (revokedOnce) return;
+        revokedOnce = true;
+        try {
+            if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+                navigator.serviceWorker.controller.postMessage({ type: 'auth:revoked' });
+            }
+        } catch { /* no SW — fine, server-side cookie clear handles the rest */ }
+        /* Reload via location.assign so the GET / lands on the
+         * server's auth middleware → login render. */
+        try { window.location.assign('/'); } catch { /* no-op */ }
+    }
+
+    /* UI-13 §3-F frontend CSRF header attach. Reads
+     * karasu_csrf cookie (NOT HttpOnly per §3-F so the JS
+     * layer is allowed to read it) and injects the
+     * X-Karasu-CSRF header on every /api/* mutating request.
+     * The signed double-submit token verifies on the server
+     * side via verify_csrf; without the header, the auth
+     * middleware returns 403. Pin §11.6.14: every existing
+     * UI-10 / UI-11b / UI-12b mutating call site MUST attach
+     * the header. Centralising in the fetch wrapper means
+     * call sites stay untouched + future mutating endpoints
+     * inherit the contract by default. */
+    const MUTATING_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
+
+    function readCsrfCookie() {
+        const cookies = document.cookie ? document.cookie.split(';') : [];
+        for (let i = 0; i < cookies.length; i++) {
+            const piece = cookies[i].trim();
+            if (piece.startsWith('karasu_csrf=')) {
+                return piece.slice('karasu_csrf='.length);
+            }
+        }
+        return null;
+    }
+
+    function methodOf(input, init) {
+        if (init && typeof init.method === 'string') {
+            return init.method.toUpperCase();
+        }
+        if (typeof input !== 'string' && input && typeof input.method === 'string') {
+            return input.method.toUpperCase();
+        }
+        return 'GET';
+    }
+
+    function withCsrfHeader(init, method) {
+        if (!MUTATING_METHODS.has(method)) return init;
+        const csrf = readCsrfCookie();
+        if (!csrf) return init;          /* no cookie yet → server 403s; don't fabricate */
+        const next = init ? Object.assign({}, init) : {};
+        const headers = new Headers(next.headers || {});
+        if (!headers.has('X-Karasu-CSRF')) {
+            headers.set('X-Karasu-CSRF', csrf);
+        }
+        next.headers = headers;
+        return next;
+    }
+
+    window.fetch = function (input, init) {
+        let effectiveInit = init;
+        if (isApiPath(input)) {
+            effectiveInit = withCsrfHeader(init, methodOf(input, init));
+        }
+        const promise = origFetch(input, effectiveInit);
+        if (!isApiPath(input)) return promise;
+        return promise.then((response) => {
+            if (response.status === 401 || isRedirectToRoot(response)) {
+                emitRevoked();
+            }
+            return response;
+        });
+    };
+})();
 
 async function loadMeta() {
     try {

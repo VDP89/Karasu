@@ -281,7 +281,7 @@ def test_cli_ui_push_store_default_uses_default_bus_dir(
     missing_config = tmp_path / "does-not-exist.yaml"
     parser = build_parser()
     args = parser.parse_args(
-        ["--config", str(missing_config), "ui"]
+        ["--config", str(missing_config), "ui", "--no-auth"]
     )
     cmd_ui(args)
 
@@ -310,7 +310,7 @@ def test_cli_ui_push_store_default_resolves_next_to_custom_bus(
     )
     parser = build_parser()
     args = parser.parse_args(
-        ["--config", str(config_path), "ui"]
+        ["--config", str(config_path), "ui", "--no-auth"]
     )
     cmd_ui(args)
 
@@ -340,6 +340,7 @@ def test_cli_ui_push_store_explicit_overrides_default(
         "--config",
         str(config_path),
         "ui",
+        "--no-auth",
         "--push-store",
         str(explicit),
     ])

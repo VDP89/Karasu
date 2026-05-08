@@ -100,6 +100,58 @@ def _push_store_path(config: dict) -> Path:
     return _bus_path(config).parent / "karasu-push.json"
 
 
+def _credentials_path(config: dict) -> Path:
+    """Default path for the UI-13 auth credentials store.
+
+    Same anchor convention as the push store: next to
+    ``events.jsonl`` so the gitignored bus parent dir keeps
+    private material out of the repo root. Operators wiring
+    a deployed instance can override with ``--credentials``.
+    """
+    return _bus_path(config).parent / "karasu-auth.json"
+
+
+def _auth_section(config: dict) -> dict:
+    """Read ``auth`` block from karasu.yaml as a dict (or {}
+    when absent / wrong-shape)."""
+    auth = config.get("auth")
+    return auth if isinstance(auth, dict) else {}
+
+
+def _auth_trusted_proxies_explicit(config: dict) -> bool:
+    """True iff the operator set ``auth.trusted_proxies``
+    explicitly in karasu.yaml. Used by the --no-auth gate to
+    refuse a config that signals deployed intent."""
+    return "trusted_proxies" in _auth_section(config)
+
+
+def _auth_trusted_proxies(config: dict) -> frozenset[str]:
+    """Resolve the trusted-proxy frozenset from karasu.yaml.
+
+    Default per brief §3-G is the localhost pair
+    ``["127.0.0.1", "::1"]`` — operators with a remote
+    caddy/nginx host append the proxy IPs explicitly."""
+    auth = _auth_section(config)
+    raw = auth.get("trusted_proxies", ["127.0.0.1", "::1"])
+    if not isinstance(raw, list):
+        raise ValueError("auth.trusted_proxies must be a list of strings")
+    return frozenset(str(x) for x in raw)
+
+
+def _auth_expected_origins(config: dict) -> tuple[str, ...]:
+    """Resolve the expected-origins tuple from karasu.yaml.
+
+    Empty by default — origin_matches in dev posture (loopback
+    bind) accepts absent Origin/Referer. Deployed posture must
+    set this to the public origin (e.g. ``https://karasu.example``)
+    so cross-site POSTs hit the §3-F 403 branch."""
+    auth = _auth_section(config)
+    raw = auth.get("expected_origins", [])
+    if not isinstance(raw, list):
+        raise ValueError("auth.expected_origins must be a list of strings")
+    return tuple(str(x) for x in raw)
+
+
 def _push_contact_email(config: dict) -> str:
     """VAPID ``sub`` claim contact email.
 
@@ -767,20 +819,85 @@ def cmd_peers(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_auth_set_credentials(args: argparse.Namespace) -> int:
+    """``karasu auth set-credentials`` — bootstrap or rotate the
+    UI-13 auth credentials store (brief §3-B).
+
+    Stdin pipe fallback (no TTY) lets ops automation set the
+    password without an interactive prompt; documented in
+    docs/deploy-runbook.md (chunk 9). Interactive flow uses
+    getpass with a confirmation prompt.
+
+    Default path resolves contextually next to the bus log
+    (mirror of --push-store) so the private creds file stays
+    under the gitignored ``.karasu/`` anchor.
+    """
+    from karasu.ui._auth import write_credentials
+
+    config = _load_config(args.config)
+    creds_path = args.credentials
+    if creds_path is None:
+        creds_path = _credentials_path(config)
+
+    username = (args.username or "").strip()
+    if not username and sys.stdin.isatty():
+        username = input("Username: ").strip()
+    if not username:
+        sys.stderr.write("error: username required\n")
+        return 2
+
+    if not sys.stdin.isatty():
+        password = sys.stdin.read().rstrip("\n")
+        if not password:
+            sys.stderr.write("error: password required (stdin empty)\n")
+            return 2
+    else:
+        import getpass
+
+        password = getpass.getpass("Password: ")
+        confirm = getpass.getpass("Confirm:  ")
+        if not password:
+            sys.stderr.write("error: password required\n")
+            return 2
+        if password != confirm:
+            sys.stderr.write("error: password mismatch\n")
+            return 2
+
+    write_credentials(creds_path, username=username, password=password)
+    sys.stdout.write(
+        f"karasu auth credentials written to {creds_path}\n"
+        "  -> mode 0600 on POSIX (advisory on Windows; verify NTFS ACLs).\n"
+    )
+    return 0
+
+
+def _refuse(message: str) -> int:
+    """Print a generic fail-closed error to stderr + exit 2.
+
+    Mirrors the UI-12c bootstrap-fatal pattern (PushStoreError
+    → cmd_watch returns 2). Brief §3-B + §3-G generic-message
+    discipline: never echo file paths or secret material."""
+    sys.stderr.write("error: " + message + "\n")
+    return 2
+
+
 def cmd_ui(args: argparse.Namespace) -> int:
     """Run the local Karasu UI HTTP server.
 
-    Read-only surface over the bus log. Reuses
-    ``karasu.ui.server.run_ui_server``; CLI is a thin wrapper
-    that lets the operator override host / port without
-    importing the module.
+    UI-13 wires the auth perimeter at startup. Default posture
+    is auth ENABLED with the credentials file resolved next to
+    the bus log; ``--no-auth`` flips to dev posture and refuses
+    if combined with a non-loopback bind or with an explicit
+    ``auth.trusted_proxies`` in karasu.yaml (signals deployed
+    intent — Codex round 2 P1 binding).
 
     Honours ``event_bus.path`` from ``karasu.yaml`` (UI-9
     deferred follow-up): an operator running ``karasu watch``
     against a non-default bus path can point ``karasu ui`` at
     the same log without a separate flag.
     """
-    from karasu.ui.server import run_ui_server
+    from karasu.ui._auth import AuthCredentialsError, is_loopback_bind
+    from karasu.ui.server import configure_auth, run_ui_server
 
     config = _load_config(args.config)
     bus_path = _bus_path(config)
@@ -792,6 +909,115 @@ def cmd_ui(args: argparse.Namespace) -> int:
         # (UI-12b writers, UI-12c VAPID material) stays beside
         # ``events.jsonl`` instead of leaking into the repo root.
         push_store_path = bus_path.parent / "karasu-push.json"
+
+    # ------------------------------------------------------------
+    # UI-13 auth posture decision (brief §3-B + §3-G)
+    # ------------------------------------------------------------
+    no_auth = bool(args.no_auth)
+    host_is_loopback = is_loopback_bind(args.host)
+
+    # §3-C session TTL — 1..30 day range per brief.
+    ttl_seconds: int | None = None
+    if args.session_ttl_days is not None:
+        if args.session_ttl_days < 1 or args.session_ttl_days > 30:
+            return _refuse(
+                "--session-ttl-days must be between 1 and 30 (brief §3-C)."
+            )
+        ttl_seconds = int(args.session_ttl_days) * 24 * 60 * 60
+
+    try:
+        trusted_proxies = _auth_trusted_proxies(config)
+        expected_origins = _auth_expected_origins(config)
+    except ValueError as exc:
+        return _refuse(str(exc))
+
+    # Codex round 3 P0 audit binding 2026-05-08: production
+    # shape is caddy/nginx terminating TLS while karasu binds
+    # 127.0.0.1:8787 — i.e. loopback bind IS the deployed
+    # posture. Deriving ``deployed`` from ``not is_loopback_bind``
+    # flipped the cookie Secure flag + Origin/Referer absent-
+    # rejection in exactly the documented production path.
+    #
+    # The signal that an operator is in deployed posture is that
+    # they configured ``auth.expected_origins`` in karasu.yaml —
+    # that's the public origin behind the proxy + the §3-F
+    # binding. Loopback bind alone says nothing about TLS;
+    # non-empty expected_origins says everything.
+    deployed = bool(expected_origins)
+
+    if no_auth:
+        # Codex round 2 P1 binding: --no-auth ONLY valid when
+        # the bind host resolves entirely to loopback.
+        if not host_is_loopback:
+            return _refuse(
+                "--no-auth requires --host on a loopback address "
+                "(127.0.0.1, ::1, or localhost); refusing to start."
+            )
+        # Codex round 2 P1 binding: an explicit trusted_proxies
+        # in karasu.yaml signals deployed intent and is
+        # incompatible with auth being disabled.
+        if _auth_trusted_proxies_explicit(config):
+            return _refuse(
+                "--no-auth incompatible with auth.trusted_proxies in "
+                "karasu.yaml (signals deployed intent); refusing to start."
+            )
+        # Loud-stderr warning per brief §3-B line 326-328.
+        sys.stderr.write(
+            "WARNING karasu.ui.auth: AUTH DISABLED -- dev only, "
+            "NOT for production. See docs/deploy-runbook.md.\n"
+        )
+        try:
+            configure_auth(no_auth=True)
+        except AuthCredentialsError:
+            # Defensive — configure_auth(no_auth=True) does NOT
+            # load creds, so this branch should be unreachable.
+            return _refuse(
+                "karasu auth credentials are missing or malformed; "
+                "refusing to start. See docs/deploy-runbook.md for bring-up."
+            )
+    else:
+        # Codex round 3 P1 binding: empty trusted_proxies +
+        # non-loopback bind closes the operator-typo path
+        # before traffic reaches the rate-limit derivation.
+        if not trusted_proxies and not host_is_loopback:
+            return _refuse(
+                "deployed posture requires non-empty auth.trusted_proxies; "
+                "refusing to start. See docs/deploy-runbook.md for the "
+                "trusted-hop walk requirements."
+            )
+        # Codex round 4 P0 audit binding 2026-05-08: with
+        # ``deployed = bool(expected_origins)``, a non-
+        # loopback bind + auth-on + empty expected_origins
+        # would start in DEV posture (cookies non-Secure,
+        # Origin/Referer absent accepted) while reachable
+        # from the public network. Refuse the combination at
+        # startup — operators binding non-loopback MUST
+        # configure the public origin per §3-F.
+        if not host_is_loopback and not expected_origins:
+            return _refuse(
+                "non-loopback bind requires auth.expected_origins to be "
+                "set in karasu.yaml (signals deployed posture so cookies "
+                "ship Secure + Origin/Referer absent is rejected); "
+                "refusing to start. See docs/deploy-runbook.md."
+            )
+        creds_path = args.credentials
+        if creds_path is None:
+            creds_path = _credentials_path(config)
+        try:
+            configure_auth(
+                credentials_path=creds_path,
+                no_auth=False,
+                deployed=deployed,
+                trusted_proxies=trusted_proxies,
+                expected_origins=expected_origins,
+                session_ttl_seconds=ttl_seconds,
+            )
+        except AuthCredentialsError:
+            return _refuse(
+                "karasu auth credentials are missing or malformed; "
+                "refusing to start. See docs/deploy-runbook.md for bring-up."
+            )
+
     run_ui_server(
         host=args.host,
         port=args.port,
@@ -892,7 +1118,83 @@ def build_parser() -> argparse.ArgumentParser:
             "generation."
         ),
     )
+    ui.add_argument(
+        "--no-auth",
+        action="store_true",
+        default=False,
+        help=(
+            "UI-13 dev flag — disable the auth perimeter for "
+            "localhost iteration. ONLY valid when --host is a "
+            "loopback address (127.0.0.1, ::1, localhost) AND "
+            "karasu.yaml does NOT declare auth.trusted_proxies "
+            "(non-default value signals deployed intent). "
+            "Emits a loud-stderr 'AUTH DISABLED' warning at "
+            "startup. NEVER set in any documented "
+            "deploy-runbook.md path."
+        ),
+    )
+    ui.add_argument(
+        "--credentials",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help=(
+            "UI-13 path to the auth credentials store. When "
+            "omitted, defaults to ``karasu-auth.json`` next to "
+            "the configured bus (typically "
+            "``.karasu/karasu-auth.json``). Bootstrap with "
+            "``karasu auth set-credentials``."
+        ),
+    )
+    ui.add_argument(
+        "--session-ttl-days",
+        type=int,
+        default=None,
+        metavar="DAYS",
+        help=(
+            "UI-13 §3-C session cookie TTL in days. Range "
+            "1..30; default 14. Brief §11 binding window."
+        ),
+    )
     ui.set_defaults(func=cmd_ui)
+
+    # UI-13 §3-B bootstrap CLI: ``karasu auth set-credentials``.
+    # Two-level subcommand so the auth namespace can grow
+    # (``karasu auth rotate``, ``karasu auth show``, etc.) in
+    # follow-up chunks without crowding the top-level help.
+    auth = sub.add_parser(
+        "auth",
+        help="auth credentials management (UI-13)",
+    )
+    auth_sub = auth.add_subparsers(dest="auth_command", required=True)
+    set_creds = auth_sub.add_parser(
+        "set-credentials",
+        help=(
+            "bootstrap or rotate karasu-auth.json. "
+            "Interactive prompt or stdin pipe."
+        ),
+    )
+    set_creds.add_argument(
+        "--credentials",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help=(
+            "default: ``karasu-auth.json`` next to the bus log; "
+            "matches the cmd_ui --credentials flag."
+        ),
+    )
+    set_creds.add_argument(
+        "--username",
+        default=None,
+        metavar="NAME",
+        help=(
+            "username for the credentials. When omitted and "
+            "stdin is a TTY, prompts interactively; when "
+            "omitted on a piped stdin, exits 2."
+        ),
+    )
+    set_creds.set_defaults(func=cmd_auth_set_credentials)
 
     from karasu.a2a import (
         DEFAULT_FETCH_RETRIES,

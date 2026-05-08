@@ -673,7 +673,15 @@ def test_manifest_colours_match_tokens_css_exactly(
     """Codex P2 binding from the UI-8 design review: manifest hex
     values MUST match tokens.css exactly. An off-by-one channel is
     a regression — the audit will diff the values, this test
-    fails first."""
+    fails first.
+
+    UI-14 §3-A SEALED corrected the UI-13 seed drift: both
+    theme_color and background_color now collapse to --bg-0
+    (#0a0a0b). The earlier UI-8 seed had theme_color at --bg-1
+    (#131316); the brief reasoning paragraph (line 313)
+    explicitly anticipates this re-pin so the auto-generated
+    splash screen reads as the empty app shell rather than a
+    two-tone gradient."""
     host, port = ui_http
     status, body, _ = _get(host, port, "/assets/manifest.json")
     assert status == 200
@@ -684,18 +692,15 @@ def test_manifest_colours_match_tokens_css_exactly(
     )
     tokens = tokens_path.read_text(encoding="utf-8")
 
-    # The manifest's background_color is the canvas (--bg-0).
+    # UI-14 §3-A SEALED — both manifest color fields collapse to
+    # --bg-0 (#0a0a0b). The pre-UI-14 split (theme_color at
+    # --bg-1) is documented as a UI-13 seed drift; the chunk-
+    # level manifest body re-pin is the correction.
     assert manifest["background_color"] == "#0a0a0b"
+    assert manifest["theme_color"] == "#0a0a0b"
     assert "--bg-0: #0a0a0b" in tokens, (
         "tokens.css drift: --bg-0 no longer #0a0a0b — the "
-        "manifest needs to be re-synced in the same PR"
-    )
-
-    # The manifest's theme_color is the panel surface (--bg-1).
-    assert manifest["theme_color"] == "#131316"
-    assert "--bg-1: #131316" in tokens, (
-        "tokens.css drift: --bg-1 no longer #131316 — the "
-        "manifest needs to be re-synced in the same PR"
+        "manifest body needs to be re-synced in the same PR"
     )
 
 

@@ -110,13 +110,15 @@ from the macro brief PR #107:
 5. Per-category push debounce override via env var.
    Deferred from UI-12c per brief §10.5.
 
-6. Operational hardening from Phase 3 dogfood:
-   - F9 missing [job-queue] extra (issue #40).
-   - F10 drain skip warnings (issue #41).
-   - F11 Notepad atomic-write tmp (issue #42).
-   These were filed during Phase 3 dogfood but not
-   formally closed; Phase 4 may absorb them or split a
-   parallel "Phase 3 hardening" PR.
+6. ~~Operational hardening from Phase 3 dogfood:~~
+   ~~- F9 missing [job-queue] extra (issue #40).~~
+   ~~- F10 drain skip warnings (issue #41).~~
+   ~~- F11 Notepad atomic-write tmp (issue #42).~~
+   RESOLVED 2026-05-02 — all three landed in main on
+   the same day they were filed (PRs #40/#41/#42, merge
+   commits `0010fed`/`dd4995c`/`56a7d7b`). The status
+   table at the bottom of `current-state.md` reflects
+   the current state. Phase 3 dogfood findings closed.
 
 7. Direct-TLS in karasu (--tls-cert / --tls-key) —
    intentionally deferred from UI-13. Sealed UI-13
@@ -180,9 +182,10 @@ reaffirmed UI-10..UI-13):
 ## Open issues
 
 ```text
-F9  missing [job-queue] extra        (#40, Phase 3 dogfood)
-F10 drain skip warnings              (#41, Phase 3 dogfood)
-F11 Notepad atomic-work tmp          (#42, Phase 3 dogfood)
+None — F9/F10/F11 (Phase 3 dogfood findings) all
+resolved 2026-05-02 (PRs #40/#41/#42; merge commits
+0010fed/dd4995c/56a7d7b). Memory sync was deferred
+until 2026-05-08 hygiene PR caught the gap.
 ```
 
 ## Operator-side TODOs

@@ -221,9 +221,9 @@ UI surface progress (PWA roadmap — main HEAD `6e283a8`, 2026-05-08):
 | F6 self-noise on bus     | 1C | resolved                  | #27 |
 | F7 dispatch on delete    | 1C | resolved                  | #26 |
 | F8 timeout not configurable | 1C | resolved               | #28 |
-| F9 missing [job-queue] extra | 3 dogfood | filed              | #40 |
-| F10 drain skip warnings  | 3 dogfood | filed                  | #41 |
-| F11 Notepad atomic-write tmp | 3 dogfood | filed              | #42 |
+| F9 missing [job-queue] extra | 3 dogfood | resolved (`0010fed`, 2026-05-02) | #40 |
+| F10 drain skip warnings  | 3 dogfood | resolved (`dd4995c`, 2026-05-02) | #41 |
+| F11 Notepad atomic-write tmp | 3 dogfood | resolved (`56a7d7b`, 2026-05-02) | #42 |
 
 ## Current risks
 

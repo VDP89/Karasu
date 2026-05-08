@@ -1,13 +1,19 @@
 """Auth middleware tests — UI-13 §3-D anonymous-path
 perimeter (Codex round 1 P1 binding 2026-05-07) + macro
-pin §11.6.6 carry-forward.
+pin §11.6.6 carry-forward + UI-14 §3-G extension
+(3 entries inside the existing /assets/icons/ namespace:
+512-any closes the UI-13 manifest-vs-whitelist gap, the
+two maskable variants ship with manifest §3-A SEALED).
 
 Covers ``is_anonymous_path`` against the EXACT whitelist
-documented in §3-D + §3-H:
+documented in §3-D + §3-H + §3-G (UI-14):
 
   GET /
   GET /assets/css/{login,tokens,reset,base}.css
   GET /assets/icons/karasu-192.png
+  GET /assets/icons/karasu-512.png            (UI-14 §3-G)
+  GET /assets/icons/karasu-maskable-192.png   (UI-14 §3-G)
+  GET /assets/icons/karasu-maskable-512.png   (UI-14 §3-G)
   GET /assets/crow/crow.svg
   GET /assets/manifest.json
   GET /assets/sw.js
@@ -48,6 +54,9 @@ from karasu.ui._auth import is_anonymous_path
         "/assets/css/reset.css",
         "/assets/css/base.css",
         "/assets/icons/karasu-192.png",
+        "/assets/icons/karasu-512.png",            # UI-14 §3-G
+        "/assets/icons/karasu-maskable-192.png",   # UI-14 §3-G
+        "/assets/icons/karasu-maskable-512.png",   # UI-14 §3-G
         "/assets/crow/crow.svg",
         "/assets/manifest.json",
         "/assets/sw.js",
@@ -151,7 +160,14 @@ def test_auth_required_paths(method: str, path: str) -> None:
         "/assets/css/login",             # missing extension
         "/assets/css/LOGIN.css",         # case mismatch
         "/assets/css/login.css.map",     # source-map drift
-        "/assets/icons/karasu-512.png",  # different size icon
+        "/assets/icons/karasu-128.png",  # size not in manifest
+        "/assets/icons/karasu-maskable.png",          # no size
+        "/assets/icons/karasu-maskable-256.png",      # size not
+                                                      # in manifest
+        "/assets/icons/karasu-maskable-192",          # missing
+                                                      # extension
+        "/assets/icons/Karasu-Maskable-192.png",      # case
+                                                      # mismatch
         "/assets/crow/crow.png",         # wrong extension
         "/assets/manifest",              # missing extension
         "/assets/sw",                    # missing extension

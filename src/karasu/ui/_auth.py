@@ -884,7 +884,11 @@ class LoginRateLimit:
 # Anonymous path perimeter (§3-D)
 # ---------------------------------------------------------------------------
 
-# Exact-set anonymous paths (§3-D + pin §11.6.6 carry-forward).
+# Exact-set anonymous paths (§3-D + pin §11.6.6 carry-forward,
+# UI-14 §3-G extension: 3 entries inside the existing
+# /assets/icons/ namespace — karasu-512.png closes the UI-13
+# manifest-vs-whitelist gap, the two maskable variants are net-new
+# and ship with manifest §3-A SEALED).
 _ANONYMOUS_GET_PATHS: frozenset[str] = frozenset({
     "/",
     "/assets/css/login.css",
@@ -892,6 +896,9 @@ _ANONYMOUS_GET_PATHS: frozenset[str] = frozenset({
     "/assets/css/reset.css",
     "/assets/css/base.css",
     "/assets/icons/karasu-192.png",
+    "/assets/icons/karasu-512.png",            # UI-14 §3-G
+    "/assets/icons/karasu-maskable-192.png",   # UI-14 §3-G
+    "/assets/icons/karasu-maskable-512.png",   # UI-14 §3-G
     "/assets/crow/crow.svg",
     "/assets/manifest.json",
     "/assets/sw.js",

@@ -247,11 +247,12 @@ def test_anonymous_assets_reachable(auth_http) -> None:
     """Chunk 5 routing fix: icons/ + crow/ moved out of
     static/assets/ → static/icons/ + static/crow/, aligning
     the on-disk layout with the /assets/* URL strip. The
-    brief §3-D + §3-H EXACT whitelist covers karasu-192.png
+    brief §3-D + §3-H EXACT whitelist covered karasu-192.png
     (PWA primary icon + login favicon) and crow.svg (login
-    hero). karasu-512.png + crow-flight.svg are NOT in the
-    anonymous set per the brief — they're only reached
-    post-auth from the PWA shell."""
+    hero) for UI-13; UI-14 §3-G extends the anonymous set with
+    karasu-512.png (closes UI-13 manifest-vs-whitelist gap) +
+    karasu-maskable-{192,512}.png (new maskable variants).
+    crow-flight.svg stays post-auth only."""
     host, port, _ = auth_http
     for path in (
         "/assets/css/login.css",
@@ -261,6 +262,9 @@ def test_anonymous_assets_reachable(auth_http) -> None:
         "/assets/sw.js",
         "/assets/manifest.json",
         "/assets/icons/karasu-192.png",
+        "/assets/icons/karasu-512.png",            # UI-14 §3-G
+        "/assets/icons/karasu-maskable-192.png",   # UI-14 §3-G
+        "/assets/icons/karasu-maskable-512.png",   # UI-14 §3-G
         "/assets/crow/crow.svg",
     ):
         status, _, _, _ = _request(host, port, path)
@@ -268,13 +272,14 @@ def test_anonymous_assets_reachable(auth_http) -> None:
 
 
 def test_post_auth_only_assets_redirect_without_session(auth_http) -> None:
-    """karasu-512.png + crow-flight.svg are real files post
-    chunk-5 routing fix, but they live OUTSIDE the §3-D
-    anonymous whitelist — the auth perimeter must still
-    redirect a no-session GET to /."""
+    """crow-flight.svg lives OUTSIDE the §3-D + §3-G anonymous
+    whitelist — the auth perimeter must still redirect a no-
+    session GET to /. Pre-UI-14 this test also covered
+    karasu-512.png; UI-14 §3-G promoted it to the anonymous
+    set so the assertion moved to test_anonymous_assets_
+    reachable above."""
     host, port, _ = auth_http
     for path in (
-        "/assets/icons/karasu-512.png",
         "/assets/crow/crow-flight.svg",
     ):
         status, _, headers, _ = _request(host, port, path)

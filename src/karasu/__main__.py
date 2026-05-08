@@ -985,6 +985,21 @@ def cmd_ui(args: argparse.Namespace) -> int:
                 "refusing to start. See docs/deploy-runbook.md for the "
                 "trusted-hop walk requirements."
             )
+        # Codex round 4 P0 audit binding 2026-05-08: with
+        # ``deployed = bool(expected_origins)``, a non-
+        # loopback bind + auth-on + empty expected_origins
+        # would start in DEV posture (cookies non-Secure,
+        # Origin/Referer absent accepted) while reachable
+        # from the public network. Refuse the combination at
+        # startup — operators binding non-loopback MUST
+        # configure the public origin per §3-F.
+        if not host_is_loopback and not expected_origins:
+            return _refuse(
+                "non-loopback bind requires auth.expected_origins to be "
+                "set in karasu.yaml (signals deployed posture so cookies "
+                "ship Secure + Origin/Referer absent is rejected); "
+                "refusing to start. See docs/deploy-runbook.md."
+            )
         creds_path = args.credentials
         if creds_path is None:
             creds_path = _credentials_path(config)

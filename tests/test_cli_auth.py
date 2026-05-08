@@ -353,15 +353,19 @@ def test_cmd_ui_auth_on_explicit_credentials_overrides_default(
     assert ui_server.AUTH_CREDENTIALS_PATH == explicit
 
 
-def test_cmd_ui_auth_on_dev_posture_when_no_expected_origins(
+def test_cmd_ui_auth_on_loopback_no_expected_origins_is_dev_posture(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Codex round 3 P0 audit binding 2026-05-08:
-    ``deployed`` is decoupled from the bind address. With no
-    auth.expected_origins configured (operator did not declare
-    a public origin), the posture is dev — cookies non-Secure,
-    Origin/Referer absent accepted as the dev fallback."""
+    ``deployed`` is decoupled from the bind address. On a
+    LOOPBACK bind with no auth.expected_origins configured
+    (operator did not declare a public origin), the posture
+    is dev — cookies non-Secure, Origin/Referer absent
+    accepted as the dev fallback. Codex round 4 P0 narrows
+    this contract: the dev fallback is loopback-ONLY; a
+    non-loopback bind without expected_origins is refused
+    at startup (covered in the sibling test below)."""
     _capture_run_ui_server(monkeypatch)
 
     bus_dir = tmp_path / "anchor"
@@ -382,6 +386,45 @@ def test_cmd_ui_auth_on_dev_posture_when_no_expected_origins(
     assert rc == 0
     assert ui_server.AUTH_DEPLOYED is False
     assert ui_server.AUTH_EXPECTED_ORIGINS == ()
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "203.0.113.7"])
+def test_cmd_ui_auth_on_non_loopback_without_expected_origins_refuses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    host: str,
+) -> None:
+    """Codex round 4 P0 audit binding 2026-05-08: a non-
+    loopback bind + auth-on + empty auth.expected_origins
+    would otherwise start in DEV posture (cookies non-Secure,
+    Origin/Referer absent accepted) while reachable from the
+    public network. Refuse the combination at startup so an
+    operator who forgets to configure the public origin
+    cannot accidentally ship a degraded auth surface."""
+    captured = _capture_run_ui_server(monkeypatch)
+    bus_dir = tmp_path / "anchor"
+    bus_dir.mkdir()
+    creds_path = bus_dir / "karasu-auth.json"
+    _write_creds_file(creds_path, username="victor", password="hunter2")
+    # auth.trusted_proxies non-empty so we skip the
+    # round-3-P1 empty-trusted_proxies refusal and isolate
+    # the round-4-P0 expected_origins gate.
+    config = tmp_path / "karasu.yaml"
+    config.write_text(
+        f"event_bus:\n  path: {bus_dir / 'events.jsonl'}\n"
+        "auth:\n  trusted_proxies: ['127.0.0.1', '203.0.113.7']\n",
+        encoding="utf-8",
+    )
+    parser = build_parser()
+    args = parser.parse_args(
+        ["--config", str(config), "ui", "--host", host]
+    )
+    rc = cmd_ui(args)
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "expected_origins" in err
+    assert "host" not in captured  # run_ui_server never reached
 
 
 def test_cmd_ui_auth_on_loopback_bind_with_public_origin_is_deployed(

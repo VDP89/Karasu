@@ -235,7 +235,31 @@
     line-height: 1;
     margin-left: var(--space-1);
 }
+/* UI-14 §3-F refresh affordance — mutual-exclusion partner of
+   the dismiss × button (only one is visible at a time per
+   §11.6.9). Slightly more prominent than the dismiss × because
+   it is the actionable verb in the update state, but stays
+   inside the editorial-calm pin: same monospace family, same
+   font size, no background fill. */
+.footer-install-refresh {
+    background: transparent;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-1, 2px);
+    color: var(--accent);
+    cursor: pointer;
+    padding: 0 var(--space-2);
+    font-family: inherit;
+    font-size: inherit;
+    line-height: 1.4;
+    margin-left: var(--space-2);
+}
+.footer-install-refresh:hover,
+.footer-install-refresh:focus-visible {
+    background: var(--accent);
+    color: var(--bg-0);
+}
 .footer-install-dismiss:focus-visible,
+.footer-install-refresh:focus-visible,
 .footer-install .footer-install-state:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
@@ -417,6 +441,16 @@
             <button type="button" class="footer-install-dismiss"
                     aria-label="Dismiss install affordance"
                     hidden>×</button>
+            <!-- UI-14 §3-F refresh affordance (mutual exclusion
+                 with the install affordance per §11.6.9). The
+                 button is in markup but only visible when
+                 install.js render() is in the "update" state;
+                 when shown, the static "Install: " prefix +
+                 .footer-install-state are repurposed to read
+                 "Update available." per §3-F sealed copy. -->
+            <button type="button" class="footer-install-refresh"
+                    aria-label="Refresh to apply update"
+                    hidden>Refresh</button>
         </span>
     </footer>
 

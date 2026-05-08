@@ -8,9 +8,12 @@
  * NO toast — same constraint UI-8 audit pin #5 sealed for the
  * shell.
  *
- * --- State machine (§3-B SEALED) -----------------------------
+ * --- State machine (§3-B + §3-F + §11.6.9 SEALED) ------------
  *
- * Four states, written verbatim into the footer line:
+ * Five states, mutually exclusive (only ONE renders at a time
+ * per §11.6.9 editorial-calm pin). The first four are install
+ * states from §3-B; the fifth is the §3-F refresh affordance
+ * sharing the same footer slot family.
  *
  *   unsupported : browser does not fire beforeinstallprompt AND
  *                 is not iOS Safari. Read-only. --fg-2.
@@ -28,6 +31,16 @@
  *   installed   : navigator.standalone === true OR
  *                 matchMedia('(display-mode: standalone)').
  *                 Read-only. --fg-2.
+ *   update      : registration.waiting present — a NEW sw.js
+ *                 has installed and is waiting for the operator
+ *                 to opt in (§3-F SEALED — UI-14 §3-F SW Update
+ *                 Lifecycle Lock). Renders "Update available."
+ *                 in --accent + a Refresh button. Clicking the
+ *                 button posts {type:"SKIP_WAITING"} to the
+ *                 waiting SW and the page reloads on
+ *                 controllerchange. The "update" state WINS in
+ *                 decideState() so the install line yields per
+ *                 §11.6.9 mutual exclusion.
  *
  * --- Dismiss persistence (§3-B SEALED) -----------------------
  *
@@ -53,11 +66,23 @@
     const RESHOW_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
     const ROOT_ID = 'footer-install';
 
+    /* §3-F SEALED — registration.update() poll cadence. 60 min
+     * matches the brief "every 60 minutes (or on navigation
+     * event, whichever fires first)". The browser fires its own
+     * navigation-time update check; this interval covers the
+     * long-running tab case. */
+    const UPDATE_POLL_INTERVAL_MS = 60 * 60 * 1000;
+
     /* deferredPrompt holds the BeforeInstallPromptEvent so the
      * footer click handler can re-fire it. The browser only
      * dispatches the event once; capturing + storing is the
      * documented pattern. */
     let deferredPrompt = null;
+
+    /* updateRegistration holds the live SW registration so the
+     * refresh affordance can read .waiting and post SKIP_WAITING
+     * to it. Populated by setupUpdateLifecycle() on init. */
+    let updateRegistration = null;
 
     /* ---------------- environment detection ---------------- */
 
@@ -136,13 +161,25 @@
         }
     }
 
+    /* ---------------- update affordance ------------------- */
+
+    function isUpdatePending() {
+        return updateRegistration !== null
+            && typeof updateRegistration === 'object'
+            && updateRegistration.waiting !== null
+            && updateRegistration.waiting !== undefined;
+    }
+
     /* ---------------- rendering --------------------------- */
 
-    /* The footer slot has three children: a state span, an
-     * inline hint span (only used in iOS "ready"), and a dismiss
-     * button (only used in "available"). render() flips the
-     * state class, the visible label, and the hint / dismiss
-     * visibility from a single source of truth. */
+    /* The footer slot has four children: a state span, an
+     * inline hint span (iOS "ready" only), a dismiss button
+     * ("available" only), and a Refresh button ("update" only).
+     * render() flips the state class plus each child's content
+     * + visibility from a single source of truth, honouring
+     * §11.6.9 mutual exclusion (only ONE of {dismiss, refresh}
+     * can be visible at a time, and the label text follows the
+     * winning state). */
     function render(state) {
         const root = document.getElementById(ROOT_ID);
         if (!root) {
@@ -151,17 +188,28 @@
         const labelEl = root.querySelector('.footer-install-state');
         const hintEl = root.querySelector('.footer-install-hint');
         const dismissEl = root.querySelector('.footer-install-dismiss');
+        const refreshEl = root.querySelector('.footer-install-refresh');
 
         root.classList.remove(
             'is-unsupported',
             'is-available',
             'is-ready',
-            'is-installed'
+            'is-installed',
+            'is-update'
         );
         root.classList.add('is-' + state);
 
         if (labelEl) {
-            labelEl.textContent = state;
+            /* §3-F SEALED copy. The install states (un / avail
+             * / ready / installed) write the bare state word
+             * after the static "Install: " prefix in markup;
+             * the update state replaces the prefix line with
+             * a full sentence per the brief. */
+            if (state === 'update') {
+                labelEl.textContent = 'Update available.';
+            } else {
+                labelEl.textContent = state;
+            }
         }
 
         if (hintEl) {
@@ -178,10 +226,17 @@
             dismissEl.hidden = state !== 'available';
         }
 
+        if (refreshEl) {
+            refreshEl.hidden = state !== 'update';
+        }
+
         /* The state label gets a click handler + keyboard
          * activation ONLY in "available". iOS "ready" is read-
          * only — UI-14 §3-B SEALED: the install gesture is
          * browser-native, the inline hint is the affordance.
+         * "update" routes activation through the dedicated
+         * Refresh button, not the label.
+         *
          * A <span> is not focusable by default, so flip
          * role="button" + tabindex dynamically; without these
          * the keydown listener never receives Tab+Enter. */
@@ -199,6 +254,12 @@
     }
 
     function decideState() {
+        /* §11.6.9 mutual exclusion — refresh affordance wins
+         * over the install affordance when both could render.
+         * The install line yields. */
+        if (isUpdatePending()) {
+            return 'update';
+        }
         if (isInstalled()) {
             return 'installed';
         }
@@ -282,6 +343,87 @@
         }
     }
 
+    function onRefreshClick(event) {
+        event.preventDefault();
+        if (!isUpdatePending()) {
+            return;
+        }
+        /* §3-F SEALED — post SKIP_WAITING to the waiting SW.
+         * sw.js listens for this exact message type and calls
+         * self.skipWaiting() with NO other side effect. The
+         * controllerchange listener (set in
+         * setupUpdateLifecycle below) reloads the page once
+         * the new SW takes over. */
+        try {
+            updateRegistration.waiting.postMessage({ type: 'SKIP_WAITING' });
+        } catch (_) {
+            /* postMessage to a closing SW may throw — degrade
+             * to a manual reload so the user gets feedback. */
+            window.location.reload();
+        }
+    }
+
+    function setupUpdateLifecycle() {
+        if (!('serviceWorker' in navigator)) {
+            return;
+        }
+
+        navigator.serviceWorker.ready
+            .then(function (reg) {
+                updateRegistration = reg;
+
+                /* If a SW already finished installing in the
+                 * background before this script loaded (e.g.
+                 * an update landed mid-session), surface the
+                 * affordance immediately. */
+                if (reg.waiting) {
+                    rerender();
+                }
+
+                /* Track future updates as the browser fetches
+                 * sw.js and the new instance moves through
+                 * installing → installed. The "controller
+                 * present" guard distinguishes a true update
+                 * (active controller exists; new SW will wait)
+                 * from a fresh install (no controller; sw.js
+                 * skipWaiting fires per §3-F). */
+                reg.addEventListener('updatefound', function () {
+                    const installing = reg.installing;
+                    if (!installing) {
+                        return;
+                    }
+                    installing.addEventListener('statechange', function () {
+                        if (installing.state === 'installed'
+                            && navigator.serviceWorker.controller) {
+                            rerender();
+                        }
+                    });
+                });
+
+                /* §3-F SEALED — registration.update() poll
+                 * every 60 minutes for the long-running tab
+                 * case. Best-effort; failures are silent so a
+                 * transient network error does not surface. */
+                setInterval(function () {
+                    reg.update().catch(function () {});
+                }, UPDATE_POLL_INTERVAL_MS);
+            })
+            .catch(function () {
+                /* SW registration failed — install affordance
+                 * still works through beforeinstallprompt /
+                 * iOS Safari paths; the update affordance is
+                 * gated on a successful SW. */
+            });
+
+        /* §3-F SEALED — when the new SW takes over (via the
+         * SKIP_WAITING message above OR a fresh install
+         * skipWaiting), reload the page so the operator sees
+         * the new shell. Registered ONCE at module load. */
+        navigator.serviceWorker.addEventListener('controllerchange', function () {
+            window.location.reload();
+        });
+    }
+
     function init() {
         const root = document.getElementById(ROOT_ID);
         if (!root) {
@@ -289,6 +431,7 @@
         }
         const labelEl = root.querySelector('.footer-install-state');
         const dismissEl = root.querySelector('.footer-install-dismiss');
+        const refreshEl = root.querySelector('.footer-install-refresh');
         if (labelEl) {
             labelEl.addEventListener('click', onLabelClick);
             labelEl.addEventListener('keydown', function (e) {
@@ -305,18 +448,22 @@
         if (dismissEl) {
             dismissEl.addEventListener('click', onDismissClick);
         }
+        if (refreshEl) {
+            refreshEl.addEventListener('click', onRefreshClick);
+        }
         window.addEventListener('beforeinstallprompt', onBeforeInstallPrompt);
         window.addEventListener('appinstalled', onAppInstalled);
 
         /* SW broadcast listener. The 'install-prompt-reset'
-         * message is dispatched by sw.js on activate (UI-14
-         * commit 4 §3-F deliverable). The listener is wired
-         * up-front so the contract holds regardless of
-         * commit ordering. */
+         * message is dispatched by sw.js on activate (§3-F
+         * SEALED). Listener is wired up-front; cooperates with
+         * the SKIP_WAITING / controllerchange flow registered
+         * inside setupUpdateLifecycle. */
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.addEventListener('message', onSWMessage);
         }
 
+        setupUpdateLifecycle();
         rerender();
     }
 

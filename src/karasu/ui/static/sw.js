@@ -1,9 +1,36 @@
-/* sw.js — Karasu UI service worker (UI-8 + UI-12b + UI-13).
+/* sw.js — Karasu UI service worker (UI-8 + UI-12b + UI-13 + UI-14).
  *
  * Vanilla, dependency-free. Registered from index.html with a
  * feature-detection guard. Scoped to root via the
  * Service-Worker-Allowed: / header that src/karasu/ui/server.py
  * emits when serving this file.
+ *
+ * --- UI-14 §3-F SW Update Lifecycle Lock ---------------------
+ *
+ * This is the ONLY explicit deviation from a prior shape-lock
+ * UI-14 earns. UI-8 sealed self.skipWaiting() on install +
+ * self.clients.claim() on activate. UI-14 §3-F supersedes that
+ * lifecycle for UPDATE events while preserving the FIRST-LOAD
+ * shape:
+ *
+ *   FIRST-LOAD   (no existing controller): skipWaiting + claim
+ *                — same as UI-8.
+ *   UPDATE       (existing controller present): NEITHER
+ *                skipWaiting NOR claim. The new SW installs as
+ *                "waiting" until the page posts a
+ *                {type:"SKIP_WAITING"} message in response to
+ *                the user clicking the footer Refresh affordance
+ *                (§3-B / §11.6.9). Then the page reloads.
+ *
+ * Detecting first-load vs update from inside the SW: at install
+ * time the existing self.registration.active is null on first
+ * load (no SW was previously controlling) and non-null on
+ * update. Same shape works for activate.
+ *
+ * The fetch handler ordering + cache routing + pre-auth/post-auth
+ * cache split (UI-13 §3-H) are UNCHANGED — UI-14 §3-F bounded the
+ * deviation to install + activate + message handlers only.
+ * tests/test_ui_sw.py keeps pinning the fetch handler shape.
  *
  * --- Cache split discipline (UI-13 §3-H binding) -------------
  *
@@ -57,8 +84,14 @@
  * --- Push handlers (UI-12b additive, unchanged) --------------
  */
 
-const PRE_AUTH_CACHE_NAME = 'karasu-ui-login-v13';
-const POST_AUTH_CACHE_NAME = 'karasu-ui-v13';
+/* UI-14 cache bump: v13 → v14. Pre-auth manifest body changed
+ * (§3-A icons + colors); post-auth shell gained install.js +
+ * the maskable PNG pair. Per the bump rule above, EITHER cache
+ * change forces both names to advance. The activate handler
+ * deletes any cache name not in the canonical set, so the v13
+ * caches are dropped on the first activation under v14. */
+const PRE_AUTH_CACHE_NAME = 'karasu-ui-login-v14';
+const POST_AUTH_CACHE_NAME = 'karasu-ui-v14';
 
 /* §3-H pre-auth EXACT set. The login surface must render
  * cleanly offline + a logged-out browser must NEVER see the
@@ -84,7 +117,9 @@ const PRE_AUTH_PRECACHE_URLS = [
 
 /* §3-H post-auth set. Mirror of the UI-8 PWA shell pre-cache,
  * minus the login-only items already in the pre-auth cache.
- * Filled lazily on {type:"auth:granted"}. */
+ * Filled lazily on {type:"auth:granted"}. UI-14 additions:
+ * the maskable icon pair (§3-A manifest entries) + install.js
+ * (§3-B install affordance loaded by the authenticated shell). */
 const POST_AUTH_PRECACHE_URLS = [
     '/offline.html',
     '/assets/css/timeline.css',
@@ -93,8 +128,20 @@ const POST_AUTH_PRECACHE_URLS = [
     '/assets/css/drawer.css',
     '/assets/crow/crow-flight.svg',
     '/assets/icons/karasu-512.png',
+    '/assets/icons/karasu-maskable-192.png',   // UI-14 §3-A
+    '/assets/icons/karasu-maskable-512.png',   // UI-14 §3-A
     '/assets/js/push.js',
+    '/assets/js/install.js',                   // UI-14 §3-B
 ];
+
+/* UI-14 §3-F SW Update Lifecycle Lock — distinguish first-load
+ * from update. Inside install/activate, ``self.registration.active``
+ * is null on first-load (no SW was previously controlling) and
+ * non-null on update. The lifecycle helpers below honour the
+ * UI-14 lock without leaking to fetch handler / cache routing. */
+function isFirstLoad() {
+    return self.registration && !self.registration.active;
+}
 
 self.addEventListener('install', (event) => {
     /* Codex round 3 P1 audit binding 2026-05-08: a SW
@@ -115,10 +162,17 @@ self.addEventListener('install', (event) => {
             Promise.all([cache.add(navRequest), cache.addAll(otherUrls)])
         )
     );
-    /* Skip the wait so a freshly installed SW activates on the
-     * next page load without requiring a manual refresh. The
-     * cleanup in activate handles any older caches. */
-    self.skipWaiting();
+    /* UI-14 §3-F SEALED — skipWaiting ONLY on first-load. On an
+     * UPDATE event, the new SW installs as "waiting" and stays
+     * there until the page posts {type:"SKIP_WAITING"} in
+     * response to the user clicking the footer Refresh
+     * affordance (§3-B / §11.6.9 mutual exclusion with the
+     * install slot). UI-8's eager swap is preserved for the
+     * fresh-install case so a brand-new operator does not face
+     * a pointless "Update available" beat on first paint. */
+    if (isFirstLoad()) {
+        self.skipWaiting();
+    }
 });
 
 self.addEventListener('activate', (event) => {
@@ -132,10 +186,35 @@ self.addEventListener('activate', (event) => {
             )
         )
     );
-    /* Take control of any clients that were already loaded under
-     * the previous SW so the fetch handler ordering applies
-     * immediately. */
-    self.clients.claim();
+    /* UI-14 §3-F SEALED — clients.claim ONLY on first-load.
+     * On an UPDATE event the new SW does NOT take over open
+     * tabs; the user explicitly opts in via the footer
+     * Refresh affordance which posts SKIP_WAITING and reloads.
+     * Aggressive claim on a deployed PWA mid-read disrupts UX. */
+    if (isFirstLoad()) {
+        self.clients.claim();
+    }
+    /* UI-14 §3-B / §11.6.9 — broadcast install-prompt-reset to
+     * any open page so install.js clears its 30-day dismiss
+     * key. The install affordance "may have evolved" with the
+     * new SW (manifest, icons, prompt copy) and the user
+     * deserves a fresh chance. matchAll with
+     * includeUncontrolled:true catches tabs that still answer
+     * to the old SW so we don't depend on clients.claim. */
+    event.waitUntil(
+        self.clients
+            .matchAll({ type: 'window', includeUncontrolled: true })
+            .then((clients) => {
+                for (const client of clients) {
+                    try {
+                        client.postMessage({ type: 'install-prompt-reset' });
+                    } catch (_) {
+                        /* postMessage to a closing client may
+                         * throw — the broadcast is best-effort. */
+                    }
+                }
+            })
+    );
 });
 
 self.addEventListener('fetch', (event) => {
@@ -193,6 +272,14 @@ self.addEventListener('message', (event) => {
     }
     if (data.type === 'auth:revoked') {
         event.waitUntil(caches.delete(POST_AUTH_CACHE_NAME));
+        return;
+    }
+    /* UI-14 §3-F SEALED — the page posts SKIP_WAITING in
+     * response to the user clicking the footer Refresh
+     * affordance. The waiting SW takes over; the page then
+     * reloads on controllerchange. NO other side effect. */
+    if (data.type === 'SKIP_WAITING') {
+        self.skipWaiting();
         return;
     }
 });

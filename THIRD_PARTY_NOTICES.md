@@ -5,7 +5,7 @@ fonts. Each entry below records the upstream source, the
 licence terms, and any modifications Karasu has made.
 
 Asset-level attributions also live inline next to the file
-they describe (e.g. inside `src/karasu/ui/static/assets/crow/crow.svg`,
+they describe (e.g. inside `src/karasu/ui/static/crow/crow.svg`,
 `docs/ui/assets/karasu_sprites_spec.md`,
 `src/karasu/ui/static/fonts/LICENSE-Inter.txt`,
 `src/karasu/ui/static/fonts/LICENSE-JetBrainsMono.txt`).
@@ -15,7 +15,7 @@ the source of truth for each asset.
 ## OpenMoji — "Black Bird" (`1F426 200D 2B1B`)
 
 ```text
-Used in:    src/karasu/ui/static/assets/crow/crow.svg
+Used in:    src/karasu/ui/static/crow/crow.svg
             (the canonical Karasu crow asset, header glyph
             and 96-px hero crow on the empty-state surface)
 Source:     https://openmoji.org/library/emoji-1F426-200D-2B1B/

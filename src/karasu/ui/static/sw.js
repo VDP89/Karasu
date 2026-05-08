@@ -135,15 +135,40 @@ const POST_AUTH_PRECACHE_URLS = [
 ];
 
 /* UI-14 §3-F SW Update Lifecycle Lock — distinguish first-load
- * from update. Inside install/activate, ``self.registration.active``
- * is null on first-load (no SW was previously controlling) and
- * non-null on update. The lifecycle helpers below honour the
- * UI-14 lock without leaking to fetch handler / cache routing. */
+ * from update. Captured ONCE during the install handler then
+ * frozen for activate to consume.
+ *
+ * Codex round-2 P1 binding (2026-05-08): ``self.registration.active``
+ * cannot be re-read inside ``activate`` — by activate-time the new
+ * SW has transitioned to ``activating`` / ``activated`` and
+ * ``registration.active`` already references the new worker (not
+ * null as it was at install). Re-evaluating the predicate inside
+ * activate would skip ``clients.claim()`` on the FRESH-INSTALL
+ * path the brief explicitly preserves. The frozen value is the
+ * fix: install captures, activate reads. The variable is module-
+ * level so it survives the install→activate sequence inside the
+ * same SW instance; on a worker restart (browser kill + revive)
+ * neither install nor activate fires for the unchanged SW, so
+ * the variable resetting to null on re-evaluation is correctly
+ * read as "no fresh-install branch this revive". */
+let _firstLoadClassification = null;
+
 function isFirstLoad() {
-    return self.registration && !self.registration.active;
+    return _firstLoadClassification === true;
 }
 
 self.addEventListener('install', (event) => {
+    /* §3-F + Codex round-2 P1 — capture the first-load
+     * classification HERE, before any work that could let
+     * registration.active mutate. ``self.registration.active``
+     * at install-time references the OLD active SW (or null on
+     * first-load); by activate-time it references the NEW
+     * worker because the lifecycle has progressed. Freezing
+     * the boolean here makes activate read a stable value. */
+    _firstLoadClassification = !(
+        self.registration && self.registration.active
+    );
+
     /* Codex round 3 P1 audit binding 2026-05-08: a SW
      * version bump while the operator already has a valid
      * session would cache the authenticated PWA shell HTML

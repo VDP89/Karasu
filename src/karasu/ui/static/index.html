@@ -218,6 +218,17 @@
 .footer-install.is-available .footer-install-state {
     color: var(--accent);
 }
+/* §11.6.14 SEALED + Codex round-2 P1 — when the slot is
+   "available" but the dismiss key is inside its 30-day window,
+   keep the state class truthful (capability is real) and dim
+   the line via this modifier. The × dismiss button is hidden
+   too — re-clicking dismiss is a no-op. */
+.footer-install.is-available.is-dismissed .footer-install-state {
+    color: var(--fg-3);
+}
+.footer-install.is-available.is-dismissed .footer-install-dismiss {
+    display: none;
+}
 .footer-install.is-ready .footer-install-state {
     color: var(--accent);
 }

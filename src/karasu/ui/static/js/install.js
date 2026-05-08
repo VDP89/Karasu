@@ -79,6 +79,24 @@
      * documented pattern. */
     let deferredPrompt = null;
 
+    /* installCapable is sticky for the page session — set true
+     * the FIRST time the browser dispatches beforeinstallprompt
+     * and never cleared. §11.6.14 SEALED — when the page is
+     * dismissed within the 30-day window the affordance still
+     * renders as "available" (truthful: the platform supports
+     * install) and ONLY the click is gated. Without a sticky
+     * capability flag, a dismissed slot would fall through to
+     * "unsupported" because deferredPrompt has been consumed
+     * by prompt.prompt() — that is Codex round-2 P1.
+     *
+     * Same flag covers the post-decline beat: prompt.prompt()
+     * consumes the event so deferredPrompt becomes null, but
+     * the platform is still capable and the brief says the
+     * slot returns to "available" (best-effort; click stays a
+     * no-op until the browser re-fires beforeinstallprompt
+     * after fresh engagement signals). */
+    let installCapable = false;
+
     /* updateRegistration holds the live SW registration so the
      * refresh affordance can read .waiting and post SKIP_WAITING
      * to it. Populated by setupUpdateLifecycle() on init. */
@@ -199,6 +217,20 @@
         );
         root.classList.add('is-' + state);
 
+        /* §11.6.14 SEALED + Codex round-2 P1 — when the slot is
+         * "available" but the dismiss key is inside its 30-day
+         * window, signal the muted-but-still-capable beat with a
+         * sub-state class. The state class stays is-available
+         * (truthful capability); the modifier dims the line and
+         * tells CSS to hide the × button (re-clicking dismiss is
+         * a no-op). The modifier is removed in every other state
+         * (the click gating in onLabelClick is the procedural
+         * counterpart). */
+        root.classList.remove('is-dismissed');
+        if (state === 'available' && readDismissed()) {
+            root.classList.add('is-dismissed');
+        }
+
         if (labelEl) {
             /* §3-F SEALED copy. The install states (un / avail
              * / ready / installed) write the bare state word
@@ -263,8 +295,17 @@
         if (isInstalled()) {
             return 'installed';
         }
-        if (deferredPrompt) {
-            return readDismissed() ? 'unsupported' : 'available';
+        /* §11.6.14 SEALED + Codex round-2 P1 — installCapable is
+         * sticky once the browser fires beforeinstallprompt.
+         * That truthfully reflects "the platform supports
+         * install" regardless of whether deferredPrompt has been
+         * consumed by a click or whether the dismiss key is
+         * inside its 30-day window. The dismiss / declined cases
+         * are surfaced visually (is-dismissed modifier in
+         * render()) and procedurally (onLabelClick gates the
+         * click) without lying about platform capability. */
+        if (installCapable) {
+            return 'available';
         }
         if (isIOSSafari()) {
             return 'ready';
@@ -285,6 +326,22 @@
         if (!root || !root.classList.contains('is-available')) {
             return;
         }
+        /* §11.6.14 SEALED + Codex round-2 P1 — the click is
+         * a no-op when:
+         *   1. dismiss key is inside the 30-day window (the
+         *      slot renders dimmed via is-dismissed but stays
+         *      truthfully "available"; the action waits until
+         *      the window expires or a SW activate broadcasts
+         *      install-prompt-reset);
+         *   2. deferredPrompt is null because prompt.prompt()
+         *      already consumed the BeforeInstallPromptEvent
+         *      (the browser may re-fire on a later engagement
+         *      tick; until then the click cannot do anything).
+         * Both cases keep the state truthful and the action
+         * gated procedurally — that is the §11.6.14 split. */
+        if (readDismissed()) {
+            return;
+        }
         if (!deferredPrompt) {
             return;
         }
@@ -303,7 +360,9 @@
                 } else {
                     /* User declined the OS dialog — do NOT
                      * auto-dismiss; the slot remains "available"
-                     * until the explicit × dismiss. */
+                     * (installCapable stays sticky) so the next
+                     * beforeinstallprompt fire restores the
+                     * actionable click. */
                     rerender();
                 }
             })
@@ -323,14 +382,22 @@
         /* Capture the event so the click handler can re-fire it.
          * preventDefault() suppresses the browser's own install
          * promotion surface — UI-8 audit pin #5 sealed against
-         * any browser-driven nag for the install gesture. */
+         * any browser-driven nag for the install gesture.
+         *
+         * §11.6.14 SEALED — set installCapable sticky on first
+         * dispatch so decideState() can return "available"
+         * (truthful) regardless of whether deferredPrompt is
+         * later consumed or whether the dismiss key is inside
+         * its 30-day window. */
         event.preventDefault();
         deferredPrompt = event;
+        installCapable = true;
         rerender();
     }
 
     function onAppInstalled() {
         deferredPrompt = null;
+        installCapable = false;
         clearDismissed();
         render('installed');
     }

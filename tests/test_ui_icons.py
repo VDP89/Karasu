@@ -10,48 +10,46 @@ UI-14 §3-A seals four PNG icons under
 
 The icons are rendered by ``scripts/ui_pwa_icons.py`` (Playwright
 headless, no new runtime dep — UI-0 §4 / UI-14 §3-C). This test
-locks three layers of the contract:
+locks two layers of the contract using ONLY the stdlib (Codex
+round-2 P1 — Pillow is not declared in pyproject.toml so a clean
+``.[dev]`` venv would not have it):
 
     1. Filesystem layer — the four files exist and are non-empty
-       PNGs at the documented dimensions.
-    2. Visual layer — the four corner pixels of every icon are
-       full-bleed --bg-0 (#0a0a0b) and the centre is glyph
-       (brighter than --bg-0). For maskable icons, points just
-       outside the W3C 80 %-diameter safe zone (radius = 40 % of
-       canvas) are also full-bleed bg, proving the glyph stays
-       inside the safe circle a launcher mask may apply.
-    3. Byte layer — SHA-256 hashes match the golden constants
-       captured at chunk close. A hash mismatch surfaces drift;
-       layers 1 + 2 narrow down whether it's dimensions, palette,
-       or pure rendering drift before the operator opens the diff.
+       PNGs at the documented dimensions. PNG magic bytes are
+       checked verbatim and the IHDR chunk is parsed by hand for
+       width / height. No pixel decoding so no zlib /
+       filter-reverse / colour-model code is needed.
 
-The test depends only on Pillow (already a stdlib-of-the-repo
-adjacent — pulled by Playwright transitively for screenshot
-encoding) so it runs in plain ``pytest`` with zero browser
-dependency, matching the static-artefact pattern in
-``test_ui_sw.py`` and ``test_lint_ui_css.py``.
+    2. Byte layer — SHA-256 hashes match the golden constants
+       captured at chunk close. A hash mismatch surfaces drift
+       at the byte level; the dimension assertions above narrow
+       down whether the drift is structural (different size) or
+       visual (same size, different content).
+
+The earlier round-1 visual layer (corner / centre / safe-zone
+pixel sampling) was dropped at Codex round-2 P1 because it
+required Pillow as a dev dep and the brief explicitly avoided
+new dev dependencies for icon work. The golden SHA-256 hash is
+the equivalent regression guard at the byte level — any visual
+drift produces a different byte sequence and trips the hash.
+The trade is: a hash failure no longer self-explains WHICH
+visual aspect drifted (palette / dimensions / glyph position).
+The IHDR dimension parse covers the most likely structural
+drift; everything else surfaces as a hash mismatch the operator
+investigates with their own image viewer.
 """
 
 from __future__ import annotations
 
 import hashlib
+import struct
 from pathlib import Path
 
 import pytest
-from PIL import Image
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ICONS_DIR = REPO_ROOT / "src" / "karasu" / "ui" / "static" / "icons"
-
-# Literal hex matching tokens.css --bg-0 exactly. Off-by-one channel
-# is a regression (UI-8 P2 binding inherited).
-BG_0_RGB: tuple[int, int, int] = (0x0A, 0x0A, 0x0B)
-
-# W3C maskable spec safe zone: 80 % diameter circle from canvas
-# centre. Radius = 40 % of side. Anything outside is at risk of
-# being clipped by a launcher OS mask.
-MASKABLE_SAFE_RADIUS_RATIO = 0.40
 
 
 # ---------------------------------------------------------------------------
@@ -60,9 +58,9 @@ MASKABLE_SAFE_RADIUS_RATIO = 0.40
 #
 # A failing hash here is NOT an automatic test failure to ignore —
 # it means either a deliberate icon refresh (re-pin the hash) or a
-# silent drift from a Playwright/Chromium upgrade. The dimension +
-# corner pixel + safe-zone assertions above this block run first
-# and tell the operator WHICH layer broke before the hash.
+# silent drift from a Playwright/Chromium upgrade. The dimension
+# assertions above this block run first and tell the operator
+# whether the drift is structural before the hash mismatch surfaces.
 # ---------------------------------------------------------------------------
 GOLDEN_SHA256: dict[str, str] = {
     "karasu-192.png":
@@ -83,6 +81,43 @@ ICON_FILES: tuple[tuple[str, int, str], ...] = (
     ("karasu-maskable-512.png", 512, "maskable"),
 )
 
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+
+def _png_dimensions(path: Path) -> tuple[int, int]:
+    """Parse the IHDR chunk by hand and return (width, height).
+
+    PNG layout (per the W3C spec, libpng documentation, RFC 2083):
+
+        bytes  0..  7   PNG signature (8 bytes)
+        bytes  8.. 11   IHDR chunk length (always 13, big-endian
+                         uint32)
+        bytes 12.. 15   IHDR chunk type (the 4 ASCII bytes
+                         ``IHDR``)
+        bytes 16.. 19   image width  (big-endian uint32)
+        bytes 20.. 23   image height (big-endian uint32)
+
+    We only need the width + height. Everything past byte 23 (bit
+    depth, colour type, compression, filter, interlace, CRC) is
+    irrelevant to the dimension contract this test pins."""
+    with path.open("rb") as fh:
+        header = fh.read(24)
+    if len(header) < 24:
+        raise AssertionError(f"{path} is shorter than a PNG header")
+    if header[:8] != PNG_MAGIC:
+        raise AssertionError(
+            f"{path} does not start with the PNG magic signature"
+        )
+    if header[12:16] != b"IHDR":
+        raise AssertionError(
+            f"{path} does not declare an IHDR chunk first — the "
+            f"file may be a non-conformant PNG variant or "
+            f"truncated. Expected b'IHDR' at offset 12, got "
+            f"{header[12:16]!r}."
+        )
+    width, height = struct.unpack(">II", header[16:24])
+    return width, height
+
 
 # ---------------------------------------------------------------------------
 # Layer 1 — filesystem
@@ -98,14 +133,9 @@ def test_icon_file_exists_and_is_nonempty_png(
     data = path.read_bytes()
     assert len(data) > 0, f"empty icon {path}"
     # PNG magic: 89 50 4E 47 0D 0A 1A 0A.
-    assert data[:8] == b"\x89PNG\r\n\x1a\n", (
+    assert data[:8] == PNG_MAGIC, (
         f"{path} is not a PNG (magic bytes mismatch)"
     )
-
-
-# ---------------------------------------------------------------------------
-# Layer 2 — visual contract
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("filename,side,_purpose", ICON_FILES)
@@ -113,109 +143,14 @@ def test_icon_dimensions_match_filename(
     filename: str, side: int, _purpose: str
 ) -> None:
     path = ICONS_DIR / filename
-    with Image.open(path) as img:
-        assert img.size == (side, side), (
-            f"{filename}: expected {side}x{side}, got {img.size}"
-        )
-
-
-def _rgb(img: Image.Image, x: int, y: int) -> tuple[int, int, int]:
-    """Return the RGB triple at (x, y), discarding any alpha. Pillow
-    returns RGBA when the source PNG has alpha; we coerce to RGB so
-    the assertion compares against ``BG_0_RGB`` cleanly."""
-    pixel = img.convert("RGB").getpixel((x, y))
-    assert isinstance(pixel, tuple) and len(pixel) == 3
-    return pixel  # type: ignore[return-value]
-
-
-@pytest.mark.parametrize("filename,side,_purpose", ICON_FILES)
-def test_icon_corners_are_full_bleed_bg(
-    filename: str, side: int, _purpose: str
-) -> None:
-    """All four corner pixels must be exactly --bg-0. Maskable spec
-    requires full-bleed; any-purpose UI-8 sealed the same colour."""
-    path = ICONS_DIR / filename
-    with Image.open(path) as img:
-        corners = {
-            "top-left": _rgb(img, 0, 0),
-            "top-right": _rgb(img, side - 1, 0),
-            "bottom-left": _rgb(img, 0, side - 1),
-            "bottom-right": _rgb(img, side - 1, side - 1),
-        }
-    for name, rgb in corners.items():
-        assert rgb == BG_0_RGB, (
-            f"{filename} {name} corner = {rgb}, expected {BG_0_RGB}"
-        )
-
-
-@pytest.mark.parametrize("filename,side,_purpose", ICON_FILES)
-def test_icon_centre_is_glyph_not_bg(
-    filename: str, side: int, _purpose: str
-) -> None:
-    """Centre pixel must be brighter than --bg-0 — proves the
-    crow glyph rendered into the canvas at all."""
-    path = ICONS_DIR / filename
-    centre = side // 2
-    with Image.open(path) as img:
-        rgb = _rgb(img, centre, centre)
-    luminance_bg = sum(BG_0_RGB)
-    luminance_centre = sum(rgb)
-    assert luminance_centre > luminance_bg + 30, (
-        f"{filename} centre = {rgb}, expected glyph (brighter than "
-        f"{BG_0_RGB})"
+    width, height = _png_dimensions(path)
+    assert (width, height) == (side, side), (
+        f"{filename}: expected {side}x{side}, got {width}x{height}"
     )
 
 
-@pytest.mark.parametrize(
-    "filename,side",
-    [(f, s) for f, s, p in ICON_FILES if p == "maskable"],
-)
-def test_maskable_glyph_inside_safe_zone(filename: str, side: int) -> None:
-    """For maskable icons, points just outside the W3C 80 %-diameter
-    safe zone (radius > 40 % of canvas) must still be full-bleed bg.
-    Otherwise a launcher applying a circular mask of that radius
-    would clip the glyph.
-
-    Sampled at the four cardinal points just outside the safe radius
-    plus the four diagonal points at the safe radius. The latter is
-    the tightest constraint — diagonals are where a square crow box
-    pushes furthest from centre. A 0.55 box yields corners at
-    box/2 * sqrt(2) ≈ 0.389 * side, so the 0.40 radius diagonals
-    must be bg.
-    """
-    path = ICONS_DIR / filename
-    centre = side // 2
-    safe_r = int(side * MASKABLE_SAFE_RADIUS_RATIO)
-    # One pixel outside the safe radius along each cardinal axis.
-    just_outside = safe_r + 1
-    samples = [
-        ("N-out", centre, centre - just_outside),
-        ("S-out", centre, centre + just_outside),
-        ("E-out", centre + just_outside, centre),
-        ("W-out", centre - just_outside, centre),
-        # Diagonal points exactly at the safe radius (cos45 ≈ 0.707).
-        ("NE-edge", centre + int(safe_r * 0.7071),
-         centre - int(safe_r * 0.7071)),
-        ("NW-edge", centre - int(safe_r * 0.7071),
-         centre - int(safe_r * 0.7071)),
-        ("SE-edge", centre + int(safe_r * 0.7071),
-         centre + int(safe_r * 0.7071)),
-        ("SW-edge", centre - int(safe_r * 0.7071),
-         centre + int(safe_r * 0.7071)),
-    ]
-    with Image.open(path) as img:
-        for name, x, y in samples:
-            rgb = _rgb(img, x, y)
-            assert rgb == BG_0_RGB, (
-                f"{filename} maskable safe-zone violation at {name} "
-                f"({x},{y}): pixel {rgb} != bg {BG_0_RGB}. The glyph "
-                f"extends past the W3C 40 % safe radius and a launcher "
-                f"mask may clip it."
-            )
-
-
 # ---------------------------------------------------------------------------
-# Layer 3 — byte regression
+# Layer 2 — byte regression
 # ---------------------------------------------------------------------------
 
 
@@ -228,9 +163,8 @@ def test_icon_sha256_matches_golden(
     expected = GOLDEN_SHA256[filename]
     assert actual == expected, (
         f"{filename} SHA-256 drift: actual={actual} expected={expected}. "
-        f"If the visual + dimension assertions above passed, this is "
-        f"likely a Playwright/Chromium version drift — re-running "
-        f"scripts/ui_pwa_icons.py produced different bytes for the "
-        f"same visual contract. Re-pin the hash or freeze the rendering "
-        f"toolchain before merging."
+        f"If the dimension assertions above passed, the drift is "
+        f"either a Playwright/Chromium version bump OR a deliberate "
+        f"icon refresh. Re-pin the hash if the new bytes are correct, "
+        f"or freeze the rendering toolchain version before merging."
     )

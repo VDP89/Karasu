@@ -195,6 +195,52 @@ def test_sw_install_first_load_helper_present(sw_code: str) -> None:
     )
 
 
+def test_sw_first_load_frozen_at_install(sw_code: str) -> None:
+    """Codex round-2 P1 SEALED — the first-load classification
+    must be captured ONCE during install and read frozen during
+    activate. Re-reading ``self.registration.active`` inside the
+    activate handler would skip clients.claim on the FRESH-
+    INSTALL path the brief explicitly preserves: by activate-
+    time the new SW has transitioned to activating/activated and
+    registration.active references the new worker (not null as
+    on first-load).
+
+    The fix is a module-level frozen variable set in install and
+    read in activate. This test pins the negative shape: the
+    activate handler must NOT contain the literal
+    ``self.registration.active`` (the only legitimate read site
+    is install-time + the helper-internal capture)."""
+    activate_block = _extract_handler_body(sw_code, "activate")
+    assert activate_block is not None, "activate handler not found"
+    assert "self.registration.active" not in activate_block, (
+        "activate handler re-reads self.registration.active. "
+        "Codex round-2 P1: capture the first-load classification "
+        "ONCE in install (e.g. ``_firstLoadClassification = "
+        "!self.registration.active``) and reuse the frozen value "
+        "in activate via the isFirstLoad() helper. By activate-"
+        "time the new SW has transitioned and the predicate "
+        "flips to false even on a fresh install — clients.claim "
+        "would be skipped, breaking the §3-F SEALED preservation "
+        "of the UI-8 first-load behaviour."
+    )
+    install_block = _extract_handler_body(sw_code, "install")
+    assert install_block is not None, "install handler not found"
+    # The capture should happen in install: a write to a module-
+    # level variable that isFirstLoad() later reads. We check for
+    # the assignment shape rather than a specific variable name
+    # so a refactor that renames the variable still passes.
+    capture_pattern = re.compile(
+        r"_firstLoadClassification\s*=\s*[!\(]"
+        r"|"
+        r"firstLoad\s*=\s*[!\(]"
+    )
+    assert capture_pattern.search(install_block), (
+        "install handler does not capture the first-load "
+        "classification into a module-level variable — without "
+        "the capture there is nothing for activate to read frozen."
+    )
+
+
 # ---------------------------------------------------------------------------
 # 3 — activate handler: clients.claim ONLY on first-load
 # ---------------------------------------------------------------------------

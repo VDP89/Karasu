@@ -182,6 +182,78 @@ def test_each_sealed_state_is_referenced(install_js: str, state: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Layer 4b — §11.6.14 capability truthfulness (Codex round-2 P1)
+# ---------------------------------------------------------------------------
+
+
+def test_install_capable_sticky_flag_present(install_js: str) -> None:
+    """§11.6.14 SEALED + Codex round-2 P1 — installCapable is the
+    sticky flag that lets decideState() return 'available'
+    truthfully when the platform supports install but the
+    deferredPrompt has been consumed (post-prompt, post-decline)
+    or the dismiss key is inside its 30-day window. Without the
+    flag, decideState() falls through to 'unsupported' and the
+    slot lies about platform capability."""
+    assert "installCapable" in install_js, (
+        "install.js does not declare the installCapable sticky "
+        "flag. Codex round-2 P1: dismiss / decline must NOT "
+        "render as 'unsupported'."
+    )
+
+
+def test_dismissed_does_not_return_unsupported(install_js_code: str) -> None:
+    """Negative-shape test — the dismiss-within-window branch in
+    decideState() must NOT route to 'unsupported'. The previous
+    implementation literally returned ``readDismissed() ?
+    'unsupported' : 'available'``; that is the bug §11.6.14
+    SEALED forbids."""
+    # Reject the exact former buggy expression (any whitespace).
+    bad_pattern = re.compile(
+        r"readDismissed\s*\(\s*\)\s*\?\s*['\"]unsupported['\"]"
+    )
+    assert not bad_pattern.search(install_js_code), (
+        "install.js has the round-1 bug: readDismissed() ? "
+        "'unsupported' : 'available'. Codex round-2 P1: the "
+        "dismiss state never re-classifies platform capability. "
+        "Use installCapable as the sticky truth."
+    )
+
+
+def test_label_click_gates_on_dismissed(install_js_code: str) -> None:
+    """§11.6.14 SEALED — dismiss-within-window keeps the slot
+    truthfully 'available' and the click is no-op. The procedural
+    gate lives in onLabelClick: it MUST short-circuit on
+    readDismissed() before reaching prompt.prompt()."""
+    # Locate the label-click body and confirm it references
+    # readDismissed before prompt.prompt(). Strip comments so
+    # narration in the docstring does not satisfy the assertion.
+    lc_idx = install_js_code.find("function onLabelClick")
+    assert lc_idx != -1, "onLabelClick handler missing"
+    body_idx = install_js_code.find("prompt.prompt", lc_idx)
+    assert body_idx != -1, "onLabelClick does not call prompt.prompt()"
+    pre_prompt = install_js_code[lc_idx:body_idx]
+    assert "readDismissed" in pre_prompt, (
+        "onLabelClick reaches prompt.prompt() without checking "
+        "readDismissed() first — Codex round-2 P1: dismiss "
+        "within window must gate the click."
+    )
+
+
+def test_is_dismissed_modifier_class_applied(install_js_code: str) -> None:
+    """The dismissed-but-available sub-state is visually marked
+    with an ``is-dismissed`` modifier class on the root, paired
+    with the sealed ``is-available`` state class. CSS dims the
+    line and hides the × button."""
+    assert "'is-dismissed'" in install_js_code or (
+        '"is-dismissed"' in install_js_code
+    ), (
+        "install.js does not toggle the is-dismissed modifier "
+        "class — Codex round-2 P1: the visual signal that the "
+        "slot is muted-but-still-capable is missing."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Layer 5 — SW message contract
 # ---------------------------------------------------------------------------
 

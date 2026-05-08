@@ -809,6 +809,31 @@ function browserPushSupport() {
     return 'supported';
 }
 
+/* UI-14 §3-E SEALED — detect iOS Safari in tab posture (NOT
+ * the installed PWA). Used ONLY to refine the COPY of the
+ * push footer "unsupported" line so iOS users see a pointer
+ * to the install affordance instead of a generic "your
+ * browser does not support notifications" beat. ZERO new
+ * gating logic; ZERO change to PushManager.subscribe or any
+ * caller — browserPushSupport() still drives the state
+ * machine, this helper only chooses the label string. */
+function isIOSSafariTab() {
+    if (typeof navigator === 'undefined') return false;
+    const ua = navigator.userAgent || '';
+    const isIOS = /iPad|iPhone|iPod/.test(ua);
+    if (!isIOS) return false;
+    /* In-app browsers (Chrome / Firefox / Edge / Opera / GSA
+     * on iOS) all run on top of WebKit but disable A2HS — they
+     * don't represent the "Safari tab → install path" the
+     * §3-E pointer is meant to teach. */
+    if (/CriOS|FxiOS|EdgiOS|OPiOS|GSA/.test(ua)) return false;
+    if (!/Safari/.test(ua)) return false;
+    /* Already installed → push goes through normally; no
+     * pointer needed. */
+    if (navigator.standalone === true) return false;
+    return true;
+}
+
 function renderPushFooter(label, stateClass) {
     const root = document.getElementById('footer-push');
     const slot = root.querySelector('.footer-push-state');
@@ -822,7 +847,19 @@ function renderPushFooter(label, stateClass) {
 async function loadPushState() {
     const browser = browserPushSupport();
     if (browser === 'unsupported') {
-        renderPushFooter('unsupported', 'is-unsupported');
+        /* UI-14 §3-E SEALED — iOS Safari tab gets a COPY-ONLY
+         * pointer to the install affordance ("Install Karasu
+         * first"); everywhere else the existing "unsupported"
+         * label survives unchanged. The pointer is in the same
+         * footer family as the install slot so the operator
+         * reads them together: "Notifications: Install Karasu
+         * first" + "Install: ready (Share → Add to Home
+         * Screen)". Full walk-through lives in
+         * docs/pwa-install.md per §3-E binding. */
+        const label = isIOSSafariTab()
+            ? 'Install Karasu first'
+            : 'unsupported';
+        renderPushFooter(label, 'is-unsupported');
         if (typeof recordPushPayload === 'function') recordPushPayload(null);
         if (typeof wirePushFooter === 'function') wirePushFooter();
         return;

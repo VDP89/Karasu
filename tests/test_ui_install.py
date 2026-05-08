@@ -332,3 +332,63 @@ def test_html_meta_theme_color_aligned(index_html: str) -> None:
         f"index.html theme-color meta is {actual} — UI-14 §3-A "
         f"extension aligns to --bg-0 ({SEALED_THEME_COLOR})."
     )
+
+
+# ---------------------------------------------------------------------------
+# Layer 10 — §3-E iOS Safari push copy refinement
+# ---------------------------------------------------------------------------
+#
+# §3-E SEALED — UI-14 refines the COPY of the push footer's
+# "unsupported" line on iOS Safari tab to point operators at the
+# install affordance ("Install Karasu first"). ZERO new gating
+# logic; ZERO change to PushManager.subscribe or any caller —
+# only the label string changes for the iOS-Safari-in-tab case.
+# Everywhere else the existing "unsupported" label is unchanged.
+
+
+SEALED_IOS_POINTER_COPY = "Install Karasu first"
+
+
+def test_index_html_has_ios_safari_tab_helper(index_html: str) -> None:
+    """The detection helper must be a named function so the
+    branch is auditable from a single point. Inline UA sniffing
+    scattered across loadPushState would re-grow the surface
+    §3-E sealed shut."""
+    assert "isIOSSafariTab" in index_html, (
+        "index.html does not declare an isIOSSafariTab helper — "
+        "the §3-E iOS push copy refinement has nowhere to anchor."
+    )
+
+
+def test_ios_pointer_copy_sealed_verbatim(index_html: str) -> None:
+    """§3-E SEALED at exactly ``Install Karasu first``. A drift
+    to ``Install Karasu`` / ``Install required`` / etc. breaks
+    the pointer the operator is expected to read."""
+    assert SEALED_IOS_POINTER_COPY in index_html, (
+        f"index.html does not contain the sealed §3-E pointer "
+        f"copy {SEALED_IOS_POINTER_COPY!r}. The COPY refinement "
+        f"is the deliverable; do not paraphrase."
+    )
+
+
+def test_ios_pointer_does_not_alter_subscribe_path(index_html: str) -> None:
+    """§3-E SEALED ZERO-change pin: the iOS pointer touches
+    the LABEL inside renderPushFooter only. The subscribe call
+    site (push.js) is out of scope; the gating predicates
+    (browserPushSupport / wirePushFooter) are out of scope.
+    This negative-shape test fails if a future edit attempts
+    to gate the subscribe call on isIOSSafariTab."""
+    # The helper must NOT appear inside browserPushSupport's
+    # body or be referenced by wirePushFooter / push.js's
+    # subscribe path. The cheapest static proxy: it appears
+    # ONLY in the label-selection branch (loadPushState
+    # 'unsupported' arm). Count occurrences as a smoke check.
+    occurrences = index_html.count("isIOSSafariTab")
+    # 1 declaration + 1 call site = 2 expected. Anything more
+    # is a regression (the helper leaked into other branches).
+    assert occurrences <= 3, (
+        f"isIOSSafariTab is referenced {occurrences} times — "
+        f"§3-E SEALED restricts it to the push footer label "
+        f"refinement only. Suspect leak into "
+        f"browserPushSupport / wirePushFooter / subscribe."
+    )

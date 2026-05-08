@@ -41,6 +41,22 @@ Licence URL: https://creativecommons.org/licenses/by-sa/4.0/
   background colour (`var(--bg-0)` inline; `#0a0a0b`
   standalone), acting as negative space against the body
   fill — operator-added, not part of upstream OpenMoji.
+- UI-14 §3-A adds four pre-rendered PWA icon PNG
+  derivatives at:
+    - `src/karasu/ui/static/icons/karasu-192.png` (UI-8)
+    - `src/karasu/ui/static/icons/karasu-512.png` (UI-8)
+    - `src/karasu/ui/static/icons/karasu-maskable-192.png` (UI-14)
+    - `src/karasu/ui/static/icons/karasu-maskable-512.png` (UI-14)
+  All four are rasterizations of the modified
+  `static/crow/crow.svg` produced by Playwright headless
+  (see `scripts/ui_pwa_icons.py`). The any-purpose pair
+  renders the crow at 70 % of the canvas; the maskable
+  pair renders at 55 % so the glyph stays inside the W3C
+  80 %-diameter safe zone a launcher mask may apply (per
+  manifest spec). No new dependency, no glyph editing —
+  the maskable variants are PURELY a different render
+  ratio of the same modified SVG. The CC-BY-SA chain
+  documented above propagates to all four PNG outputs.
 
 CC-BY-SA propagates compatibly with Karasu's own licence. See
 `docs/ui/assets/karasu_sprites_spec.md` § Provenance for the

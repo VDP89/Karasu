@@ -7,8 +7,8 @@ Phase 1B: COMPLETED (no-adapter pass validated, F1–F5 closed)
 Phase 1C: COMPLETED (real Claude adapter loop validated, F6–F8 closed)
 Phase 2: COMPLETED — chunks 1+2+3 merged (#30 #31 #32 #33). Audit accepted with one round of changes (PR #33 contract alignment + redaction).
 Phase 3: COMPLETED + DOGFOOD-VALIDATED + AUDIT-ACCEPTED + EXIT-CRITERIA-CLOSED — chunks 3a + 3b + 3c merged (#34 #35 #36 #37). Live dogfood 2026-05-02 (issue #39) validated end-to-end: `/scar` → controller resubmit (94 ms) → pipeline applies scar → second dispatch with `priority=high` → response back to Telegram. Cap held at 3 under spam. Three operational findings filed: F9 (#40), F10 (#41), F11 (#42). Audit forward-look returned by ChatGPT and recorded in [`docs/memory/phase-3-dogfood-audit-2026-05-02.md`](phase-3-dogfood-audit-2026-05-02.md): 2 REQUERIDOS applied this PR (trust=2 docs warning + cap-local-per-origin issue), 1 NICE-TO-HAVE applied (sessions template), 2 NICE-TO-HAVE queued for Phase 3+ hardening (priority persist + startup warning). Exit criteria CLOSED 2026-05-07 by UI-12c (PR #105) — Telegram is no longer the only push channel; the PWA push delivery surface (footer affordance + modal + VAPID-signed RFC 8291 aes128gcm POSTs to FCM/APNs/Mozilla autopush) is the operator-facing notification path.
-Phase 4: UNSCOPED. Macro brief pending (see "Next step" entry point below). Anticipated scope: deployed surfaces (TLS, multi-operator auth), multi-host writer concurrency, A2A peer push fan-out, post-UI-12c push enhancements.
-UI surface progress (PWA roadmap — main HEAD `8434391`, 2026-05-06):
+Phase 4: OPENED 2026-05-07 (macro brief PR #107 merged `7a145ce`) — FIRST CHUNK CLOSED 2026-05-08 (UI-13 PR #109 merged `6e283a8`). Auth surface ready for deployed dogfood: scrypt credentials store + signed-cookie sessions + signed double-submit CSRF + three-layer trusted-IP derivation + per-IP/per-cred rate-limit + anonymous-path perimeter + login surface + SW pre-auth/post-auth cache split + CLI bootstrap + frontend CSRF auto-attach + caddy/nginx deploy-runbook. Anticipated remaining scope: multi-operator auth (UI-13+ explicit), multi-host writer concurrency, A2A peer push fan-out, post-UI-12c push enhancements.
+UI surface progress (PWA roadmap — main HEAD `6e283a8`, 2026-05-08):
 - UI-0  (design brief)              ✔ PR #62  merged (`92e2c91`).
 - UI-1  (rebase + projection)       ✔ PR #63  merged (`4819d7b`).
 - UI-2  (design system + tokens)    ✔ PR #69  merged (`6ec5203`).
@@ -97,6 +97,40 @@ UI surface progress (PWA roadmap — main HEAD `8434391`, 2026-05-06):
                                     UI-12c CLOSES Phase 3 exit
                                     criteria — Telegram is no
                                     longer the only push channel.
+- UI-13 brief (auth + cookies +     ✔ PR #108 merged (`ad003db`,
+  sw cache split + CLI)             2026-05-08, doc-only).
+                                    APPROVED across 4 audit
+                                    rounds; 20 §11.6 pins binding
+                                    for UI-13 code.
+- UI-13 (auth + cookies + sw +      ✔ PR #109 merged (`6e283a8`,
+  CLI)                              2026-05-08). APPROVED across
+                                    5 audit rounds: round 1
+                                    CHANGES-REQ (1 P0 + 3 P1 +
+                                    2 P2) → P0+3xP1+1xP2 closed
+                                    in-branch (asset routing P2
+                                    deferred to chunk 5 per
+                                    Codex's framing); round 2
+                                    CHANGES-REQ (1 P1 + 1 P2)
+                                    → both closed; round 3
+                                    CHANGES-REQ (1 P0 + 2 P1 +
+                                    1 P2) → all closed
+                                    (--session-ttl-days
+                                    implemented; --tls-* deferred
+                                    with runbook rationale);
+                                    round 4 CHANGES-REQ (1 P0)
+                                    → closed (non-loopback bind
+                                    + empty expected_origins
+                                    refused at startup); round
+                                    5 APPROVED clean. Loop
+                                    budget: 4/5. Final test
+                                    surface: 985 passed + 7
+                                    skipped + 2 pre-existing
+                                    Windows quirks (CRLF + cwd
+                                    path; documented; NOT
+                                    regressions). UI-13 CLOSES
+                                    Phase 4 first chunk — the
+                                    auth surface is the deployed-
+                                    posture foundation.
 
 ## System status
 

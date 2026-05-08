@@ -1286,3 +1286,114 @@ Next step:
   the UI-8 fetch handler ordering), POST contracts, store WRITER
   with mode 0600 + atomic write, human_decision schema with
   endpoint_hash audit metadata, 4-5 PNGs + 1 .webm.
+
+## 2026-05-08 — UI-13 closed, deployed-auth surface on main
+
+Closes Phase 4's first chunk. UI-13 PR #109 squash-merged as
+`6e283a8` after 5 audit rounds (4 CHANGES-REQ + 1 APPROVED clean).
+The auth surface is the deployed-posture foundation; the remaining
+Phase 4 chunks build against this.
+
+What landed:
+
+- `src/karasu/ui/_auth.py` (~925 LOC stdlib-only): scrypt
+  `N=16384/r=8/p=1` credentials store + atomic 0600 write +
+  fail-closed shape validation; signed-cookie sessions with
+  HMAC-SHA256 + 60s clock-skew + gen-mismatch invalidation; signed
+  double-submit CSRF; three-layer trusted-IP derivation
+  (right-to-left walk + `UNTRUSTED_FORWARDED` sentinel + `None` on
+  all-trusted); is_loopback_ip / is_loopback_bind; LoginRateLimit
+  (5/60s per-IP + 10/5min per-cred + backoff doubling cap 1h +
+  post-derivation localhost bypass); is_anonymous_path EXACT
+  whitelist + fonts prefix.
+- `src/karasu/ui/server.py` (+730 LOC delta): `configure_auth()`
+  opt-in (default no-auth keeps pre-UI-13 tests passing);
+  `UIHandler._authorize_request` middleware gating every request
+  behind session + (for mutating methods) CSRF; POST `/auth/login`
+  with form-urlencoded + JSON dual transport per §3-E JS-disabled
+  contract; GET + POST `/auth/logout` split (Codex round 1 P1 +
+  round 2 P2 cross-origin GET protection); cookies HttpOnly +
+  SameSite=Strict + Path=/ + Secure(deployed); credential
+  hot-reload via mtime check (Codex round 3 P1).
+- `src/karasu/ui/static/login.html` + `login.css`: §3-E visual
+  primitive (inline SVG hero crow, 320 px form column,
+  design-system tokens, accessibility attrs); /assets/icons/* +
+  /assets/crow/* routing inconsistency closed (files moved out of
+  static/assets/).
+- `src/karasu/ui/static/sw.js`: cache split per §3-H —
+  `karasu-ui-login-v13` (pre-auth EXACT set) + `karasu-ui-v13`
+  (post-auth PWA shell, lazy fill on auth:granted); message
+  handler with auth:granted / auth:revoked branches; install root
+  precache uses `credentials: 'omit'` (Codex round 3 P1) so a SW
+  version-bump while logged-in cannot pollute the pre-auth cache.
+- `src/karasu/ui/static/index.html`: window.fetch wrapper detects
+  401 + redirect-to-/ from /api/* and posts auth:revoked + reload;
+  same wrapper auto-attaches `X-Karasu-CSRF` header on every
+  /api/* mutating request (chunk 8) reading the karasu_csrf cookie.
+- `src/karasu/__main__.py`: `karasu auth set-credentials`
+  subcommand (interactive prompt or stdin pipe); `karasu ui
+  --no-auth` + `--credentials` + `--session-ttl-days` flags;
+  §3-B fail-closed startup; §3-G loopback-bind guard +
+  empty-trusted_proxies refusal; round-3 P0 deployed posture
+  decoupled from bind via `bool(expected_origins)`; round-4 P0
+  non-loopback bind without expected_origins refused at startup
+  (closes the inverse side of the round-3 fix).
+- `docs/deploy-runbook.md` (NEW): caddy + nginx OVERWRITE-XFF
+  snippets, mkcert dev flow, credential rotation, trusted-proxy
+  threat model, troubleshooting, Windows ACL, deferred --tls-*
+  flags rationale.
+- `scripts/ui_login_preview.py` + `scripts/ui_13_capture.py`:
+  dev preview + reproducible Playwright capture for the §3-E
+  login surface PNGs.
+- `docs/ui/screenshots/UI-13-auth/00-login-pristine.png` +
+  `01-login-error.png`.
+- `tests/test_auth_*.py` (6 NEW files, ~250 cases): credentials,
+  session, trusted-IP, rate-limit, middleware, server, CLI.
+
+Audit rounds:
+
+- Round 1 — CHANGES-REQ (1 P0 + 3 P1 + 2 P2). Closed:
+  P0 sentinel collapse; P1 SameSite=Strict on session cookie;
+  P1 scrypt parameter validation at startup; P1 form-urlencoded
+  JS-disabled flow; P2 Windows mode-0600 advisory warning. Asset
+  routing P2 deferred per Codex's framing → landed in chunk 5.
+- Round 2 — CHANGES-REQ (1 P1 + 1 P2). Closed:
+  P1 configure_auth fail-closed on missing path; P2 form parser
+  rejects repeated username / password.
+- Round 3 — CHANGES-REQ (1 P0 + 2 P1 + 1 P2). Closed:
+  P0 production posture mistakenly treated as dev (deployed =
+  bool(expected_origins)); P1 credential rotation now
+  invalidates live sessions via mtime hot-reload; P1 SW install
+  uses credentials:'omit' for `/` so a logged-in version-bump
+  cannot poison the pre-auth cache; P2 --session-ttl-days
+  implemented + --tls-* deferred with runbook rationale.
+- Round 4 — CHANGES-REQ (1 P0). Closed: non-loopback bind +
+  empty expected_origins refused at startup (closes the inverse
+  side of round-3 P0 — dev fallback is loopback-only by
+  construction now).
+- Round 5 — APPROVED clean.
+
+Loop budget: 4/5.
+
+Impact:
+
+- UI-13 complete. Phase 4 first chunk closed; auth foundation
+  in main. Future Phase 4 chunks (multi-operator auth, multi-host
+  writer concurrency, A2A peer push fan-out, push enhancements,
+  Phase 3 dogfood F9-F11 hardening) build against this.
+- main HEAD: `6e283a8`. 0 PRs open. 0 branches open.
+- 985 tests pass on Windows (2 pre-existing Windows CRLF +
+  cwd-path quirks unchanged; documented).
+
+Next step:
+
+- Operator decides Phase 4 second-chunk path:
+  * Path A (multi-operator auth, UI-14) — natural follow-up
+    extending karasu-auth.json from single-user to multi-user +
+    per-user trust scoping.
+  * Path B (operational hardening of #40-#42) — closes Phase 3
+    dogfood findings before opening more Phase 4 surface.
+- Whichever path, the chunk-level brief lifecycle applies:
+  doc-only PR with [NEEDS OPERATOR SIGN-OFF] markers → Codex
+  audit → in-branch follow-ups → merge BEFORE the code branch
+  opens.

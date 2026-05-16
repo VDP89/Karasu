@@ -128,6 +128,40 @@ as the install affordance, labelled `Notifications:`. Like
 the install slot it has four states; the relevant one for
 this section is `unsupported`.
 
+### 3.0 Prerequisite — VAPID provisioning (run `karasu watch` once)
+
+Before any of the per-platform flows below will let you
+subscribe, the server-side push pipeline (UI-12c) needs a
+VAPID keypair. **`karasu ui` does NOT provision it** — the
+UI process only reads the push store. **`karasu watch`** is
+what auto-generates a fresh ECDSA P-256 VAPID keypair on
+first start when `karasu-push.json` has no `vapid` section.
+
+If you click `Notifications: off` and the modal flags
+*"VAPID keys not provisioned"*, this is the missing step.
+Open a terminal and run:
+
+```sh
+karasu watch
+```
+
+That's it. The watcher writes the keypair under the cross-
+process file lock from UI-12c §3-G, so a concurrent
+`karasu ui` POST handler cannot race the bootstrap. The
+keypair is durable: subsequent `karasu watch` starts read
+the existing pair and skip generation.
+
+Rotation is operator-driven (delete `karasu-push.json` and
+restart `karasu watch`); the emitter never rotates
+automatically because doing so would invalidate every
+existing browser subscription (UI-12 §10.4 binding).
+
+For day-to-day use, leave `karasu watch` running in a
+terminal (or under a service supervisor in the deployed
+posture — see `docs/deploy-runbook.md` §1.6). Without it,
+the bus events still land in the JSONL log but nothing
+gets dispatched and nothing gets pushed.
+
 ### 3.1 Android Chrome (tab OR installed)
 
 Push works in **both** postures. The footer flips to
@@ -240,6 +274,11 @@ PWA an operator may keep open across sessions.
   permissions are off for your origin. Open the browser's
   site settings (Chrome: 🔒 in the address bar →
   Notifications) and re-grant; reload Karasu.
+- **The push modal says `VAPID keys not provisioned`.**
+  You are running `karasu ui` without ever having run
+  `karasu watch`. The UI process does not provision
+  VAPID; the watcher does, on first start. See § 3.0
+  above — one `karasu watch` run is enough.
 
 If something still doesn't add up, the binding contracts
 live in `docs/ui/ui-14-design-brief.md` §3-B / §3-E /

@@ -106,6 +106,32 @@ extension covering VAPID bootstrap) + optional UX flow
 generation"). Belongs to UI-12c follow-up territory, not
 UI-14.
 
+**→ Sub-frictions 1 & 2 resolved 2026-05-16 by branch
+`docs/vapid-bootstrap-consolidation`.**
+
+- `docs/pwa-install.md` gained a §3.0 "Prerequisite — VAPID
+  provisioning" sub-section before §3.1, explaining that
+  `karasu watch` (not `karasu ui`) is what bootstraps the
+  keypair on first start. A troubleshooting bullet in §5
+  surfaces the exact modal text ("VAPID keys not
+  provisioned") and points back to §3.0. Operators reading
+  only the UI-14 walkthrough now find the bootstrap step
+  inline.
+- `docs/deploy-runbook.md` gained a §1.6 "Provision VAPID
+  push keys" between the listener start (§1.5) and the
+  mkcert dev flow (§2). Covers first-time provisioning,
+  service supervisor placement, `push.contact_email` for
+  deployed posture (so the JWT `mailto:` claim is not the
+  invalid-TLD default), rotation discipline, and a cross-
+  reference to the §6 NTFS ACL posture for `karasu-push.json`.
+
+**Sub-friction 3 (modal does not surface CLI command) →
+deferred to a separate UX PR.** The fix is a UI-12b modal
+copy change: when `vapid_provisioned == False`, show
+`karasu watch` as a runnable hint instead of (or alongside)
+the doc pointer. Out of scope for this docs PR — touches
+UI-12b code + brief amendment + test, not pure docs.
+
 ### Finding #4 — Manifest missing `screenshots[]`
 
 **Severity:** UX cosmetic — Low.

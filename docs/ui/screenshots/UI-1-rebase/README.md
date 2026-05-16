@@ -58,7 +58,7 @@ evt002 (agent_response, source=adapter)
 evt003 (file_change, source=github_webhook)
   priority=high, github_event=pull_request_review_comment,
   github_action=created, github_pr=42,
-  github_repo=VDP89/Karasu-, github_author=reviewer1
+  github_repo=VDP89/Karasu, github_author=reviewer1
 
 evt004 (file_change, source=controller)
   priority=high, controller_resubmit=True,

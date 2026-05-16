@@ -41,8 +41,8 @@ tests cannot:
 ## Prerequisites
 
 ```bash
-git clone https://github.com/VDP89/Karasu-.git
-cd Karasu-
+git clone https://github.com/VDP89/Karasu.git
+cd Karasu
 git pull origin main      # post-merge of #34 + #35 + #36 + #37
 python -m venv .venv
 source .venv/bin/activate

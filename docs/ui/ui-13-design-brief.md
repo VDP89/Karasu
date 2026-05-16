@@ -635,8 +635,25 @@ Visual constraints (binding):
   * NO "show password" toggle (single-operator; if
     operator wants to verify, they can paste it).
   * Error slot is generic copy ("Could not sign in.")
-    per §3-G online-guessing protection — no
-    "username not found" vs "wrong password" leak.
+    for AUTHENTICATION outcomes (401) per §3-G online-
+    guessing protection — no "username not found" vs
+    "wrong password" leak.
+
+    Amendment 2026-05-16 (closes phase-4-dogfood "Could
+    not sign in" diagnosis hygiene): the generic-copy
+    invariant scopes to status 401 ONLY. Pre-auth
+    rejection paths (403 origin/CSRF, 429 rate-limit,
+    400/422 body validation, 503 auth-not-configured)
+    surface the server's canonical ``{"error":...}``
+    phrase in the chip so an operator hitting a
+    misconfig is not misled into chasing credentials.
+    The JS only RENDERS the server's error field
+    (capitalised + trailing period); it never invents
+    text. The fallback when no JSON body is available
+    is the same generic "Could not sign in.". Online-
+    guessing protection still holds: 401 says nothing
+    about which credential was wrong, and the pre-auth
+    paths cannot fire AFTER the password check.
   * Crow stays idle; the shake-on-error from UI-5 is
     for system errors, NOT operator typos.
 
@@ -648,7 +665,7 @@ reload. The form MUST work with JS disabled (POST →
 re-render with error slot populated on failure).
 ```
 
-[CONFIRMED 2026-05-08]
+[CONFIRMED 2026-05-08; chip-text status discrimination amended 2026-05-16]
 
 ### F) CSRF mechanism
 

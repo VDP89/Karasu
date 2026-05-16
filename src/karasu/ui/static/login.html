@@ -85,10 +85,35 @@
     // error slot text without a full reload. The form MUST
     // also work with JS disabled — the server handles the
     // urlencoded path verbatim (chunk 4 §3-E binding).
+    //
+    // Brief §3-E amendment 2026-05-16 (closes phase-4-dogfood
+    // hygiene #5(a)): the chip text reflects the SERVER's
+    // error field per status, not a fixed generic. 401 stays
+    // "Could not sign in." per §3-G online-guessing invariant
+    // (no username/password leak), but 403 / 429 / etc carry
+    // their descriptive cause so an operator with a misconfig
+    // is not misled into chasing credentials. The server's
+    // canonical JSON shape is {"error":"<lowercase phrase>"};
+    // the JS only renders the field (capitalised + trailing
+    // period), never invents text.
     (function () {
       var form = document.getElementById('login-form');
       var slot = document.getElementById('login-error');
       if (!form || !slot) return;
+      var fallback = 'Could not sign in.';
+      function chipText(status, body) {
+        try {
+          var data = JSON.parse(body);
+          if (data && typeof data.error === 'string' && data.error.length) {
+            var msg = data.error.charAt(0).toUpperCase() + data.error.slice(1);
+            return msg.charAt(msg.length - 1) === '.' ? msg : msg + '.';
+          }
+        } catch (e) { /* non-JSON body — fall through */ }
+        // 413 returns plain text "payload too large"; everything
+        // else without a JSON body gets the generic fallback.
+        if (status === 413) return 'Request too large.';
+        return fallback;
+      }
       form.addEventListener('submit', function (event) {
         event.preventDefault();
         slot.hidden = true;
@@ -112,10 +137,14 @@
               }
             } catch (e) { /* SW not registered yet — fine */ }
             window.location.assign('/');
-          } else {
-            slot.hidden = false;
+            return;
           }
+          return r.text().then(function (body) {
+            slot.textContent = chipText(r.status, body);
+            slot.hidden = false;
+          });
         }).catch(function () {
+          slot.textContent = fallback;
           slot.hidden = false;
         });
       });

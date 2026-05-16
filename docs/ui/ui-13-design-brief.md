@@ -932,7 +932,31 @@ round 2 P1 binding 2026-05-07):
     4. derive_client_ip returns None (all chain
        entries trusted; impossible for real
        traffic from an external client) → fail-
-       closed: no bypass, fresh rate-limit slot.
+       closed: no bypass, fresh rate-limit slot
+       keyed by ``!unknown:<peer_addr>`` so it
+       can never match ``is_loopback_ip``.
+
+       Amendment 2026-05-16 (closes phase-4-
+       dogfood Bug "Could not sign in" side-
+       observation): in DEV posture
+       (``AUTH_DEPLOYED=False``, i.e. no
+       ``auth.expected_origins`` configured) the
+       trusted-peer + empty-chain case ALSO hits
+       this branch — direct loopback browser
+       POSTs against ``karasu ui`` on 127.0.0.1
+       have no XFF/Forwarded and the default
+       ``trusted_proxies=("127.0.0.1", "::1")``
+       includes the peer. The wrapper
+       ``_ip_for_rate_limit`` resolves this case
+       to the peer address verbatim (so the
+       loopback bypass at LoginRateLimit.check
+       fires) rather than the ``!unknown:``
+       synthetic. Deployed posture keeps the
+       fail-closed shape: a trusted peer +
+       empty chain there means the proxy is
+       misconfigured (forgot to forward XFF)
+       and the ``!unknown:`` key surfaces the
+       symptom in logs.
     5. Malformed Forwarded / X-Forwarded-For (no
        parseable IPs) → fail-closed: no bypass,
        fresh rate-limit slot.

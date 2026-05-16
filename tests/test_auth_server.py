@@ -823,6 +823,64 @@ def test_configure_auth_fails_closed_on_missing_creds(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_dev_posture_direct_loopback_bypasses_rate_limit(
+    auth_http,
+) -> None:
+    """Brief §3-G amendment 2026-05-16 (closes phase-4-dogfood
+    Bug "Could not sign in" side-observation): in DEV posture
+    (deployed=False, default trusted_proxies includes
+    127.0.0.1) a direct-loopback browser POST hits the trusted-
+    peer + empty-chain branch of derive_client_ip → primitive
+    returns None. Before the amendment, _ip_for_rate_limit
+    wrapped that as the ``!unknown:127.0.0.1`` synthetic key,
+    which never matches is_loopback_ip's set, so the loopback
+    bypass at LoginRateLimit.check could NOT fire and dev
+    iteration ate 429s after five typos.
+
+    After the amendment, _ip_for_rate_limit returns the peer
+    verbatim in dev posture when peer is loopback. Drive 6
+    wrong-password attempts and then one right-password; the
+    seventh MUST succeed (302 with cookies). If the bypass
+    were not firing, the right-password attempt would 429."""
+    host, port, _ = auth_http
+    for _ in range(6):
+        status, _body, _hdrs, _cookies = _login(
+            host, port, password="wrong"
+        )
+        assert status == 401
+    status, _body, _hdrs, set_cookies = _login(host, port)
+    assert status == 200
+    # JSON-mode success returns 200 + {"ok":true} + cookies.
+    assert _extract_cookie(set_cookies, SESSION_COOKIE_NAME)
+
+
+def test_deployed_posture_trusted_peer_empty_chain_still_rate_limits(
+    auth_http_deployed,
+) -> None:
+    """Contra-positive of the dev bypass: in DEPLOYED posture
+    a trusted peer + empty chain means the proxy connected
+    to karasu but did NOT forward XFF/Forwarded — a real
+    misconfiguration. The ``!unknown:<peer>`` synthetic key
+    MUST still fire so rate-limit accumulates, the operator
+    sees the misconfig in the bucket, and the loopback
+    bypass does NOT silently mask the bug.
+
+    Drive 5 wrong-password attempts directly via loopback
+    (no XFF, simulating a caddy-without-XFF misconfig); the
+    6th attempt must 429."""
+    host, port, _, expected_origin = auth_http_deployed
+    origin_header = {"Origin": expected_origin}
+    for _ in range(5):
+        status, _body, _hdrs, _cookies = _login(
+            host, port, password="wrong", extra_headers=origin_header
+        )
+        assert status == 401
+    status, body, _hdrs, _cookies = _login(
+        host, port, extra_headers=origin_header
+    )
+    assert status == 429, body
+
+
 def test_p0_untrusted_forwarded_does_not_bypass_rate_limit(
     auth_http, monkeypatch
 ) -> None:

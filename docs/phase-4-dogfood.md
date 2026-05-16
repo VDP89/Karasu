@@ -162,6 +162,17 @@ manifest scope. UI-14 §3-A did not seal `id`.
 fix + test pin in `tests/test_ui_manifest.py`. Promote to
 P1 if path C VPS deploy is on the sprint horizon.
 
+**→ Resolved 2026-05-16 by branch
+`fix/ui-14-manifest-id-slash`.** Manifest gained
+`"id": "/"` (added at the top of the body); brief §3-A
+first SEALED block extended to include `id` with a
+reasoning bullet citing this finding; new
+`test_manifest_id_sealed` in `tests/test_ui_manifest.py`
+under a Layer 2.5 grouping pins the value. The fix
+unblocks path C: a deploy origin change now preserves
+App ID identity, so the operator's pre-deploy install
+will migrate cleanly rather than orphan.
+
 ## Bug — Could not sign in (auth ON path)
 
 **Surface:** `python -m karasu ui` (without `--no-auth`)

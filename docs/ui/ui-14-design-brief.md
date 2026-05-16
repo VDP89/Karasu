@@ -227,8 +227,8 @@ fallback path.
 
 ### A) Web app manifest fields
 
-**[SEALED]** — `name`, `short_name`, `display`, `scope`,
-`start_url`.
+**[SEALED]** — `id`, `name`, `short_name`, `display`,
+`scope`, `start_url`.
 
 ```text
 File: src/karasu/ui/static/manifest.json
@@ -244,6 +244,7 @@ Served at: GET /assets/manifest.json
 
 Sealed fields:
 {
+  "id":          "/",
   "name":        "Karasu",
   "short_name":  "Karasu",
   "display":     "standalone",
@@ -254,6 +255,19 @@ Sealed fields:
 
 Reasoning:
 
+- `id: "/"`. Brief amendment 2026-05-16 closing
+  phase-4-dogfood Finding #5. Without `id`, Chrome derives
+  the App ID from `start_url`, which is origin-dependent —
+  the install at `http://localhost:8787/` and the install
+  at the production `https://<host>/` are treated as
+  separate apps. The launcher ends up with a duplicate
+  entry and the pre-deploy install orphans (loses its
+  push subscriptions + cookies + window position). The
+  literal `/` decouples identity from origin while staying
+  inside the manifest scope. Original §3-A omitted this
+  field; the amendment seals it at the literal `/` per
+  Chrome's own DevTools recommendation surfaced during the
+  2026-05-09 dogfood.
 - `name` and `short_name` both `"Karasu"`. No submarca, no
   marketing string. The product name is the editorial
   identity.
@@ -276,7 +290,7 @@ Reasoning:
   state behind auth, so we do not introduce a tracking
   vector.)
 
-[SEALED 2026-05-08]
+[SEALED 2026-05-08; `id` added by amendment 2026-05-16]
 
 **[SEALED 2026-05-08]** — `theme_color`,
 `background_color`, `orientation`, `icons` array, optional

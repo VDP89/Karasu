@@ -387,3 +387,65 @@ def test_origin_referer_wrong_origin() -> None:
         expected_origins=EXPECTED,
         deployed=True,
     ) is False
+
+
+# Brief amendment 2026-05-16 (§3-F dev fallback): dev posture
+# with empty expected_origins MUST be permissive even when the
+# browser sends Origin. Phase-4 dogfood Bug "Could not sign in"
+# repro was a fresh `karasu ui` (no karasu.yaml, no expected
+# origins) where every browser POST carried Origin and was
+# rejected 403 by the empty-allowlist check.
+
+
+def test_origin_dev_no_origins_accepts_browser_origin() -> None:
+    """Dev posture + no configured origins + browser-sent Origin
+    → True. The original bug: this returned False because
+    "Origin in ()" was the first branch and short-circuited the
+    dev fallback."""
+    assert origin_matches(
+        request_origin="http://127.0.0.1:8787",
+        request_referer=None,
+        expected_origins=(),
+        deployed=False,
+    ) is True
+
+
+def test_origin_dev_no_origins_accepts_browser_referer() -> None:
+    """Dev posture + no configured origins + Referer-only request
+    → True. Same fix as the Origin case, covers the Referer
+    fallback path."""
+    assert origin_matches(
+        request_origin=None,
+        request_referer="http://127.0.0.1:8787/",
+        expected_origins=(),
+        deployed=False,
+    ) is True
+
+
+def test_origin_dev_with_origins_still_strict() -> None:
+    """Dev posture + EXPLICITLY configured origins → strict.
+    A dev operator who configured `auth.expected_origins`
+    opted into the allowlist and should not be silently bypassed.
+    (deployed=False here because deployed is derived from origins
+    being non-empty in cmd_ui, but the function itself takes the
+    deployed flag separately — guarding both axes.)"""
+    assert origin_matches(
+        request_origin="http://attacker.test",
+        request_referer=None,
+        expected_origins=("http://127.0.0.1:8787",),
+        deployed=False,
+    ) is False
+
+
+def test_origin_deployed_no_origins_still_rejects_browser_origin() -> None:
+    """Deployed posture + (defensively) empty origins MUST still
+    reject. Production setups always have origins configured, so
+    this branch is unreachable through cmd_ui, but the function
+    is exported and other callers must get strict semantics
+    whenever deployed=True."""
+    assert origin_matches(
+        request_origin="http://127.0.0.1:8787",
+        request_referer=None,
+        expected_origins=(),
+        deployed=True,
+    ) is False

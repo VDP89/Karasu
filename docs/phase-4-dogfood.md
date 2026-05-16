@@ -209,19 +209,86 @@ posture cannot use `--no-auth` — UI-13 §3-D startup refuses
 the combination). Medium for localhost dogfood
 (workaroundable via `--no-auth`).
 
+**→ Resolved 2026-05-16 by branch
+`fix/ui-13-origin-matches-dev-permissive`.**
+
+Root cause: NONE of the three working hypotheses. Real
+cause was `origin_matches` in `_auth.py:616` rejecting
+browser POSTs in dev posture. Diagnosis sequence:
+
+1. Reset credentials with a known password +
+   `verify_password` test → `True`. Hypothesis 2 (password
+   mismatch) ruled out.
+2. No `karasu ui` processes running, port 8787 free.
+   Hypothesis 3 (zombie process) ruled out.
+3. Browser login → "could not sign in" chip with no log
+   line on the server. That absence was diagnostic on its
+   own — `BaseHTTPRequestHandler` always logs requests, so
+   the POST never reached the server in those attempts
+   (likely a stale rendered chip from a previous attempt;
+   the actual subsequent attempts did reach).
+4. `curl -X POST /auth/login` with `password=wrong` →
+   `HTTP 401 {"error":"could not sign in"}` + log line
+   `login failed (ip=!unknown:127.0.0.1)`. Endpoint works.
+5. Chrome DevTools Network on a real browser submit →
+   `POST /auth/login` returned `HTTP 403`. Initiator
+   chain showed both `index:96` (form fetch) and
+   `sw.js:272` (SW passthrough). The SW was not caching;
+   the 403 came from the server.
+
+Code path: `_handle_login_post` (server.py:1627) →
+`origin_matches`. With empty `expected_origins` and a
+browser-sent `Origin: http://127.0.0.1:8787` header, the
+function short-circuited on `request_origin in ()` →
+`False` → 403. The dev fallback (`return not deployed`)
+only fired when BOTH Origin and Referer were absent. Curl
+worked because it doesn't send Origin by default; browsers
+always do (same-origin POSTs included). Hypothesis 1 (rate
+limit) was structurally impossible because
+`LoginRateLimit.check` bypasses loopback IPs — the request
+never reached the rate-limit check.
+
+Fix: `origin_matches` short-circuits to `True` when
+`deployed=False AND expected_origins=()`. Brief §3-F
+amended to seal the new dev-permissive semantics. Tests:
+4 new cases in `test_auth_session.py` covering the bug
+shape, the Referer-only variant, the strict-when-
+configured invariant, and the deployed-always-strict
+invariant.
+
+The JS form handler appears to surface a generic "could
+not sign in" chip for any 4xx, which is why a 403 looked
+identical to a 401 to the operator and biased hypothesis
+ordering toward credentials/rate-limit instead of origin.
+Hygiene PR territory: differentiate the chip text by
+status code so a 403 doesn't masquerade as a credentials
+problem. Out of scope for this fix.
+
+**Side observation (separate PR territory):** the server
+log shows `login failed (ip=!unknown:127.0.0.1)`. The
+`!unknown:` prefix is a sentinel from `_ip_for_rate_limit`
+when `derive_client_ip` returns `None`. That branch should
+not fire for a direct loopback peer with no forwarded
+chain; suggests the §3-G three-layer trusted-IP derivation
+has a dev-posture edge case worth auditing.
+
 ## Outstanding sprint items (operator decision required)
 
 1. **Address Finding #5** before path C deploy — one-line
    manifest fix + test pin + brief amendment to §3-A.
-2. **Capture the auth login bug log** — re-run with the
-   `karasu ui` terminal in foreground and attempt one
-   login; paste the server output to debug.
+2. ~~**Capture the auth login bug log**~~ → resolved
+   2026-05-16 (see Bug section above).
 3. **Address Finding #3 docs gap** — consolidate VAPID
    bootstrap mention into `docs/pwa-install.md` or
    `docs/deploy-runbook.md` (operator preference). Optional
    auto-gen on startup is a separate decision.
 4. **Decide on Findings #2 and #4** — both archivable;
    neither blocks deploy or daily use.
+5. **Hygiene follow-ups from 2026-05-16 diagnosis**:
+   (a) login chip text per status code (403 ≠ 401);
+   (b) `derive_client_ip` dev-posture edge that returns
+   `None` for a direct loopback peer (surface
+   `_ip_for_rate_limit` `!unknown:` sentinel in logs).
 
 ## Update protocol
 

@@ -753,6 +753,23 @@ class UIHandler(BaseHTTPRequestHandler):
             external traffic) → synthetic key
             ``"!unknown:<peer_addr>"``. Same fail-closed
             shape: fresh slot keyed by peer, never loopback.
+
+        Brief amendment 2026-05-16 (closes phase-4-dogfood
+        Bug "Could not sign in" side-observation): the dev-
+        posture direct-loopback case (peer=127.0.0.1, empty
+        chain, default ``trusted_proxies=("127.0.0.1", "::1")``
+        which includes the peer) ALSO hits the None branch
+        at the primitive level. Treating that as the
+        ``!unknown:`` synthetic key forces rate-limiting on
+        loopback dev — exactly the trap the loopback bypass
+        was designed to avoid. The dev-permissive bypass
+        fires here when ``AUTH_DEPLOYED`` is False and the
+        peer is loopback, so a developer iterating against
+        ``karasu ui`` on 127.0.0.1 does not eat 429s after
+        five typos. Deployed posture stays strict: a trusted
+        peer + empty chain there means the proxy is
+        misconfigured (forgot to forward XFF/Forwarded) and
+        the ``!unknown:`` key surfaces the symptom in logs.
         """
         peer_addr = self.client_address[0]
         derived = self._derive_client_ip()
@@ -760,6 +777,9 @@ class UIHandler(BaseHTTPRequestHandler):
             return derived
         if derived is UNTRUSTED_FORWARDED:
             return f"!untrusted:{peer_addr}"
+        # derived is None — all-trusted chain or trusted peer + empty chain.
+        if not AUTH_DEPLOYED and is_loopback_ip(peer_addr):
+            return peer_addr
         return f"!unknown:{peer_addr}"
 
     def _session_payload(self) -> dict[str, Any] | None:

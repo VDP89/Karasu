@@ -50,6 +50,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = REPO_ROOT / "src" / "karasu" / "ui" / "static"
 MANIFEST_PATH = STATIC_DIR / "manifest.json"
 TOKENS_CSS_PATH = STATIC_DIR / "css" / "tokens.css"
+INDEX_HTML_PATH = STATIC_DIR / "index.html"
 
 # Literal hex matching tokens.css --bg-0 exactly. P2 binding from
 # UI-8 inherited; UI-14 §3-A re-binds at the manifest layer.
@@ -79,6 +80,25 @@ def manifest() -> dict:
 def test_manifest_identity_fields(manifest: dict) -> None:
     assert manifest["name"] == "Karasu"
     assert manifest["short_name"] == "Karasu"
+
+
+def test_index_html_title_matches_manifest_name(manifest: dict) -> None:
+    """Cross-check the index.html ``<title>`` against
+    ``manifest["name"]``. The PWA standalone window chrome
+    renders the HTML title in the OS title bar, while the
+    OS launcher entry uses the manifest name — when the two
+    drift, the operator's window says one thing and the
+    launcher tile says another. Phase-4 dogfood Finding #2
+    (2026-05-09) caught this with title "Karasu UI" vs
+    manifest "Karasu"; the 2026-05-16 resolution collapsed
+    both to "Karasu" and this test prevents future drift."""
+    html = INDEX_HTML_PATH.read_text(encoding="utf-8")
+    match = re.search(r"<title>(.*?)</title>", html, re.IGNORECASE)
+    assert match is not None, "index.html has no <title> element"
+    assert match.group(1) == manifest["name"], (
+        f"index.html <title> {match.group(1)!r} drifted from "
+        f"manifest name {manifest['name']!r}"
+    )
 
 
 # ---------------------------------------------------------------------------

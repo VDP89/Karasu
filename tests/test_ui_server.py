@@ -187,9 +187,12 @@ def test_index_html_served_at_root(ui_http: tuple[str, int]) -> None:
     host, port = ui_http
     status, body = _get(host, port, "/")
     assert status == 200
-    # The chunk-4c stub is still inline-styled HTML; just check the
-    # title survives so the route is wired.
-    assert b"<title>Karasu UI</title>" in body
+    # Just check the title survives so the route is wired. The title
+    # is pinned at the literal "Karasu" (matching manifest §3-A name)
+    # by phase-4-dogfood Finding #2 resolution 2026-05-16; the
+    # standalone PWA window chrome and the manifest identity now
+    # render identically.
+    assert b"<title>Karasu</title>" in body
 
 
 # ---------------------------------------------------------------------------

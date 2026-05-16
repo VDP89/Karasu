@@ -71,6 +71,21 @@ window chrome (HTML title) and the sealed identity (manifest).
 
 Brief amendment optional; either path is non-breaking.
 
+**→ Resolved 2026-05-16 by branch
+`fix/ui-14-title-unify-with-manifest` (path 1).** Operator
+chose unified identity. `src/karasu/ui/static/index.html`
+line 8 now reads `<title>Karasu</title>`; the existing
+route-wired assertion in `test_ui_server.py` was updated
+in lockstep; a new `test_index_html_title_matches_manifest_name`
+in `test_ui_manifest.py` (Layer 2 identity grouping)
+parses index.html and asserts the title equals
+`manifest["name"]` so future drift between the OS window
+chrome and the launcher tile gets caught at test time. No
+brief amendment needed — the UI-14 brief never sealed
+`<title>`. Other static HTML titles (`login.html`,
+`design-system.html`, `offline.html`) were already
+consistent with the manifest identity convention.
+
 ### Finding #3 — VAPID keys not provisioned + docs gap
 
 **Severity:** Operational — Medium.

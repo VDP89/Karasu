@@ -615,3 +615,46 @@ def test_activate_handler_claims_clients(sw_source: str) -> None:
     assert activate_match is not None, (
         "activate handler must call self.clients.claim()"
     )
+
+
+# ---------------------------------------------------------------------------
+# UI-12b push.js — VAPID-null modal foot copy
+# ---------------------------------------------------------------------------
+
+
+PUSH_JS_PATH = (
+    REPO_ROOT / "src" / "karasu" / "ui" / "static" / "js" / "push.js"
+)
+
+
+def test_push_modal_vapid_null_foot_copy_surfaces_cli_hint() -> None:
+    """UI-12b §3-H amendment 2026-05-16 (closes phase-4-dogfood
+    Finding #3 sub-friction 3): when the modal opens with
+    vapid_public_key=null, the foot copy MUST surface the
+    runnable CLI command (``karasu watch``) inline so the
+    operator inside the standalone PWA window can copy + paste
+    without leaving the window. The original copy only pointed
+    at a doc path, which is not clickable in the standalone
+    window posture.
+
+    Pin §11.6.14 carry-forward: the primary button stays
+    DISABLED in this state, so this test only covers the
+    foot copy text contract.
+    """
+    src = PUSH_JS_PATH.read_text(encoding="utf-8")
+    # The CLI command must appear inside the VAPID-null branch
+    # foot copy. Backticks around the command are part of the
+    # editorial — they mark it as a runnable hint vs prose.
+    assert "`karasu watch`" in src, (
+        "push.js VAPID-null foot copy must surface the runnable "
+        "`karasu watch` hint so an operator in the standalone "
+        "PWA window does not have to switch contexts to learn "
+        "the bootstrap command"
+    )
+    # The doc-only "See docs/local-dogfood.md for manual setup."
+    # text was the pre-fix shape; surfacing it again would
+    # regress the inline-CLI contract.
+    assert "See docs/local-dogfood.md" not in src, (
+        "the doc-pointer foot copy was replaced by the inline CLI "
+        "hint; reintroducing it would regress the §3-H amendment"
+    )

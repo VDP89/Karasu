@@ -1043,9 +1043,21 @@ the native permission prompt fires:
       (--fg-3 weight, aria-disabled="true").
     - A single-line copy renders below the categories,
       replacing the foot copy "Confirming will ask your
-      browser for notification permission." with:
-        "VAPID keys not provisioned. See
-         docs/local-dogfood.md for manual setup."
+      browser for notification permission." with the
+      operator-actionable CLI hint:
+        "VAPID keys not provisioned. Run `karasu watch`
+         in a terminal once to bootstrap."
+
+      Amendment 2026-05-16 (closes phase-4-dogfood Finding
+      #3 sub-friction 3): the original foot copy pointed
+      at docs/local-dogfood.md, but an operator inside the
+      standalone PWA window has no terminal to switch to
+      and the doc path is not clickable. The CLI command
+      goes IN the chip so the operator can copy + paste
+      it directly into a terminal without leaving the
+      window. The watcher provisions on first run (see
+      docs/pwa-install.md §3.0 and docs/deploy-runbook.md
+      §1.6 for the bootstrap discipline).
     - Notification.requestPermission is NEVER called from
       this state (pin §11.6.2 carry-forward — no permission
       prompt without operator confirmation, and the operator

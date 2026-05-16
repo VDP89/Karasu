@@ -121,12 +121,12 @@ def test_github_branch_includes_pr_and_repo_metadata() -> None:
             metadata={
                 "github_body": "x",
                 "github_pr": 7,
-                "github_repo": "VDP89/Karasu-",
+                "github_repo": "VDP89/Karasu",
             }
         )
     )
     assert "pr:   7" in prompt
-    assert "repo: VDP89/Karasu-" in prompt
+    assert "repo: VDP89/Karasu" in prompt
 
 
 def test_github_branch_handles_missing_author_and_repo() -> None:

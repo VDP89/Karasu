@@ -220,7 +220,7 @@ def test_api_events_projection_shape_lock(
             "github_event": "pull_request_review_comment",
             "github_action": "created",
             "github_pr": 42,
-            "github_repo": "VDP89/Karasu-",
+            "github_repo": "VDP89/Karasu",
             "github_author": "reviewer1",
             "correlates": "evt-000",
             "action": "scar_revoke",
@@ -384,7 +384,7 @@ def test_api_agents_shape_lock(ui_http: tuple[str, int]) -> None:
                 "handles": ["code_change", "implementation"],
             },
             "codex": {
-                "repo": "VDP89/Karasu-",
+                "repo": "VDP89/Karasu",
                 "trust_level": 0,
                 "handles": ["code_review"],
             },

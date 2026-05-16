@@ -15,8 +15,8 @@ The goal is not to make the system elegant. The goal is to observe real behavior
 ## Prerequisites
 
 ```bash
-git clone https://github.com/VDP89/Karasu-.git
-cd Karasu-
+git clone https://github.com/VDP89/Karasu.git
+cd Karasu
 python -m venv .venv
 source .venv/bin/activate  # Linux/macOS
 pip install -e ".[dev]"

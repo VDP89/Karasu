@@ -1,4 +1,5 @@
 {
+  "id": "/",
   "name": "Karasu",
   "short_name": "Karasu",
   "description": "Adaptive coordination layer between AI agents — a watchtower for the bus.",

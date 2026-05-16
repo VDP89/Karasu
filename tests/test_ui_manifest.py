@@ -82,6 +82,25 @@ def test_manifest_identity_fields(manifest: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Layer 2.5 — app id (brief amendment 2026-05-16 closing
+# phase-4-dogfood Finding #5)
+# ---------------------------------------------------------------------------
+
+
+def test_manifest_id_sealed(manifest: dict) -> None:
+    """§3-A amendment 2026-05-16: ``id`` sealed at the literal
+    ``"/"``. Without ``id``, Chrome derives the App ID from
+    ``start_url`` (origin-dependent), so a deploy that moves
+    Karasu from ``http://localhost:8787/`` to ``https://<host>/``
+    flips the Computed App ID and the installed PWA orphans —
+    the operator's launcher shows a duplicate entry and the
+    pre-deploy install loses its push subscriptions + cookies.
+    The literal ``/`` decouples identity from origin while
+    staying inside the manifest scope."""
+    assert manifest["id"] == "/"
+
+
+# ---------------------------------------------------------------------------
 # Layer 3 — routing
 # ---------------------------------------------------------------------------
 

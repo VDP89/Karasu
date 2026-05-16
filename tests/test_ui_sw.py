@@ -573,6 +573,57 @@ def test_login_html_emits_auth_granted_on_success() -> None:
     )
 
 
+def test_login_html_chip_text_reflects_server_error_per_status() -> None:
+    """Brief §3-E amendment 2026-05-16 (closes phase-4-dogfood
+    "Could not sign in" diagnosis hygiene): the JS handler must
+    parse the server's JSON ``{"error":...}`` body and render it
+    as the chip text via ``slot.textContent``, instead of just
+    unhiding a static "Could not sign in." string for every 4xx.
+
+    The pre-fix behavior surfaced 403 (origin/CSRF mismatch) and
+    429 (rate-limit) and 503 (auth-not-configured) as the same
+    "Could not sign in." chip, biasing the operator toward
+    chasing credentials when the real cause was elsewhere.
+
+    Invariants:
+      * The fallback string "Could not sign in." MUST still be
+        present (it's the JS default when no JSON body is
+        available, and matches the server's 401 ``{"error":
+        "could not sign in"}`` after capitalisation).
+      * The handler MUST call ``r.text()`` to read the body —
+        the previous version did not.
+      * The handler MUST assign to ``slot.textContent`` —
+        previously it only flipped ``slot.hidden``.
+      * The 413 fallback string "Request too large." MUST be
+        present (413 ships plain text, not JSON).
+    """
+    html = LOGIN_HTML_PATH.read_text(encoding="utf-8")
+    assert "'Could not sign in.'" in html or '"Could not sign in."' in html, (
+        "fallback chip string must be present"
+    )
+    assert "r.text()" in html, (
+        "handler must read the response body via r.text() so the "
+        "server's error phrase can drive the chip"
+    )
+    assert "slot.textContent" in html, (
+        "handler must set slot.textContent dynamically; static "
+        "innerHTML / hidden-flip alone cannot vary the chip per "
+        "status"
+    )
+    assert "'Request too large.'" in html or '"Request too large."' in html, (
+        "413 fallback (plain-text body) must surface as 'Request "
+        "too large.' not the generic chip"
+    )
+    # data.error is the canonical server JSON field — make sure
+    # the JS actually reads it instead of inventing a status-to-
+    # text map of its own.
+    assert "data.error" in html, (
+        "handler must read data.error from the parsed JSON; "
+        "inventing chip text from status codes alone would drift "
+        "from the server's authoritative phrases"
+    )
+
+
 # ---------------------------------------------------------------------------
 # UI-12b additive listeners — DEFERRED assertions
 # ---------------------------------------------------------------------------

@@ -148,6 +148,59 @@ auth credentials are missing or malformed; refusing to
 start. See docs/deploy-runbook.md for bring-up.`). NO
 secret material in the message; NO file path.
 
+### 1.6 Provision VAPID push keys (`karasu watch` bootstrap)
+
+The UI-12c push pipeline needs an ECDSA P-256 VAPID
+keypair before any browser can subscribe to push. The
+keypair lives in `karasu-push.json` next to the bus log;
+`karasu watch` auto-generates it on first start when the
+file has no `vapid` section. **`karasu ui` does NOT
+provision VAPID** — the UI process only reads the push
+store. An operator who runs `karasu ui` alone will see
+the UI-12b push modal flag *"VAPID keys not
+provisioned"* on every opt-in attempt.
+
+Bring-up:
+
+```sh
+# First-time provisioning. Generates the keypair under
+# the UI-12c §3-G cross-process file lock, then begins
+# watching. Stop and restart safely — subsequent starts
+# read the existing pair and skip generation.
+karasu watch
+```
+
+Run `karasu watch` under the same service supervisor as
+`karasu ui` (systemd, launchd, NSSM on Windows) so both
+processes are healthy in deployed posture. The two share
+the same bus log + push store under the cross-process
+file lock; concurrent reads + writes are safe.
+
+Production: set the VAPID JWT `mailto:` claim in
+`karasu.yaml` to a real contact (the default
+`operator@localhost.invalid` is fine for dev but some
+push services warn or rate-limit on the invalid TLD in
+deployed posture):
+
+```yaml
+push:
+  contact_email: ops@example.com
+```
+
+Rotation is operator-driven (delete `karasu-push.json`,
+restart `karasu watch`); the emitter never rotates
+automatically because doing so invalidates every
+existing browser subscription atomically (UI-12 §10.4
+binding). If a rotation is required (e.g. suspected
+keypair leak), warn subscribed operators first — every
+PWA install will need to re-subscribe via the footer
+modal after the new keypair is bootstrapped.
+
+The push store file follows the same posture as
+`karasu-auth.json`: mode 0600 on POSIX (advisory on
+Windows), NTFS ACLs restricting it to the karasu service
+account in deployed Windows posture (see §6).
+
 ## 2. mkcert dev flow
 
 For local TLS testing without a public cert:

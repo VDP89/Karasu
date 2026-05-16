@@ -186,13 +186,20 @@ function openPushModal() {
     /* Pin §11.6.14 — when vapid_public_key is null, the modal
      * opens but the primary is DISABLED + the foot copy
      * surfaces the operator-actionable reason. The native
-     * permission prompt MUST NOT fire from this state. */
+     * permission prompt MUST NOT fire from this state.
+     *
+     * Brief §3-H amendment 2026-05-16 (closes phase-4-dogfood
+     * Finding #3 sub-friction 3): the foot copy surfaces the
+     * runnable CLI command (`karasu watch`) inline instead of
+     * just pointing at a doc. An operator inside the standalone
+     * PWA window does not have a terminal handy and previously
+     * had to switch contexts just to learn what to type. */
     if (!vapidProvisioned) {
         confirmBtn.disabled = true;
         confirmBtn.setAttribute('aria-disabled', 'true');
         footCopy.textContent =
-            'VAPID keys not provisioned. See docs/local-dogfood.md ' +
-            'for manual setup.';
+            'VAPID keys not provisioned. Run `karasu watch` in a ' +
+            'terminal once to bootstrap.';
     } else {
         confirmBtn.disabled = false;
         confirmBtn.removeAttribute('aria-disabled');

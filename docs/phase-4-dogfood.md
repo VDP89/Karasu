@@ -314,7 +314,8 @@ identical to a 401 to the operator and biased hypothesis
 ordering toward credentials/rate-limit instead of origin.
 Hygiene PR territory: differentiate the chip text by
 status code so a 403 doesn't masquerade as a credentials
-problem. Out of scope for this fix.
+problem. Out of scope for this fix. → **Resolved by PR #122
+(`fix/ui-13-login-chip-status-discrimination`).**
 
 **Side observation (separate PR territory):** the server
 log shows `login failed (ip=!unknown:127.0.0.1)`. The
@@ -322,25 +323,66 @@ log shows `login failed (ip=!unknown:127.0.0.1)`. The
 when `derive_client_ip` returns `None`. That branch should
 not fire for a direct loopback peer with no forwarded
 chain; suggests the §3-G three-layer trusted-IP derivation
-has a dev-posture edge case worth auditing.
+has a dev-posture edge case worth auditing. → **Resolved
+by PR #121 (`fix/ui-13-derive-client-ip-trusted-loopback`).**
 
-## Outstanding sprint items (operator decision required)
+## Sprint items closed 2026-05-16 (operator decisions captured)
 
-1. **Address Finding #5** before path C deploy — one-line
-   manifest fix + test pin + brief amendment to §3-A.
-2. ~~**Capture the auth login bug log**~~ → resolved
-   2026-05-16 (see Bug section above).
-3. **Address Finding #3 docs gap** — consolidate VAPID
-   bootstrap mention into `docs/pwa-install.md` or
-   `docs/deploy-runbook.md` (operator preference). Optional
-   auto-gen on startup is a separate decision.
-4. **Decide on Findings #2 and #4** — both archivable;
-   neither blocks deploy or daily use.
-5. **Hygiene follow-ups from 2026-05-16 diagnosis**:
-   (a) login chip text per status code (403 ≠ 401);
-   (b) `derive_client_ip` dev-posture edge that returns
-   `None` for a direct loopback peer (surface
-   `_ip_for_rate_limit` `!unknown:` sentinel in logs).
+All five sprint items below were addressed in a single
+session driven by the operator. Each landed as its own
+focused PR; this section is the audit trail.
+
+1. **Finding #5 (P1 pre-deploy)** → **PR #117** added
+   `"id": "/"` to manifest.json + §3-A amendment + test
+   pin. Path C VPS deploy now preserves App ID identity
+   across origin changes.
+2. ~~**Capture the auth login bug log**~~ → **PR #116**.
+   Root cause was NONE of the three working hypotheses
+   (rate-limit, password mismatch, zombie process). Real
+   cause: `origin_matches` rejected browser POSTs in dev
+   posture because the dev fallback only handled
+   absent-Origin, but browsers always send Origin on POST.
+3. **Finding #3 sub-frictions 1 & 2 (VAPID docs gap)** →
+   **PR #118**. `docs/pwa-install.md` gained §3.0
+   prerequisite + `docs/deploy-runbook.md` gained §1.6
+   provision step.
+4. **Finding #2** → **PR #119** (operator picked path 1:
+   drop "UI" suffix). HTML `<title>` now matches manifest
+   `name` at "Karasu"; new `test_index_html_title_matches_manifest_name`
+   pins the cross-surface alignment.
+   **Finding #4** → **deferred per original dogfood
+   decision** ("Defer until the shell has visuals worth
+   previewing"). Honoured.
+5. **Hygiene follow-ups from the 2026-05-16 diagnosis**:
+   (a) login chip text per status code (403 ≠ 401) →
+   **PR #122** (`fix/ui-13-login-chip-status-discrimination`).
+   The login JS now renders the server's canonical
+   `{"error":...}` phrase per status; the §3-G online-
+   guessing invariant for 401 is preserved verbatim.
+   (b) `derive_client_ip` dev-posture edge → **PR #121**
+   (`fix/ui-13-derive-client-ip-trusted-loopback`). The
+   primitive's contract is unchanged; the wrapper
+   `_ip_for_rate_limit` is now posture-aware and returns
+   the peer verbatim in dev so the loopback bypass at
+   LoginRateLimit.check fires for direct dev iteration.
+   (c) Finding #3 sub-friction 3 (modal does not surface
+   CLI command) → **PR #123**
+   (`fix/ui-12b-push-modal-vapid-cli-hint`). The push
+   modal's VAPID-null foot copy now reads
+   "Run `karasu watch` in a terminal once to bootstrap"
+   so the operator inside the standalone PWA window has
+   the runnable hint inline.
+
+**Adjacent housekeeping (same session):** the repo was
+renamed from `VDP89/Karasu-` (typo) to `VDP89/Karasu` on
+2026-05-16. **PR #120** updated all in-repo references
+(tests, scripts, docs) to the new name; memory session
+logs were intentionally NOT touched (frozen history).
+
+**Path C VPS deploy is now unblocked at the code surface.**
+The remaining gate is operational: domain registration +
+VPS provisioning + caddy/Let's Encrypt setup. See
+`docs/deploy-runbook.md` for the canonical bring-up.
 
 ## Update protocol
 

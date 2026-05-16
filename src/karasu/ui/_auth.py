@@ -625,9 +625,23 @@ def origin_matches(
 
     In deployed posture (``deployed=True``), absent Origin AND
     absent Referer is REJECTED (False). In dev posture
-    (``deployed=False``), absent values pass through as the
-    documented dev fallback (§3-F).
+    (``deployed=False``), the check is permissive — neither an
+    absent value nor a present-but-unallowlisted Origin/Referer
+    is rejected (§3-F dev fallback; brief amendment 2026-05-16
+    closing phase-4-dogfood Bug "Could not sign in").
+
+    The original dev fallback only covered the both-absent case,
+    which assumed browser POSTs would not carry Origin.
+    Browsers always include Origin on POST (same-origin too),
+    so an unconfigured dev operator running `karasu ui` on
+    127.0.0.1:8787 with empty expected_origins was rejected
+    with 403 on every login attempt. The fix preserves the
+    deployed-strict semantics and broadens dev permissiveness
+    to match the brief's intent ("dev posture MAY accept absent
+    Origin as the explicit dev/legacy fallback").
     """
+    if not deployed and not expected_origins:
+        return True
     if request_origin:
         return request_origin in expected_origins
     if request_referer:

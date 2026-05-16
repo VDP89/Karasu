@@ -696,6 +696,25 @@ transport):
      traffic with no Forwarded) MAY accept absent-
      Origin as the explicit dev/legacy fallback,
      loud-stderr-warned at startup.
+
+     Amendment 2026-05-16 (closes phase-4-dogfood Bug
+     "Could not sign in"): dev posture with EMPTY
+     `expected_origins` is fully permissive — neither
+     absent values nor present-but-unallowlisted
+     Origin/Referer are rejected. The original wording
+     only covered absent-Origin, on the implicit
+     assumption that browser POSTs might omit Origin
+     for loopback same-origin. They do not; modern
+     browsers always send Origin on POST (same-origin
+     too), so the unamended check 403'd every browser
+     login from a fresh `karasu ui` with no yaml.
+     Dev posture with EXPLICITLY configured origins
+     remains strict (the operator opted into the
+     allowlist); deployed posture remains strict
+     unconditionally. The "deployed" signal is still
+     `bool(expected_origins)` per §3-G binding —
+     configuring origins flips both the cookie Secure
+     attribute and the strict Origin check together.
   2. The request MUST carry header
        X-Karasu-CSRF: <nonce>.<sig>
      equal to the karasu_csrf cookie value, compared
